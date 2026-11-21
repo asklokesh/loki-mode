@@ -55,6 +55,10 @@
 #   7h. verify.ts: drop the `if (deferSuite) notProven.push(FULL_SUITE_DEFERRED_NOTE)` line (K2's first-verify assertion fails; a deferred verify could back VERIFIED).
 #   7i. verify.ts reusableRun: drop the pass-or-fail test (the unit's not_run record cell is reused: a timed-out suite would never run again).
 #   7i2. deep.ts runFullSuite: add a reuse line to notProven instead of relying on the check's reused field (the unit's runFullSuite cell reads np.size 1: every reused run held).
+#   7j. loki-ts/src/util/python.ts PY_SATISFIES: every entry counted as met (markers and versions ignored); the SYSTEM-PROVIDES-DEPS ">=9999" cell reads true.
+#   7k. loki-ts/src/util/python.ts declaredRuntimeRequirements: requirements and lock files not checked; the SYSTEM-PROVIDES-DEPS requirements.txt cell reads true.
+#   7l. loki-ts/src/util/python.ts setupPyRuntimeRequirements: drop the (?=\s*[,)]) end-of-argument check; the `+ extra` and conditional reader cells read ["a"] (false VERIFIED).
+#   7m. loki-ts/src/engine10/stages/seal.ts sysProvided: return true always (rebuild dist); the pip>=9999 python leg reads VERIFIED.
 #   8. loki-ts/src/engine10/stages/seal.ts: drop leanHold from verdictOf (the never-calls-multiply leg reads VERIFIED).
 #   9. loki-ts/src/util/check_result.ts: changedSymbols counts any removed line as removed code (the
 #      never-calls-multiply leg reads VERIFIED: the replaced comment credits add()).
@@ -546,6 +550,50 @@ git("add", "-A", "."); git("commit", "-q", "-m", "base"); const before = declare
 writeFileSync(d + "/requirements.txt", "tornado\n"); git("add", "requirements.txt"); git("commit", "-q", "-m", "reqs");
 console.log(pyc.map(py).join(" ") + " | " + cfc.map(cfg).join(" ") + " | " + before + " " + declaresPythonEnv(d, "HEAD"));' 2>&1)"
 [ "$SD" = "false false false true true true false true true false | false true true false false | false true" ] && ok "SETUP-DEPS: a setup.py or setup.cfg counts as a Python environment only with runtime requirements (tenacity's reads false, a requirements.txt makes it true)" || bad "SETUP-DEPS unit gave: $SD"
+# SYSTEM-PROVIDES-DEPS (util/python.ts systemProvidesDeclared, seal.ts sysInfo): a repo that declares runtime requirements reads the
+# system-interpreter note as informational only when the interpreter that ran the tests meets every one. Readers first (no interpreter): poetry
+# caret and tilde bounds as PEP 440 (^0.x is the lift-direction trap), a computed setup.py list unreadable, [project] dynamic dependencies unreadable.
+SPR="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const m = await import("./src/util/python.ts");
+const j = (v) => JSON.stringify(v);
+console.log([m.poetryConstraintToPep440("^1.2.3"), m.poetryConstraintToPep440("^0.2.3"), m.poetryConstraintToPep440("^0.0.3"), m.poetryConstraintToPep440("~1.2.3"), j(m.poetryConstraintToPep440("1.0||2.0")),
+  j(m.pyprojectRuntimeRequirements("[tool.poetry.dependencies]\npython = \"^3.8\"\npyasn1 = \">=0.1.3\"\n")), j(m.pyprojectRuntimeRequirements("[project]\ndynamic = [\"dependencies\"]\n")),
+  j(m.pyprojectRuntimeRequirements("[tool.poetry.dependencies]\nx = { git = \"https://example.invalid/x\" }\n")), j(m.setupPyRuntimeRequirements("setup(install_requires=reqs)")),
+  j(m.setupPyRuntimeRequirements("setup(install_requires=[\"a>=1\"], setup_requires=[\"s\"])")), j(m.setupCfgRuntimeRequirements("[options]\ninstall_requires =\npython_requires = >=3.10\n")),
+  j(m.setupPyRuntimeRequirements("setup(install_requires=[\"a\"] + extra)")), j(m.setupPyRuntimeRequirements("setup(install_requires=[\"a\"] if x else [\"b\"])"))].join(" "));' 2>&1)"
+SPR_WANT='>=1.2.3,<2.0.0 >=0.2.3,<0.3.0 >=0.0.3,<0.0.4 >=1.2.3,<1.3 null ["pyasn1>=0.1.3"] null null null ["a>=1"] [] null null'
+[ "$SPR" = "$SPR_WANT" ] && ok "SYSTEM-PROVIDES-DEPS readers: caret and tilde bounds translate, computed, dynamic and git requirements are unreadable" || bad "SYSTEM-PROVIDES-DEPS readers gave: $SPR"
+# Interpreter cells, on scratch repos, against a distribution this python3 really has (pip, version probed, never hardcoded). Plants:
+#   7j. util/python.ts PY_SATISFIES: append every entry as met (skip the marker and specifier checks); the ">=9999" cell reads true (false VERIFIED).
+#   7k. util/python.ts declaredRuntimeRequirements: drop the UNSPLIT_MANIFEST check; the requirements.txt cell reads true (false VERIFIED).
+if python3 -I -c 'import importlib.metadata as m; m.version("pip")
+try:
+    import packaging.requirements
+except Exception:
+    import pip._vendor.packaging.requirements' >/dev/null 2>&1; then
+    spd_repo() { # $1 name, then path=content pairs
+        local r="$T/spd-$1"; shift; mkdir -p "$r"
+        while [ $# -gt 0 ]; do mkdir -p "$(dirname "$r/${1%%=*}")"; printf '%b' "${1#*=}" > "$r/${1%%=*}"; shift; done
+        git -C "$r" init -q -b main; git -C "$r" config user.name e2e; git -C "$r" config user.email e2e@example.invalid; git -C "$r" add -A .; git -C "$r" commit -q -m base
+    }
+    spd_repo rsa 'pyproject.toml=[tool.poetry.dependencies]\npython = "^3.8"\npip = ">=1"\n'
+    spd_repo high 'pyproject.toml=[tool.poetry.dependencies]\npython = "^3.8"\npip = ">=9999"\n'
+    spd_repo marker 'pyproject.toml=[project]\nname = "x"\ndependencies = ["nosuchdist-loki-xyz; python_version < \\"2\\"", "pip>=1"]\n'
+    spd_repo computed 'setup.py=from setuptools import setup\nsetup(install_requires=reqs)\n'
+    spd_repo reqtxt 'pyproject.toml=[project]\nname = "x"\ndependencies = ["pip>=1"]\n' 'requirements.txt=pip\n'
+    spd_repo tooling 'pyproject.toml=[project]\nname = "x"\n[project.optional-dependencies]\ntest = ["pytest"]\n'
+    printf '#!/bin/sh\n# a python3 whose packaging and pip cannot be imported; argv is -I -c <script>\nexec python3 -I -c "import sys; sys.modules[\\"packaging\\"] = None; sys.modules[\\"pip\\"] = None; exec(sys.argv[1])" "$3"\n' > "$T/spd-nopkg-python"; chmod +x "$T/spd-nopkg-python"
+    SPD="$(cd "$ROOT/loki-ts" && T="$T" bun --no-env-file --config=/dev/null -e '
+const { systemProvidesDeclared: f } = await import("./src/util/python.ts");
+const T = process.env.T;
+console.log([f(`${T}/spd-rsa`, "HEAD", "python3"), f(`${T}/spd-high`, "HEAD", "python3"), f(`${T}/spd-marker`, "HEAD", "python3"), f(`${T}/spd-computed`, "HEAD", "python3"),
+  f(`${T}/spd-reqtxt`, "HEAD", "python3"), f(`${T}/spd-rsa`, "HEAD", `${T}/spd-nopkg-python`), f(`${T}/spd-tooling`, "HEAD", "python3")].join(" "));' 2>&1)"
+    [ "$SPD" = "true false true false false false false" ] && ok "SYSTEM-PROVIDES-DEPS: a met poetry requirement and a marker-false entry lift; an unmet version, a computed list, a requirements.txt, no packaging and no runtime requirement keep the hold" || bad "SYSTEM-PROVIDES-DEPS unit gave: $SPD (want: true false true false false false false)"
+elif [ "${CI:-}" = "true" ]; then
+    bad "SYSTEM-PROVIDES-DEPS: python3 has no pip distribution or packaging (required in CI)"
+else
+    echo "SKIP: SYSTEM-PROVIDES-DEPS interpreter cells (python3 has no pip distribution or packaging)"
+fi
 # High tier through the BUNDLE (LOKI_TS_ENTRY is dist/loki.js): the security scan must find its script from the package
 # root. A path relative to the bundle file points outside the package and reads "secret-scan.sh not found" (PARTIAL).
 LOKI_RISK_TIER=high LOKI_SESSION_MODEL=haiku E2E_STUB_ARGV_LOG="$T/high-argv.log" run_engine done
@@ -561,6 +609,21 @@ if python3 -m pytest --version >/dev/null 2>&1; then
     py_engine calc.py requirements.txt
     [ "$(outcome)" = "PARTIAL" ] && ok "python, requirements.txt declared: still capped at PARTIAL" || bad "python, requirements.txt declared: outcome '$(outcome)', not PARTIAL"
     grep -qx "$SYS" <<< "$NOTES" && ok "python, requirements.txt declared: system-interpreter note caps (no suffix)" || bad "python, requirements.txt declared: note missing or marked informational"
+    # SYSTEM-PROVIDES-DEPS seal wiring (seal.ts sysCase): a pyproject whose one runtime requirement this python3 meets reads VERIFIED with the
+    # provided suffix; an unmet one keeps the plain capping note (plant 7m). Needs the pip distribution on python3 (the stub legs' interpreter).
+    if python3 -I -c 'import importlib.metadata as m; m.version("pip")' >/dev/null 2>&1; then
+        spd_met() { printf '[project]\nname = "calc"\nversion = "0"\ndependencies = ["pip>=1"]\n' > "$REPO/pyproject.toml"; }
+        spd_unmet() { printf '[project]\nname = "calc"\nversion = "0"\ndependencies = ["pip>=9999"]\n' > "$REPO/pyproject.toml"; }
+        PY_PREP=spd_met py_engine calc.py
+        [ "$(outcome)" = "VERIFIED" ] && ok "python, pyproject requirement met on this interpreter: VERIFIED" || { bad "python, pyproject requirement met: outcome '$(outcome)', not VERIFIED"; printf '%s\n' "$NOTES" | sed 's/^/    np | /'; }
+        grep -qF "$SYS (this interpreter has every runtime requirement the repo declares; informational, does not cap)" <<< "$NOTES" && ok "python, pyproject requirement met: note carries the provided suffix" || bad "python, pyproject requirement met: provided suffix missing"
+        PY_PREP=spd_unmet py_engine calc.py
+        [ "$(outcome)" = "PARTIAL" ] && ok "python, pyproject requirement unmet (pip>=9999): still capped at PARTIAL" || bad "python, pyproject requirement unmet: outcome '$(outcome)', not PARTIAL"
+        grep -qx "$SYS" <<< "$NOTES" && ok "python, pyproject requirement unmet: system-interpreter note caps (no suffix)" || bad "python, pyproject requirement unmet: note missing or marked informational"
+        PY_PREP=spd_met LOKI_E10_SYSTEM_PROVIDES_DEPS=0 py_engine calc.py
+        [ "$(outcome)" = "PARTIAL" ] && ok "python, LOKI_E10_SYSTEM_PROVIDES_DEPS=0: a met requirement is held again" || bad "python, LOKI_E10_SYSTEM_PROVIDES_DEPS=0: outcome '$(outcome)', not PARTIAL"
+        unset -f spd_met spd_unmet
+    fi
     py_engine extra.py
     [ -n "$(outcome)" ] && [ "$(outcome)" != "VERIFIED" ] && ok "python, change no test imports: not VERIFIED ($(outcome))" || { bad "python, change no test imports: outcome '$(outcome)'"; printf '%s\n' "$NOTES" | sed 's/^/    np | /'; }
     PY_UNTESTED=1 py_engine calc.py
