@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Claude Code ultracode for the main implement session (opt-in)
+
+- `LOKI_E10_ULTRACODE=1` asks Claude Code for `--effort ultracode` on the main implement session: it runs at xhigh and the session may plan its own dynamic workflows. It applies only where the model's catalog lists xhigh (Haiku 5.5, Sonnet 5.5, Opus 5.5 and Fable; not Haiku 4.5, which is what the `haiku` alias resolves to on Bedrock, Google's Agent Platform, Foundry and Claude Platform on AWS). Every other session keeps its tier's effort (development work, implement and fix, already runs at high, which is what the Claude Code docs advise for fixing a bug in an existing codebase).
+- Off by default and not measured: nested workflows add sessions and spend inside one Loki session, and whether the run's cost line counts that spend is not yet verified.
+
+
 
 ## v11.174.0 (2026-11-20)
 

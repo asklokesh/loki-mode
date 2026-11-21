@@ -448,4 +448,12 @@ hits="$( { grep -rnIiwE 'codex|cline|aider|gemini' "${SHIPPED[@]}"; grep -rnIE '
     | grep -vE 'REMOVED_PROVIDERS|loki_removed_provider|is no longer supported|GEMINI\.md|GEMINI_API_KEY|"GEMINI_"|gemini": \{ input|removed_provider|_check_provider' || true)"
 [ -z "$hits" ] && ok "no removed provider name in shipped code paths" || { bad "removed provider names remain:"; head -20 <<< "$hits" | sed 's/^/    | /'; }
 
+# ULTRACODE (runner/providers.ts ultracodeArgv, LOKI_E10_ULTRACODE off by default): only the main implement session, only a model whose catalog
+# lists xhigh, swaps the tier's --effort level for ultracode. Plant: drop the mainLoop test, and the subcall cell reads ultracode.
+UC="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const p = await import("./src/runner/providers.ts");
+const f = ["--model", "x", "--effort", "high"];
+console.log([p.ultracodeArgv(f, true, "claude-haiku-5-5", {}), p.ultracodeArgv(f, true, "claude-haiku-5-5", { LOKI_E10_ULTRACODE: "1" }), p.ultracodeArgv(f, false, "claude-sonnet-5-5", { LOKI_E10_ULTRACODE: "1" }), p.ultracodeArgv(f, true, "claude-haiku-4-5", { LOKI_E10_ULTRACODE: "1" })].map((a) => a[3]).join(" "));' 2>&1)"
+[ "$UC" = "high ultracode high high" ] && ok "ULTRACODE: off by default; on, only the main session on an xhigh model gets --effort ultracode" || bad "ULTRACODE gave: $UC"
+
 finish
