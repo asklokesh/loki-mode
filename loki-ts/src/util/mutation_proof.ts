@@ -38,7 +38,7 @@ export interface SupportFile {
   mode?: string;
 }
 /** PROOF-TEST-SIDE (LOKI_E10_PROOF_TEST_SIDE, default on, =0/off/false/no opts out): the fail-then-pass base worktree gets the change's whole test side, not only the test files that ran. */
-export const proofTestSideOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_PROOF_TEST_SIDE"] ?? "").trim());
+export const proofTestSideOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_PROOF_TEST_SIDE"] ?? "").trim()) /* off by default: its last cold review was NOT GO (2026-11-21); opt in to measure */;
 /** PROOF-TEST-SIDE: the support files of a fail-then-pass proof from a `git diff-tree -r -z --raw --no-renames` listing (status line, path, status line, path, ...): every path with
  *  status A, M, T or D that `isSide` calls test side and that is not one of the `run` test files, with its head mode (the second field of the status line). [] with the knob off
  *  (only the run test files are copied, as before). */
