@@ -164,10 +164,24 @@ and tenacity (setup.py, and setup.cfg `install_requires =` with an empty value);
 | 3 | google/uuid | **#150** taken (issue #148). Skipped before it: #166, #163 (features), #106 (refactor: MustParse in place of Must(Parse)), #156 (doc typos). Mechanical: 2+ source files #172, #162, #161; no source file #151, #154, #143; no test file #153 |
 | 4 | dustin/go-humanize | **#165** taken. Mechanical: no source file #168, #162, #163; 2+ source files #160; no test file #164 |
 | 5 | cespare/xxhash | skipped: its 3 PRs passing the mechanical filter are performance (#50, #2) or a feature (#19) |
-| 6 | google/go-cmp | skipped: #410 is a feature, #299 and #275 tune a diff heuristic for readability, #292 removes a dependency; every PR before #292 has a parent go.mod that requires golang.org/x/xerrors (a module fetch is network), e.g. #266 |
+| 6 | google/go-cmp | recorded as skipped, wrongly (see the deviation below): #410 is a feature, #299 and #275 tune a diff heuristic for readability, #292 removes a dependency, and the parents of #292 back to #201 require golang.org/x/xerrors; but the parents of #178, #177, #171, #158 and #142 have no require, and #142 ("Invoke String when formatting map keys", fixes #141, a regression) qualifies |
 | R1 | agnivade/levenshtein | skipped: both PRs passing the mechanical filter are performance work, and go.mod requires two modules |
 | R2 | go-logfmt/logfmt | skipped: #17 (DEL encoding) fails its own test at the fix commit on go 1.26.3 (`[]byte{0x7f}` encodes as `k=`); #15 is a feature; #8 changes key handling by design; #7 has no go.mod at its parent, so go test cannot run |
 | R3 | huandu/xstrings | **#78** taken (fixes #77; the newest PR, merged 2026-11-20) |
+
+### Deviation found after the calibration run
+
+A check made after the run, at a reviewer's request, showed that the go-cmp skip above was measured on one
+commit (#266) and stated for every older PR. Checking every candidate's parent go.mod: 23 parents back to #201
+require golang.org/x/xerrors, but the parents of #178, #177, #171, #158 and #142 require nothing. #178 and #158
+are features, #177 is style, #171 improves a panic message, and #142 (fix_commit 917e382dab80, fixes #141, a
+regression where map keys stopped calling String) passes the rule: its cmp/compare_test.go fails at the parent
+with the fix's source reverted and passes at the fix (`GOPROXY=off go test -count=1 ./...`). So by the rule
+the third Go task is google/go-cmp #142, not huandu/xstrings #78 (a reserve). The set was already calibrated,
+so it was not changed: a held-out set is spent once it is scored, and swapping a task after seeing labels is
+what the rule forbids. hc2-go-xstrings-negative-rune stays in the set and is marked here as taken out of turn.
+The same check for python-dotenv held: tests/conftest.py has imported click.testing since 254d5bf (2019-01-01,
+"Isolate test files (#160)"), older than every PR in the 100-PR window, so no dotenv PR could run.
 
 ### The 8 tasks
 
