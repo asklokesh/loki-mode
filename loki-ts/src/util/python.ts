@@ -515,13 +515,13 @@ function stripPyComments(text: string): string {
 }
 /** SETUP-DEPS: true when a setup.py passes runtime requirements. An `install_requires` keyword argument (or a `"install_requires":` dict key) counts
  *  unless its whole value is an empty list or tuple literal (`[]`, `()`, `[ ]`, followed by `,`, `)`, `}` or the end); any other value (a non-empty literal, a name, a call, a comprehension)
- *  counts, because Loki cannot evaluate Python (fail closed). A `**name` expansion also counts: it can carry install_requires out of sight.
+ *  counts, because Loki cannot evaluate Python (fail closed). A `**` expansion (`**name`, `**{...}`, `**(...)`) also counts: it can carry install_requires out of sight.
  *  `setup_requires` and `tests_require` never count (build and test tooling, as [build-system] requires in pyprojectDeclaresDeps), and
  *  `extras_require` is not counted, matching setup.cfg. Comments are ignored. Measured on hc2 tenacity: its setup.py is
  *  `setuptools.setup(setup_requires=["setuptools_scm"], use_scm_version=True)`, which declares nothing the code imports. */
 export function setupPyDeclaresDeps(text: string): boolean {
   const code = stripPyComments(text);
-  if (/\*\*\s*[A-Za-z_]/.test(code)) return true;
+  if (/\*\*\s*[A-Za-z_({]/.test(code)) return true;
   const re = /(?:\binstall_requires\s*=(?!=)|["']install_requires["']\s*:)\s*/g;
   for (let m = re.exec(code); m; m = re.exec(code)) {
     const v = code.slice(m.index + m[0].length);
@@ -529,32 +529,21 @@ export function setupPyDeclaresDeps(text: string): boolean {
   }
   return false;
 }
-/** SETUP-DEPS: true when a setup.cfg's `[options]` section gives `install_requires` a value: text after `=` (or `:`) on the same line, or an
- *  indented continuation line that is not blank and not a comment. `[options.extras_require]` is not counted. hc2 tenacity's
+/** SETUP-DEPS: true when a setup.cfg's `[options]` section gives `install_requires` a value, read by setupCfgRuntimeRequirements so the two
+ *  never disagree: at least one requirement read, or a value Loki cannot read (`file:`, `attr:`, `%(`), which counts (fail closed). A full-line
+ *  comment, even at column 0, does not end the key, as configparser reads it. `[options.extras_require]` is not counted. hc2 tenacity's
  *  `install_requires =` followed by `python_requires = >=3.10` is false. */
 export function setupCfgDeclaresDeps(text: string): boolean {
-  let section = "", inKey = false;
-  for (const raw of text.split(/\r?\n/)) {
-    const h = /^\[([^\]]+)\]\s*$/.exec(raw);
-    if (h) { section = h[1]!.trim(); inKey = false; continue; }
-    if (inKey) {
-      if (/^\s+\S/.test(raw)) { if (!/^\s*[#;]/.test(raw)) return true; continue; }
-      if (/^\s*$/.test(raw)) continue;
-      inKey = false;
-    }
-    if (section !== "options") continue;
-    const k = /^install[_-]requires\s*[=:](.*)$/i.exec(raw);
-    if (!k) continue;
-    if (k[1]!.trim() !== "" && !/^\s*[#;]/.test(k[1]!)) return true;
-    inKey = true;
-  }
-  return false;
+  const r = setupCfgRuntimeRequirements(text);
+  return r === null || r.length > 0;
 }
+/** A Python dependency manifest or lock that is not setup.py, setup.cfg or pyproject.toml (those are read for content). One list for declaresPythonEnv
+ *  and for declaredRuntimeRequirements (SYSTEM-PROVIDES-DEPS), so a file that marks a repo as declaring an environment always keeps the
+ *  system-interpreter hold there too. */
+const PY_MANIFEST = /^(?:[\w.-]*requirements[\w.-]*\.(?:txt|in)|Pipfile(?:\.lock)?|poetry\.lock|uv\.lock|pdm\.lock|environment\.ya?ml|conda\.ya?ml)$/i;
 export function declaresPythonEnv(root: string, ref: string): boolean {
   const on = setupDepsOn();
-  const MANIFEST = on
-    ? /^(?:[\w.-]*requirements[\w.-]*\.(?:txt|in)|Pipfile(?:\.lock)?|poetry\.lock|uv\.lock|pdm\.lock|environment\.ya?ml|conda\.ya?ml)$/i
-    : /^(?:[\w.-]*requirements[\w.-]*\.(?:txt|in)|Pipfile(?:\.lock)?|setup\.py|poetry\.lock|uv\.lock|pdm\.lock|environment\.ya?ml|conda\.ya?ml)$/i;
+  const MANIFEST = { test: (b: string): boolean => PY_MANIFEST.test(b) || (!on && /^setup\.py$/i.test(b)) }; // knob off: any setup.py, as before SETUP-DEPS
   const DEPS: Record<string, (text: string) => boolean> = on
     ? { "pyproject.toml": pyprojectDeclaresDeps, "setup.py": setupPyDeclaresDeps, "setup.cfg": setupCfgDeclaresDeps }
     : { "pyproject.toml": pyprojectDeclaresDeps, "setup.cfg": (t) => /^\s*install_requires\s*=/m.test(t) };
@@ -566,4 +555,179 @@ export function declaresPythonEnv(root: string, ref: string): boolean {
     }
     return false;
   } catch { return true; }
+}
+/** SYSTEM-PROVIDES-DEPS (LOKI_E10_SYSTEM_PROVIDES_DEPS; on by default, `0`/off/false/no opts out): see systemProvidesDeclared. */
+export const systemProvidesOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_SYSTEM_PROVIDES_DEPS"] ?? "").trim());
+const DIST_NAME = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
+/** One poetry constraint as a PEP 440 specifier ("" for any version), or null when Loki cannot translate it (`||`, a pre-release in a caret or
+ *  tilde bound, any unknown form). `^1.2.3` is `>=1.2.3,<2.0.0`, `^0.2.3` is `>=0.2.3,<0.3.0`, `^0.0.3` is `>=0.0.3,<0.0.4`, `^0` is `>=0,<1`;
+ *  `~1.2.3` is `>=1.2.3,<1.3.0`, `~1` is `>=1,<2`; a bare version is `==`. */
+export function poetryConstraintToPep440(c: string): string | null {
+  if (c.includes("||") || c.includes("|")) return null;
+  const out: string[] = [];
+  for (const raw of c.split(",")) {
+    const p = raw.trim();
+    if (p === "") return null;
+    if (p === "*") continue;
+    const bound = /^([\^~])\s*(\d+(?:\.\d+){0,2})$/.exec(p);
+    if (bound && !p.startsWith("~=")) {
+      const v = bound[2]!.split(".").map(Number), up = [...v];
+      if (bound[1] === "^") { let i = v.findIndex((x) => x !== 0); if (i < 0) i = v.length - 1; up[i] = up[i]! + 1; for (let j = i + 1; j < up.length; j++) up[j] = 0; }
+      else { const i = v.length === 1 ? 0 : 1; up[i] = up[i]! + 1; up.length = i + 1; }
+      out.push(`>=${v.join(".")}`, `<${up.join(".")}`);
+      continue;
+    }
+    if (/^(?:~=|==|!=|>=|<=|>|<)\s*\d+(?:\.\d+)*(?:\.\*)?$/.test(p)) { out.push(p.replace(/\s+/g, "")); continue; }
+    if (/^\d+(?:\.\d+)*(?:\.\*)?$/.test(p)) { out.push(`==${p}`); continue; }
+    return null;
+  }
+  return out.join(",");
+}
+/** setup.py runtime requirements: every `install_requires` must be the keyword form with a literal list or tuple of plain string literals.
+ *  null (cannot read) for any other use of the word (a name, a call, a comprehension, a dict key, implicit string concatenation, escapes, a literal
+ *  followed by more code such as `+ extra` or a conditional),
+ *  for any `**` expansion (`**name`, `**{...}`, `**(...)`, the same test as setupPyDeclaresDeps), and for distutils `requires=`. No install_requires at all is []. */
+export function setupPyRuntimeRequirements(text: string): string[] | null {
+  const t = stripPyComments(text);
+  if (/\*\*\s*[A-Za-z_({]/.test(t) || /\brequires\s*=/.test(t.replace(/\b(?:install|setup|tests|python)_requires\b/g, ""))) return null;
+  const uses = [...t.matchAll(/\binstall_requires\b/g)].length, out: string[] = [];
+  const re = /\binstall_requires\s*=\s*([[(])((?:\s*(?:"[^"\\\n]*"|'[^'\\\n]*')\s*,)*\s*(?:"[^"\\\n]*"|'[^'\\\n]*')?\s*)([\])])(?=\s*[,)])/g; // the literal must end the argument: `[...] + more` or `[...] if x else [...]` is computed
+  let seen = 0;
+  for (const m of t.matchAll(re)) {
+    if ((m[1] === "[") !== (m[3] === "]")) return null;
+    seen++;
+    for (const s of m[2]!.matchAll(/"([^"]*)"|'([^']*)'/g)) out.push((s[1] ?? s[2]!).trim());
+  }
+  return seen === uses ? out : null;
+}
+/** setup.cfg `[options] install_requires` lines (setupCfgDeclaresDeps is derived from this reader; the key `install_requires` or `install-requires`, any case, as
+ *  configparser lowercases it; same line after `=`, then indented continuation lines; full-line `#` or `;` comments, at any indent, skipped without
+ *  ending the key, and inline ` #` comments cut).
+ *  `;` stays (it starts a PEP 508 marker). null for a `file:` or `attr:` directive or `%(` interpolation, which Loki does not resolve. */
+export function setupCfgRuntimeRequirements(text: string): string[] | null {
+  const out: string[] = []; let sec = "", inKey = false;
+  for (const line of text.split(/\r?\n/)) {
+    const h = /^\s*\[([^\]]+)\]\s*$/.exec(line);
+    if (h) { sec = h[1]!.trim(); inKey = false; continue; }
+    const kv = /^(\S[^=:]*?)\s*[=:]\s*(.*)$/.exec(line);
+    if (/^\s*[#;]/.test(line)) continue;
+    if (kv && !/^\s/.test(line)) { inKey = sec === "options" && /^install[_-]requires$/i.test(kv[1]!.trim()); if (inKey) { const v = kv[2]!.replace(/\s#.*$/, "").trim(); if (/^(?:file|attr)\s*:/.test(v)) return null; if (v) out.push(v); } continue; }
+    if (inKey && /^\s+\S/.test(line)) { const v = line.replace(/\s#.*$/, "").trim(); if (v) out.push(v); continue; }
+    if (line.trim() !== "") inKey = false;
+  }
+  return out.some((r) => r.includes("%(")) ? null : out; // configparser interpolation: Loki does not expand it
+}
+/** pyproject.toml runtime requirements: [project] dependencies (PEP 508 strings) and [tool.poetry.dependencies] (`python` skipped; a constraint
+ *  string or a table with only `version` and `optional`; `optional = true` is an extra, not read). Optional dependencies, dependency groups and
+ *  poetry dev or group tables are tooling and are not read. null when the file does not parse, `dependencies` is listed in [project] dynamic,
+ *  a legacy [tool.flit.metadata] requires or [tool.pdm] dependencies list exists, or any entry is not that shape (git, path, url, source,
+ *  extras, markers, a list of constraints, an untranslatable constraint). */
+export function pyprojectRuntimeRequirements(text: string): string[] | null {
+  let doc: Record<string, unknown>;
+  try { doc = Bun.TOML.parse(text) as Record<string, unknown>; } catch { return null; }
+  const obj = (v: unknown): Record<string, unknown> | null => (v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : null);
+  const out: string[] = [], project = obj(doc["project"]), tool = obj(doc["tool"]);
+  if (doc["project"] !== undefined && !project) return null;
+  if (obj(obj(tool?.["flit"])?.["metadata"])?.["requires"] !== undefined || obj(tool?.["pdm"])?.["dependencies"] !== undefined) return null; // legacy flit and pdm runtime lists live outside [project]
+  if (project) {
+    const dyn = project["dynamic"];
+    if (dyn !== undefined && (!Array.isArray(dyn) || dyn.some((d) => d === "dependencies"))) return null;
+    const deps = project["dependencies"];
+    if (deps !== undefined) { if (!Array.isArray(deps) || deps.some((d) => typeof d !== "string")) return null; out.push(...(deps as string[]).map((d) => d.trim())); }
+  }
+  const poetry = obj(obj(obj(doc["tool"])?.["poetry"])?.["dependencies"]);
+  if (obj(obj(doc["tool"])?.["poetry"])?.["dependencies"] !== undefined && !poetry) return null;
+  for (const [name, v] of Object.entries(poetry ?? {})) {
+    if (name.toLowerCase() === "python") continue;
+    if (!DIST_NAME.test(name)) return null;
+    let c: unknown = v;
+    const t = obj(v);
+    if (t) { if (Object.keys(t).some((k) => k !== "version" && k !== "optional")) return null; if (t["optional"] === true) continue; if (t["optional"] !== undefined && t["optional"] !== false) return null; c = t["version"] ?? "*"; }
+    if (typeof c !== "string") return null;
+    const spec = poetryConstraintToPep440(c);
+    if (spec === null) return null;
+    out.push(`${name}${spec}`);
+  }
+  return out;
+}
+/** Every runtime requirement the tree at `ref` declares, read from each pyproject.toml, setup.cfg and setup.py; null when any of them
+ *  cannot be read or split (see the three readers), or when a manifest Loki cannot split into runtime requirements and tooling (PY_MANIFEST, or any file under a requirements/ directory) exists anywhere in the tree. */
+export function declaredRuntimeRequirements(paths: string[], read: (path: string) => string): string[] | null {
+  const readers: Record<string, (t: string) => string[] | null> = { "pyproject.toml": pyprojectRuntimeRequirements, "setup.cfg": setupCfgRuntimeRequirements, "setup.py": setupPyRuntimeRequirements };
+  const out: string[] = [];
+  for (const f of paths) {
+    const b = f.slice(f.lastIndexOf("/") + 1);
+    if (PY_MANIFEST.test(b) || /(?:^|\/)requirements\//i.test(f)) return null;
+    const r = readers[b];
+    if (!r) continue;
+    let got: string[] | null;
+    try { got = r(read(f)); } catch { return null; }
+    if (got === null) return null;
+    out.push(...got);
+  }
+  return out;
+}
+const PY_SATISFIES = `
+import json, os, site, sys
+try:
+    from packaging.requirements import Requirement
+except Exception:
+    try:
+        from pip._vendor.packaging.requirements import Requirement
+    except Exception:
+        print(json.dumps({"ok": False, "why": "packaging missing"})); sys.exit(3)
+import importlib.metadata as md
+reqs = json.load(sys.stdin)
+if not isinstance(reqs, list) or not reqs:
+    print(json.dumps({"ok": False, "why": "no requirements"})); sys.exit(4)
+path = [os.getcwd()] + [p for p in os.environ.get("PYTHONPATH", "").split(os.pathsep) if p] + ([] if os.environ.get("PYTHONNOUSERSITE") else [site.getusersitepackages()]) + sys.path
+unmet = []
+for s in reqs:
+    try:
+        r = Requirement(s)
+    except Exception:
+        print(json.dumps({"ok": False, "why": "unparsed"})); sys.exit(4)
+    if r.url or r.extras:
+        unmet.append(s); continue
+    if r.marker is not None and not r.marker.evaluate({"extra": ""}):
+        continue
+    try:
+        vs = [d.version for d in md.distributions(name=r.name, path=path)]
+        found = [d for d in md.distributions(name=r.name, path=path[1:])]
+    except Exception:
+        unmet.append(s); continue
+    if not found or not all(r.specifier.contains(v) for v in vs):
+        unmet.append(s)
+print(json.dumps({"ok": not unmet, "n": len(reqs), "unmet": unmet}))
+`;
+/** True only when `python` (the interpreter that ran the tests), run once with -I, shows every requirement met: a marker false on this
+ *  interpreter, or the distribution installed at a version the specifier contains (packaging, else pip's vendored copy, and importlib.metadata;
+ *  an installed pre-release counts only when the specifier itself allows one). A bare name is resolved on `env`'s PATH, the PATH the checks ran with.
+ *  Any parse error, missing packaging, an extra or URL requirement, a non-zero exit, a timeout (10 s), unreadable output or an unmet entry is
+ *  false. An empty list is false: nothing read is not evidence.
+ *  The probe runs in `cwd`, the directory the checks ran in (the repo root), so a pyenv, asdf or mise shim that picks an interpreter by
+ *  `.python-version` or `.tool-versions` picks the same one; -I keeps that directory off the probe's own import path. Tests run without -I, so
+ *  the working directory, PYTHONPATH and the user site come before site-packages: every copy of a distribution on that search path must
+ *  satisfy the specifier, and at least one must exist outside the working directory (a copy there may refute, never satisfy: a dist-info
+ *  in the repo root is not an installed distribution). Not covered: a PYTHONPATH entry that is the repo root still satisfies; a `.python-version` inside a package directory whose checks run there. */
+export function interpreterSatisfies(python: string, reqs: string[], cwd: string, env: NodeJS.ProcessEnv = tokenFreeEnv(process.env)): boolean {
+  if (!python || reqs.length === 0) return false;
+  const bin = isAbsolute(python) ? python : Bun.which(python, { PATH: env["PATH"] ?? "" });
+  if (!bin) return false;
+  try {
+    const r = spawnSync(bin, ["-I", "-c", PY_SATISFIES], { input: JSON.stringify(reqs), encoding: "utf8", env, cwd, timeout: 10_000, killSignal: "SIGKILL", maxBuffer: 1 << 20, stdio: ["pipe", "pipe", "ignore"] });
+    if (r.status !== 0 || r.error) return false;
+    const v = JSON.parse((r.stdout ?? "").trim().split("\n").pop() ?? "") as { ok?: unknown; n?: unknown };
+    return v.ok === true && v.n === reqs.length;
+  } catch { return false; }
+}
+/** SYSTEM-PROVIDES-DEPS: the system-interpreter note is informational when the repo declares runtime requirements and the interpreter that ran
+ *  its tests meets every one of them. Positive evidence only: true when no unsplittable manifest exists at `ref`, at least one runtime requirement
+ *  is read, and interpreterSatisfies holds. Fails closed: an unreadable tree, any unreadable manifest or any failed check is false. */
+export function systemProvidesDeclared(root: string, ref: string, python: string, env?: NodeJS.ProcessEnv): boolean {
+  try {
+    const paths = safeGit(root, ["ls-tree", "-r", "-z", "--name-only", ref]).split("\0").filter(Boolean);
+    const reqs = declaredRuntimeRequirements(paths, (f) => safeGit(root, ["show", `${ref}:${f}`]));
+    return reqs !== null && interpreterSatisfies(python, reqs, root, env); // the repo root: the cwd verify's checks ran in
+  } catch { return false; }
 }
