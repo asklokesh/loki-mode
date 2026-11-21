@@ -54,12 +54,23 @@ import type {
   ProviderResult,
   SessionTier,
 } from "./types.ts";
-import { PROVIDER_DEFAULT_MODEL, canonicalSessionPin, explicitSetupModel, resolveClaudeModel } from "../util/claude_model.ts";
+import { PROVIDER_DEFAULT_MODEL, canonicalSessionPin, claudeEffortLevels, explicitSetupModel, resolveClaudeModel } from "../util/claude_model.ts";
 import { applyAliasPin, effortArgv, modelRouteEnv, modelRouteModel, otelPassthroughEnv } from "../providers/model_routes.ts";
 import { opencodeProvider } from "./provider_opencode.ts";
 import { cacheTtlFor } from "../util/cost_breakdown.ts";
 
 // Q18-04: the stage deny list (LOKI_E10_DISALLOWED_TOOLS) is added to the policy deny list, never replaces it.
+/** ULTRACODE (LOKI_E10_ULTRACODE=1, off by default): the main implement session asks Claude Code for `--effort ultracode`, which sets xhigh and lets
+ *  the session plan its own dynamic workflows. Only where the model's catalog lists xhigh (ultracode is unavailable without it) and the CLI takes
+ *  --effort; otherwise the tier's effort stays. Claude Code below v2.1.203 prints "Unknown --effort value" and starts at its default, never an error.
+ *  Off by default until measured: nested workflows multiply sessions and their spend inside one Loki session. */
+export function ultracodeOn(env: NodeJS.ProcessEnv = process.env): boolean { return /^(1|on|true|yes)$/i.test((env["LOKI_E10_ULTRACODE"] ?? "").trim()); }
+export function ultracodeArgv(flags: string[], mainLoop: boolean, model: string, env: NodeJS.ProcessEnv = process.env): string[] {
+  if (!mainLoop || !ultracodeOn(env) || !(claudeEffortLevels(model) ?? []).includes("xhigh")) return flags;
+  const i = flags.indexOf("--effort");
+  return i >= 0 ? [...flags.slice(0, i), "--effort", "ultracode", ...flags.slice(i + 2)] : flags;
+}
+
 export function mergeDisallowedTools(policy: string[] | undefined, stageCsv: string): string[] {
   return [...new Set([...(policy ?? []), ...stageCsv.split(",").filter(Boolean)])];
 }
@@ -566,12 +577,12 @@ export function claudeProvider(): ProviderInvoker {
         return { exitCode: 1, capturedOutputPath: call.iterationOutputPath };
       }
       const fence = claudeFlagSupported("--settings") ? implementWriteFence(call.cwd) : undefined; // an older CLI without --settings runs unfenced
-      const autoFlags = buildAutoFlags({
+      const autoFlags = ultracodeArgv(buildAutoFlags({
         tier: call.tier,
         complexity: process.env["LOKI_COMPLEXITY"] ?? "standard",
         primary: model,
         targetDir: call.cwd,
-      });
+      }), call.mainLoop === true, model);
 
       // v7.34.0 Phase 1 (correlation-only): per-iteration --session-id, OPT-IN
       // via LOKI_SESSION_STAMP=1. Default OFF keeps this argv byte-identical to

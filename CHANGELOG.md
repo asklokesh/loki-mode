@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Replies are written to `.loki/address/<owner>-<repo>-<N>/`. `--post` pushes the branch and posts them, with the first pull request's push guards and never to a fork. It never merges and never resolves a thread. The trigger server runs it for `pull_request_review` and the new `pull_request_review_comment` events, only with `LOKI_TRIGGER_ADDRESS_POST=1`.
 - A change lands only when the receipt itself belongs to that run and records VERIFIED (an intact, signed PARTIAL receipt is held), and its head commit is on the run's own branch. A fix run that leaves the tree dirty or moves the PR branch holds its item instead of throwing, the result is saved after every item, and `--post` never pushes a tip no receipt accepted. A reply that fails to post is posted, alone, by the next `--post` on the same checkout. On the trigger server the clone's run receipts, replies and new commits are kept under `.loki/triggers/address/` before the clone is removed, and a failed run keeps the clone.
 - Behaviour change: `loki verify-pr respond` is now the same command, so it no longer pushes or replies without `--post`, and it refuses a pull request that is not on a `loki/e10-*` branch with a Loki receipt. The review trigger no longer runs on a server without the opt-in, and a `pull_request synchronize` on a `loki/*` branch no longer starts a run.
+### Claude Code ultracode for the main implement session (opt-in)
+
+- `LOKI_E10_ULTRACODE=1` asks Claude Code for `--effort ultracode` on the main implement session: it runs at xhigh and the session may plan its own dynamic workflows. It applies only where the model's catalog lists xhigh (Haiku 5.5, Sonnet 5.5, Opus 5.5 and Fable; not Haiku 4.5, which is what the `haiku` alias resolves to on Bedrock, Google's Agent Platform, Foundry and Claude Platform on AWS). Every other session keeps its tier's effort (development work, implement and fix, already runs at high, which is what the Claude Code docs advise for fixing a bug in an existing codebase).
+- Off by default and not measured: nested workflows add sessions and spend inside one Loki session, and whether the run's cost line counts that spend is not yet verified.
+
 
 
 ## v11.174.0 (2026-11-20)
