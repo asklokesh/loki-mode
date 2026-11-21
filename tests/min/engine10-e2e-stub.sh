@@ -45,6 +45,10 @@
 #   6. loki-ts/src/engine10/stages/seal.ts: sysInfo always null (the no-manifest leg reads PARTIAL).
 #   7. loki-ts/src/util/python.ts: declaresPythonEnv always false (the requirements.txt leg reads VERIFIED).
 #   7b. loki-ts/src/util/python.ts: pyprojectDeclaresDeps counts [build-system] requires again (the BUILD-REQUIRES cell reads true for build_only).
+#   7c. loki-ts/src/util/python.ts: MANIFEST keeps setup.py with LOKI_E10_SETUP_DEPS on (the SETUP-DEPS tenacity-repo cell reads true before requirements.txt).
+#   7d. loki-ts/src/util/python.ts: setupCfgDeclaresDeps back to the key-only regex /^\s*install_requires\s*=/m (the SETUP-DEPS tenacity cfg cell reads true).
+#   7e. loki-ts/src/util/python.ts: setupPyDeclaresDeps reads a non-literal install_requires as empty (the install_requires=reqs cell reads false: false VERIFIED direction),
+#       or drops the `(?:[,)}]|$)` tail of the empty-literal test (the `[] + reqs` and `[] if x else` cells read false).
 #   8. loki-ts/src/engine10/stages/seal.ts: drop leanHold from verdictOf (the never-calls-multiply leg reads VERIFIED).
 #   9. loki-ts/src/util/check_result.ts: changedSymbols counts any removed line as removed code (the
 #      never-calls-multiply leg reads VERIFIED: the replaced comment credits add()).
@@ -515,6 +519,27 @@ const c = ["[build-system]\nrequires = [\"setuptools\"]\n[project]\nname = \"x\"
   "[project]\ndependencies = [\"requests\"]\n", "[project]\ndependencies = [\n  \"attrs\",\n]\n", "[project.optional-dependencies]\ntest = [\"pytest\"]\n", "[tool.poetry.dependencies]\npython = \"3\"\n", "[dependency-groups]\ndev = [\"pytest\"]\n"];
 console.log(c.map(f).join(" "));' 2>&1)"
 [ "$BR" = "false false false true true true true true" ] && ok "BUILD-REQUIRES: build-system requires and an empty dependencies list do not count as a Python environment; real dependencies do" || bad "BUILD-REQUIRES unit gave: $BR"
+# SETUP-DEPS (util/python.ts setupPyDeclaresDeps, setupCfgDeclaresDeps, declaresPythonEnv): a setup.py counts only with an install_requires that is
+# not an empty literal (computed values count, fail closed; setup_requires never counts), a setup.cfg only with a non-empty [options] install_requires.
+# hc2 tenacity has both triggers: setup.py with only setup_requires and setup.cfg with an empty `install_requires =`. Plants 7c, 7d, 7e.
+SD="$(cd "$ROOT/loki-ts" && SD_DIR="$T/setup-deps" bun --no-env-file --config=/dev/null -e '
+const { setupPyDeclaresDeps: py, setupCfgDeclaresDeps: cfg, declaresPythonEnv } = await import("./src/util/python.ts");
+const { mkdirSync, writeFileSync } = await import("node:fs"); const { spawnSync } = await import("node:child_process");
+const ten = "#!/usr/bin/env python\n# Licensed under the Apache License\nimport setuptools\n\nsetuptools.setup(\n    setup_requires=[\"setuptools_scm\"],\n    use_scm_version=True,\n)\n";
+const pyc = [ten, "from setuptools import setup\nsetup()\n", "setup(name=\"x\", install_requires=[])\n", "setup(install_requires=[\"a>=1\"])\n",
+  "setup(install_requires=reqs)\n", "setup(install_requires=open(\"r.txt\").read().splitlines())\n", "setup(name=\"x\")  # install_requires=[\"a\"]\n",
+  "setup(install_requires=[] + reqs)\n", "setup(install_requires=[] if x else [\"a\"])\n", "setup(\n    install_requires=[],\n)\n"];
+const tenCfg = "[metadata]\nname = tenacity\n\n[options]\ninstall_requires =\npython_requires = >=3.10\npackages = find:\n\n[options.extras_require]\ntest =\n    pytest\n    tornado>=4.5\n    typeguard\n";
+const cfc = [tenCfg, "[options]\ninstall_requires =\n    a>=1\n", "[options]\ninstall_requires = a\n", "[options]\ninstall_requires =\n    # none\n", "[options.extras_require]\ninstall_requires = a\n"];
+const d = process.env.SD_DIR; mkdirSync(d, { recursive: true });
+const git = (...a) => spawnSync("git", ["-C", d, ...a], { encoding: "utf8" });
+git("init", "-q", "-b", "main"); git("config", "user.name", "e2e"); git("config", "user.email", "e2e@example.invalid");
+writeFileSync(d + "/setup.py", ten); writeFileSync(d + "/setup.cfg", tenCfg);
+writeFileSync(d + "/pyproject.toml", "[build-system]\nrequires = [\"setuptools\", \"setuptools_scm[toml]>=3.4\"]\n\n[tool.ruff]\nline-length = 88\n");
+git("add", "-A", "."); git("commit", "-q", "-m", "base"); const before = declaresPythonEnv(d, "HEAD");
+writeFileSync(d + "/requirements.txt", "tornado\n"); git("add", "requirements.txt"); git("commit", "-q", "-m", "reqs");
+console.log(pyc.map(py).join(" ") + " | " + cfc.map(cfg).join(" ") + " | " + before + " " + declaresPythonEnv(d, "HEAD"));' 2>&1)"
+[ "$SD" = "false false false true true true false true true false | false true true false false | false true" ] && ok "SETUP-DEPS: a setup.py or setup.cfg counts as a Python environment only with runtime requirements (tenacity's reads false, a requirements.txt makes it true)" || bad "SETUP-DEPS unit gave: $SD"
 # High tier through the BUNDLE (LOKI_TS_ENTRY is dist/loki.js): the security scan must find its script from the package
 # root. A path relative to the bundle file points outside the package and reads "secret-scan.sh not found" (PARTIAL).
 LOKI_RISK_TIER=high LOKI_SESSION_MODEL=haiku E2E_STUB_ARGV_LOG="$T/high-argv.log" run_engine done
