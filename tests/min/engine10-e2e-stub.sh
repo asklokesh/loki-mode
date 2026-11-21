@@ -44,6 +44,7 @@
 #   5. stages/xreview.ts: default reviewer on medium only (the unit line must fail).
 #   6. loki-ts/src/engine10/stages/seal.ts: sysInfo always null (the no-manifest leg reads PARTIAL).
 #   7. loki-ts/src/util/python.ts: declaresPythonEnv always false (the requirements.txt leg reads VERIFIED).
+#   7b. loki-ts/src/util/python.ts: pyprojectDeclaresDeps counts [build-system] requires again (the BUILD-REQUIRES cell reads true for build_only).
 #   8. loki-ts/src/engine10/stages/seal.ts: drop leanHold from verdictOf (the never-calls-multiply leg reads VERIFIED).
 #   9. loki-ts/src/util/check_result.ts: changedSymbols counts any removed line as removed code (the
 #      never-calls-multiply leg reads VERIFIED: the replaced comment credits add()).
@@ -505,6 +506,15 @@ py_engine() {
 }
 outcome() { printf '%s\n' "$OUT" | sed -n 's/^Outcome:[[:space:]]*\([A-Z_]*\).*/\1/p' | head -1; }
 SYS="tests ran on the system interpreter"
+# BUILD-REQUIRES (util/python.ts pyprojectDeclaresDeps): [build-system] requires and an empty dependencies list are not a declared environment, so the
+# system interpreter is the project's own and its note does not cap (V1 calibration: 6 of 8 merged fixes were held by it). Plant 7b: count
+# build-system requires again; the build_only and empty cells read true.
+BR="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const { pyprojectDeclaresDeps: f } = await import("./src/util/python.ts");
+const c = ["[build-system]\nrequires = [\"setuptools\"]\n[project]\nname = \"x\"\n", "[project]\ndependencies = []\n", "[project]\ndependencies = [\n  # none\n]\n",
+  "[project]\ndependencies = [\"requests\"]\n", "[project]\ndependencies = [\n  \"attrs\",\n]\n", "[project.optional-dependencies]\ntest = [\"pytest\"]\n", "[tool.poetry.dependencies]\npython = \"3\"\n", "[dependency-groups]\ndev = [\"pytest\"]\n"];
+console.log(c.map(f).join(" "));' 2>&1)"
+[ "$BR" = "false false false true true true true true" ] && ok "BUILD-REQUIRES: build-system requires and an empty dependencies list do not count as a Python environment; real dependencies do" || bad "BUILD-REQUIRES unit gave: $BR"
 # High tier through the BUNDLE (LOKI_TS_ENTRY is dist/loki.js): the security scan must find its script from the package
 # root. A path relative to the bundle file points outside the package and reads "secret-scan.sh not found" (PARTIAL).
 LOKI_RISK_TIER=high LOKI_SESSION_MODEL=haiku E2E_STUB_ARGV_LOG="$T/high-argv.log" run_engine done

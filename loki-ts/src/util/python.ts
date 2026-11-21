@@ -473,14 +473,34 @@ export function projectInterpreter(root: string): "project" | "system" {
 /** The system-interpreter advisory (verify.ts) is a cap only when the repo declares a Python environment the system interpreter may not match.
  *  True when any file in the tree at `ref` is a dependency manifest or lock (requirements*.txt, Pipfile, setup.py, poetry/uv/pdm lock,
  *  conda environment), a setup.cfg with install_requires, or a pyproject.toml declaring dependencies. Fails closed: an unreadable tree is true. */
+/** BUILD-REQUIRES: true when a pyproject.toml declares dependencies the code needs to run. `requires` under [build-system] lists what builds a wheel
+ *  (setuptools, flit_core), not what the code imports, so it is not counted, and neither is an empty `dependencies = []`. A non-empty [project]
+ *  `dependencies` list, any optional-dependencies, and a poetry, pdm, uv or dependency-groups table count. Measured on the V1 calibration seed: all six
+ *  Python tasks declare only build-system requires, and the system-interpreter cap held 6 of 8 merged fixes below VERIFIED. */
+export function pyprojectDeclaresDeps(text: string): boolean {
+  if (/^\s*\[(?:tool\.poetry|tool\.pdm|tool\.uv|project\.optional-dependencies|dependency-groups)\b/m.test(text)) return true;
+  let table = "";
+  const lines = text.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i]!.replace(/#.*$/, ""), h = /^\s*\[([^\]]+)\]\s*$/.exec(l);
+    if (h) { table = h[1]!.trim(); continue; }
+    if (table !== "project") continue;
+    if (/^\s*optional-dependencies\s*=/.test(l)) return true;
+    const m = /^\s*dependencies\s*=\s*\[(.*)$/.exec(l);
+    if (!m) continue;
+    let body = m[1]!; for (let j = i + 1; !body.includes("]") && j < lines.length; j++) body += lines[j]!.replace(/#.*$/, "");
+    if (/["']/.test(body.slice(0, body.indexOf("]") < 0 ? body.length : body.indexOf("]")))) return true;
+  }
+  return false;
+}
 export function declaresPythonEnv(root: string, ref: string): boolean {
   const MANIFEST = /^(?:[\w.-]*requirements[\w.-]*\.(?:txt|in)|Pipfile(?:\.lock)?|setup\.py|poetry\.lock|uv\.lock|pdm\.lock|environment\.ya?ml|conda\.ya?ml)$/i;
-  const DEPS: Record<string, RegExp> = { "pyproject.toml": /^\s*(?:dependencies|optional-dependencies|requires)\s*=|^\s*\[(?:tool\.poetry|tool\.pdm|tool\.uv|project\.optional-dependencies|dependency-groups)/m, "setup.cfg": /^\s*install_requires\s*=/m };
+  const DEPS: Record<string, (text: string) => boolean> = { "pyproject.toml": pyprojectDeclaresDeps, "setup.cfg": (t) => /^\s*install_requires\s*=/m.test(t) };
   try {
     for (const f of safeGit(root, ["ls-tree", "-r", "-z", "--name-only", ref]).split("\0").filter(Boolean)) {
       const b = f.slice(f.lastIndexOf("/") + 1);
       if (MANIFEST.test(b)) return true;
-      if (DEPS[b] && DEPS[b]!.test(safeGit(root, ["show", `${ref}:${f}`]))) return true;
+      if (DEPS[b] && DEPS[b]!(safeGit(root, ["show", `${ref}:${f}`]))) return true;
     }
     return false;
   } catch { return true; }
