@@ -14,6 +14,11 @@
 #   detached-outcome  do not call on_exit in _reap_child
 #   jobs-source       drop the AUTOPAUSE_EXEMPT check
 #   review            remove the TRUSTED_ASSOCIATIONS check; make _remove_review_clone a no-op
+#   R1f address-optin drop the _address_post_on() check in _address_on_clone (the opt-in-off cell runs address)
+#   R1g reply-skip    drop the in_reply_to_id skip in handle_pull_request_review_comment_event (the reply cell runs address)
+#   R1h live-release  drop release() from done() in _address_on_clone (the second review after a finished one is skipped)
+#   R1i loki-branch   drop the LOKI_RUN_BRANCH_RE check (the feature-x review runs address)
+#   R1j sync-loop     drop the loki/ head ref skip in handle_pull_request_event (a synchronize on a Loki branch runs start)
 #   cli               make --resume leave paused true
 #   http-e2e          route workflow_run to handle_issues_event in TRIGGERS
 
@@ -26,7 +31,7 @@ SRV="$ROOT/autonomy/trigger-server.py"
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 
-# Fixture: bare origin with main and feature-x, a clone, and a stub loki.
+# Fixture: bare origin with main, feature-x and the Loki run branch loki/e10-r1 (same commit), a clone, and a stub loki.
 mkdir -p "$T/bin" "$T/seed"
 git init -q -b main "$T/seed"
 printf 'one\n' > "$T/seed/a.txt"
@@ -34,6 +39,7 @@ git -C "$T/seed" add a.txt && git -C "$T/seed" commit -q -m init
 git -C "$T/seed" checkout -q -b feature-x
 printf 'two\n' > "$T/seed/b.txt"
 git -C "$T/seed" add b.txt && git -C "$T/seed" commit -q -m feat
+git -C "$T/seed" branch loki/e10-r1
 git clone -q --bare "$T/seed" "$T/origin.git"
 git clone -q "$T/origin.git" "$T/repo"
 FX_SHA="$(git -C "$T/origin.git" rev-parse feature-x)"
@@ -70,7 +76,7 @@ def run_calls():
     out = []
     for l in calls.read_text().splitlines():
         parts = l.split("|", 2)
-        if len(parts) == 3 and parts[2].startswith(("start ", "verify-pr ")):
+        if len(parts) == 3 and parts[2].startswith(("start ", "verify-pr ", "address ")):
             out.append(l)
     return out
 
@@ -181,14 +187,13 @@ mod.HEALTH.set_paused("slack", True)
 s, st = mod.dispatch_event(mod.JOB_EVENT, dict(job))
 check("jobs-source: a paused source fails the job with a terminal status", st == mod.JOB_STATUS_FAILED)
 
-# review
-def review(**kw):
-    p = {"action": "submitted", "repository": {"full_name": "acme/calc"},
-         "review": {"state": "changes_requested", "author_association": "MEMBER", "body": "please fix",
-                    "user": {"login": "rev", "type": "User"}},
-         "pull_request": {"number": 5, "state": "open",
-                          "head": {"ref": "feature-x", "sha": os.environ["FX_SHA"],
-                                   "repo": {"full_name": "acme/calc"}}}}
+# review (R1 review loop): a trusted review or new inline comment on a Loki PR runs `loki address o/r#N --post` on a fresh clone,
+# only with LOKI_TRIGGER_ADDRESS_POST=1 in the server environment
+def pr_payload(p, kw):
+    p.update({"repository": {"full_name": "acme/calc"},
+              "pull_request": {"number": 5, "state": "open",
+                               "head": {"ref": "loki/e10-r1", "sha": os.environ["FX_SHA"],
+                                        "repo": {"full_name": "acme/calc"}}}})
     for k, v in kw.items():
         cur = p
         parts = k.split("__")
@@ -197,28 +202,77 @@ def review(**kw):
         cur[parts[-1]] = v
     return p
 
+def review(**kw):
+    return pr_payload({"action": "submitted",
+                       "review": {"state": "changes_requested", "author_association": "MEMBER", "body": "please fix",
+                                  "user": {"login": "rev", "type": "User"}}}, kw)
+
+def review_comment(**kw):
+    return pr_payload({"action": "created",
+                       "comment": {"id": 9, "author_association": "MEMBER", "body": "rename x", "path": "b.txt",
+                                   "user": {"login": "rev", "type": "User"}}}, kw)
+
+os.environ["LOKI_TRIGGER_ADDRESS_POST"] = "1"
 reset(rc=0)
 s, st = mod.dispatch_event("pull_request_review", review())
 rc = run_calls()
 check("review: fired", st == "fired")
-check("review: one verify-pr respond call", len(rc) == 1 and rc[0].endswith("|verify-pr respond acme/calc#5"))
+check("review: one address call with --post", len(rc) == 1 and rc[0].endswith("|address acme/calc#5 --post"))
 cwd_part, branch_part = (rc[0].split("|")[0], rc[0].split("|")[1]) if rc else ("", "")
-check("review: ran in a clone under .loki/triggers/review on feature-x",
-      "/.loki/triggers/review/pr-5-" in cwd_part and branch_part == "feature-x")
+check("review: ran in a clone under .loki/triggers/review on loki/e10-r1",
+      "/.loki/triggers/review/pr-5-" in cwd_part and branch_part == "loki/e10-r1")
 check("review: clone removed afterwards", not os.path.exists(cwd_part))
+check("review: the per-PR live mark is released when the run ends", "acme/calc#5" not in mod._ADDRESS_LIVE)
+reset(rc=0)
+s, st = mod.dispatch_event("pull_request_review", review(review__state="commented"))
+check("review: a commented review fires too", st == "fired" and len(run_calls()) == 1)
+reset(rc=0)
+s, st = mod.dispatch_event("pull_request_review_comment", review_comment())
+rc = run_calls()
+check("review comment: a new trusted inline comment fires the same address call",
+      st == "fired" and len(rc) == 1 and rc[0].endswith("|address acme/calc#5 --post"))
 for desc, kw in (("author NONE", {"review__author_association": "NONE"}),
                  ("state approved", {"review__state": "approved"}),
                  ("fork head", {"pull_request__head__repo": {"full_name": "evil/calc"}}),
                  ("moved head sha", {"pull_request__head__sha": "d" * 40}),
                  ("bot reviewer", {"review__user": {"login": "x[bot]", "type": "Bot"}}),
                  ("closed PR", {"pull_request__state": "closed"}),
-                 ("bad ref", {"pull_request__head__ref": "../x"})):
+                 ("bad ref", {"pull_request__head__ref": "../x"}),
+                 ("not a Loki branch", {"pull_request__head__ref": "feature-x"})):
     reset(rc=0)
     s, st = mod.dispatch_event("pull_request_review", review(**kw))
     check("review: %s is not run" % desc, st.startswith(("skipped", "rejected")) and len(run_calls()) == 0)
+for desc, kw in (("a reply in a thread", {"comment__in_reply_to_id": 3}),
+                 ("a Loki reply", {"comment__body": "Addressed in abc.\n<!-- loki-respond -->"}),
+                 ("a bot comment", {"comment__user": {"login": "x[bot]", "type": "Bot"}}),
+                 ("an edited comment", {"action": "edited"})):
+    reset(rc=0)
+    s, st = mod.dispatch_event("pull_request_review_comment", review_comment(**kw))
+    check("review comment: %s is not run" % desc, st.startswith("skipped") and len(run_calls()) == 0)
+reset(rc=0)
+mod._ADDRESS_LIVE.add("acme/calc#5")
+s, st = mod.dispatch_event("pull_request_review", review())
+check("review: a second event while an address runs for the PR is skipped",
+      "already running" in str(st) and len(run_calls()) == 0)
+mod._ADDRESS_LIVE.discard("acme/calc#5")
+os.environ.pop("LOKI_TRIGGER_ADDRESS_POST", None)
+reset(rc=0)
+s, st = mod.dispatch_event("pull_request_review", review())
+check("review: without LOKI_TRIGGER_ADDRESS_POST=1 nothing runs (the loop pushes and replies only on the server's opt-in)",
+      "LOKI_TRIGGER_ADDRESS_POST" in str(st) and len(run_calls()) == 0)
+os.environ["LOKI_TRIGGER_ADDRESS_POST"] = "1"
+reset(rc=0)
+sync = {"action": "synchronize", "repository": {"full_name": "acme/calc"},
+        "pull_request": {"number": 5, "head": {"ref": "loki/e10-r1", "sha": os.environ["FX_SHA"]}}}
+s, st = mod.dispatch_event("pull_request", sync)
+check("synchronize: a push to a Loki branch (the review loop's own push) starts no run", st.startswith("skipped") and len(run_calls()) == 0)
+reset(rc=0)
+sync["pull_request"]["head"]["ref"] = "feature-x"
+s, st = mod.dispatch_event("pull_request", sync)
+check("synchronize: a push to any other PR branch still runs start", st == "fired" and len(run_calls()) == 1)
 reset(rc=1, pause_after=1)
 mod.dispatch_event("pull_request_review", review())
-check("review: a failed respond run pauses the review source", hj().get("review", {}).get("paused") is True)
+check("review: a failed address run pauses the review source", hj().get("review", {}).get("paused") is True)
 PYEOF
 
 out="$(cd "$T/repo" && SRV="$SRV" FX_SHA="$FX_SHA" python3 -I "$T/driver.py" 2>&1)"

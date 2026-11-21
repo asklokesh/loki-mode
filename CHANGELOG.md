@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Loki answers review comments on its own pull requests (`loki address`)
+
+- `loki address owner/repo#N` takes each open review thread and review summary on a pull request Loki opened, from a user with write access, and runs one Loki 10 run per item on the PR branch. A change lands on the branch only when that run's own receipt reads VERIFIED and was measured from the branch tip. Each item gets a reply that says what changed and the evidence (commit, files, run id, receipt sha256), or why it was held.
+- Replies are written to `.loki/address/<owner>-<repo>-<N>/`. `--post` pushes the branch and posts them, with the first pull request's push guards and never to a fork. It never merges and never resolves a thread. The trigger server runs it for `pull_request_review` and the new `pull_request_review_comment` events, only with `LOKI_TRIGGER_ADDRESS_POST=1`.
+- Behaviour change: `loki verify-pr respond` is now the same command, so it no longer pushes or replies without `--post`, and it refuses a pull request that is not on a `loki/e10-*` branch with a Loki receipt. The review trigger no longer runs on a server without the opt-in, and a `pull_request synchronize` on a `loki/*` branch no longer starts a run.
+
 
 ## v11.174.0 (2026-11-20)
 

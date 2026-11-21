@@ -48,6 +48,7 @@ Bun-native commands:
                          (flags: --label L --limit N --parallel K --draft --dry-run --json --yes --comment --triage --no-split)
   verify-pr <url|o/r#N>  Verify a PR against its linked issue in a sandbox (LOKI_VERIFY_PR=1)
   answer [run] [text]    Answer a BLOCKED run; it continues under the same run id (text, --text, or the Control Plane answer file)
+  address <o/r#N> [--post] Answer review comments on a Loki PR: one verified run per comment; --post pushes and replies
   control <subcmd>       Control plane (on by default; LOKI_CONTROL=0 turns it off)
                          (subcmds: open [--no-open] | serve [--port N] [--db PATH] | backfill [DIR] | stop | status)
   dashboard              Open the dashboard in your browser (same as: control open)
@@ -433,6 +434,10 @@ async function dispatch(argv: readonly string[]): Promise<number> {
       return runVerifyPr(rest);
     }
 
+    case "address": {
+      const { runAddress } = await import("./commands/verify_pr.ts");
+      return runAddress(rest);
+    }
     case "answer": {
       const { runAnswerCli } = await import("./features/blocked_answer.ts");
       return runAnswerCli(rest);

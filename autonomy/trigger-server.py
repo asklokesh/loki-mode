@@ -659,7 +659,7 @@ def _scoped_child_env(extra_env=None):
 
 
 # Commands whose exit code feeds the per-source trigger health counters.
-RUN_COMMANDS = ("start", "verify-pr")
+RUN_COMMANDS = ("start", "verify-pr", "address")
 
 # Set by dispatch_event on the worker thread: the trigger source of the event
 # being handled, so run_loki_outcome can attribute the run's exit code to it.
@@ -674,8 +674,8 @@ def run_loki_outcome(args, dry_run=False, stdout_sink=None, extra_env=None, cwd=
     When stdout_sink is a list, the decoded stdout is appended to it on completion.
     extra_env adds child env vars (e.g. LOKI_STEER_SOURCE) on top of the scoped env.
     on_exit(returncode) is called once the child ends, also from the reaper thread
-    for a detached run; it gets None when the launch itself failed. A start or
-    verify-pr run launched for a trigger source is also recorded in HEALTH.
+    for a detached run; it gets None when the launch itself failed. A start, verify-pr or
+    address run launched for a trigger source is also recorded in HEALTH.
     """
     cmd = ["loki"] + args
     if dry_run:
@@ -1021,6 +1021,8 @@ def handle_pull_request_event(payload, dry_run=False):
         return None, "rejected (invalid PR number)"
     if repo_full_name and not valid_repo_full_name(repo_full_name):
         return None, "rejected (invalid repository full_name)"
+    if str((pr.get("head") or {}).get("ref") or "").startswith("loki/"):
+        return None, "skipped (Loki's own branch: its pushes never start another run; reviews use the review loop)"
     ref = str(pr_number)
     if repo_full_name:
         ref = "%s#%s" % (repo_full_name, pr_number)
@@ -1609,22 +1611,36 @@ def _remove_review_clone(path):
         logging.error("review clone cleanup failed: %s", e)
 
 
-def handle_pull_request_review_event(payload, dry_run=False):
-    """A trusted 'changes requested' review runs `loki verify-pr respond` on a fresh clone of the PR branch."""
-    action = payload.get("action", "")
-    if action != "submitted":
-        return None, "skipped (action=%s)" % action
-    review = payload.get("review") or {}
-    state = str(review.get("state", "")).lower()
-    if state != "changes_requested":
-        return None, "skipped (review state=%s)" % _clip(state, 30)
-    if review.get("author_association") not in TRUSTED_ASSOCIATIONS:
-        return None, "skipped (review author not authorized)"
-    user = review.get("user") or {}
+# R1 review loop: `loki address o/r#N --post` on a fresh clone of a Loki PR branch. It pushes and replies, so it runs only when the
+# server's own environment opts in (LOKI_TRIGGER_ADDRESS_POST=1), never because of anything in a payload; a clone is deleted on exit,
+# so a run without --post there would spend and keep nothing. One review fires one review event plus one comment event per inline
+# comment: one address per PR runs at a time (it answers every open comment), and Loki's own replies are never items.
+ADDRESS_POST_ENV = "LOKI_TRIGGER_ADDRESS_POST"
+LOKI_RUN_BRANCH_RE = re.compile(r"^loki/e10-[A-Za-z0-9-]+$")
+REVIEW_ITEM_STATES = ("changes_requested", "commented")
+_ADDRESS_LIVE = set()
+_ADDRESS_LOCK = threading.Lock()
+
+
+def _address_post_on():
+    return os.environ.get(ADDRESS_POST_ENV, "") == "1"
+
+
+def _untrusted_author(item):
+    """Reason an item (review or review comment) must not steer a run, else None."""
+    if item.get("author_association") not in TRUSTED_ASSOCIATIONS:
+        return "author not authorized"
+    user = item.get("user") or {}
     if user.get("type") == "Bot" or str(user.get("login", "")).endswith("[bot]"):
-        return None, "skipped (bot review)"
-    if LOKI_COMMENT_MARKER in str(review.get("body") or ""):
-        return None, "skipped (loki-authored review)"
+        return "bot author"
+    if LOKI_COMMENT_MARKER in str(item.get("body") or ""):
+        return "loki-authored"
+    return None
+
+
+def _address_on_clone(payload, summary, dry_run=False):
+    """Shared PR checks, then `loki address o/r#N --post` on a fresh clone at the head sha. Write access, the receipt and every push guard
+    are checked again by the command itself (util/pr_lessons.ts respondToReview); these checks only keep a clone from starting."""
     pr = payload.get("pull_request") or {}
     repo_full_name = (payload.get("repository") or {}).get("full_name", "")
     if not valid_repo_full_name(repo_full_name):
@@ -1640,13 +1656,27 @@ def handle_pull_request_review_event(payload, dry_run=False):
     ref = str(head.get("ref") or "")
     if not REVIEW_REF_RE.match(ref) or ".." in ref:
         return None, "rejected (invalid head ref)"
+    if not LOKI_RUN_BRANCH_RE.match(ref):
+        return None, "skipped (not a Loki pull request branch)"
     sha = str(head.get("sha") or "")
     if not FULL_SHA_RE.match(sha):
         return None, "rejected (invalid head sha)"
-    summary = "review changes requested on %s#%s" % (repo_full_name, number)
+    if not _address_post_on():
+        return None, "skipped (%s is not 1: the review loop pushes and replies only when the server opts in)" % ADDRESS_POST_ENV
+    pr_ref = "%s#%s" % (repo_full_name, number)
+    args = ["address", pr_ref, "--post"]
+    summary = "%s on %s" % (summary, pr_ref)
     if dry_run:
-        run_loki_command(["verify-pr", "respond", "%s#%s" % (repo_full_name, number)], dry_run=True)
+        run_loki_command(args, dry_run=True)
         return summary, "fired"
+    with _ADDRESS_LOCK:
+        if pr_ref in _ADDRESS_LIVE:
+            return None, "skipped (address already running for this pull request)"
+        _ADDRESS_LIVE.add(pr_ref)
+
+    def release():
+        with _ADDRESS_LOCK:
+            _ADDRESS_LIVE.discard(pr_ref)
 
     env = _scoped_child_env()
     try:
@@ -1655,6 +1685,7 @@ def handle_pull_request_review_event(payload, dry_run=False):
     except (OSError, subprocess.SubprocessError):
         origin = ""
     if not origin:
+        release()
         return summary, "error"
     root = _review_root()
     root.mkdir(parents=True, exist_ok=True)
@@ -1668,18 +1699,51 @@ def handle_pull_request_review_event(payload, dry_run=False):
     except (OSError, subprocess.SubprocessError) as e:
         logging.error("review clone failed: %s", e)
         _remove_review_clone(clone)
+        release()
         HEALTH.record("review", None, 0.0)
         return summary, "error"
     if got.lower() != sha.lower():
         _remove_review_clone(clone)
+        release()
         return None, "skipped (PR head moved)"
-    success = run_loki_command(["verify-pr", "respond", "%s#%s" % (repo_full_name, number)],
-                               cwd=str(clone), on_exit=lambda rc: _remove_review_clone(clone))
+
+    def done(_rc):
+        _remove_review_clone(clone)
+        release()
+
+    success = run_loki_command(args, cwd=str(clone), on_exit=done)  # on_exit runs once the child ends, a failed launch included
     if success:
         send_notification("Trigger fired: %s" % summary)
-    else:
-        _remove_review_clone(clone)
     return summary, "fired" if success else "error"
+
+
+def handle_pull_request_review_event(payload, dry_run=False):
+    """A trusted review that requests changes or comments on a Loki PR runs `loki address o/r#N --post` (opt-in, see ADDRESS_POST_ENV)."""
+    action = payload.get("action", "")
+    if action != "submitted":
+        return None, "skipped (action=%s)" % action
+    review = payload.get("review") or {}
+    state = str(review.get("state", "")).lower()
+    if state not in REVIEW_ITEM_STATES:
+        return None, "skipped (review state=%s)" % _clip(state, 30)
+    why = _untrusted_author(review)
+    if why:
+        return None, "skipped (review %s)" % why
+    return _address_on_clone(payload, "review %s" % state.replace("_", " "), dry_run=dry_run)
+
+
+def handle_pull_request_review_comment_event(payload, dry_run=False):
+    """A new trusted inline review comment (not a reply in a thread) on a Loki PR runs the same review loop."""
+    action = payload.get("action", "")
+    if action != "created":
+        return None, "skipped (action=%s)" % action
+    comment = payload.get("comment") or {}
+    if comment.get("in_reply_to_id"):
+        return None, "skipped (a reply in a thread, not a new comment)"
+    why = _untrusted_author(comment)
+    if why:
+        return None, "skipped (review comment %s)" % why
+    return _address_on_clone(payload, "review comment", dry_run=dry_run)
 
 
 # Map event name -> handler. Keeps do_POST routing declarative. JOB_EVENT rides
@@ -1692,6 +1756,7 @@ TRIGGERS = {
     "pull_request": ("pull_request", handle_pull_request_event),
     "workflow_run": ("ci", handle_workflow_run_event),
     "pull_request_review": ("review", handle_pull_request_review_event),
+    "pull_request_review_comment": ("review", handle_pull_request_review_comment_event),
     JOB_EVENT: ("jobs", handle_job_event),
     SENTRY_EVENT: ("sentry", handle_sentry_event),
 }
