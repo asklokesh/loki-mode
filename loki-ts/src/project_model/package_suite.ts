@@ -21,6 +21,8 @@ interface SuiteCheck {
   name: string; cmd: string; result: "pass" | "fail" | "not_run"; duration_s: number; reason?: string; exit?: number | null; shape?: string; ids?: string[]; errors?: Record<string, string[]>; unhandled?: string[]; first_error?: string; excerpt?: string; count?: string;
   load_external?: string[]; // UNRUNNABLE-EXTERNAL: deep.ts DeepCheck's field of the same name
   load_note?: string; // UNRUNNABLE-EXTERNAL: deep.ts DeepCheck's field of the same name
+  reused?: boolean; // FULL-SUITE-REUSE: deep.ts DeepCheck's field of the same name
+  reused_key?: string; // FULL-SUITE-REUSE: deep.ts DeepCheck's field of the same name
 }
 
 /** One full-suite command: `name` and `cmd` are the check's own fields, `run` is what executes in the repo-relative `cwd`. */
@@ -139,7 +141,7 @@ export const suiteTimeoutOn = (env: NodeJS.ProcessEnv = process.env): boolean =>
 export async function runPackageSuites(
   repoDir: string,
   signal: AbortSignal,
-  opts: { path?: string | undefined; timeoutMs: number | (() => number); baseSha?: string; skip?: (f: string) => boolean; changed?: string[] | undefined; symbols?: readonly string[] | undefined; proofFiles?: string[] | undefined; wallBaseRed?: boolean | undefined; targetPassed?: boolean | undefined; ownedOnly?: boolean; scope?: boolean; ensureBase?: (spec: SuiteSpec) => Promise<void> }, // RW-01: timeoutMs as a function is asked before each suite (the time left of the stage; 0: the suite is not started); scope: scopedSuites; ensureBase: measure this suite on base now (the base record is no longer taken at intake)
+  opts: { path?: string | undefined; timeoutMs: number | (() => number); baseSha?: string; skip?: (f: string) => boolean; changed?: string[] | undefined; symbols?: readonly string[] | undefined; proofFiles?: string[] | undefined; wallBaseRed?: boolean | undefined; targetPassed?: boolean | undefined; ownedOnly?: boolean; scope?: boolean; ensureBase?: (spec: SuiteSpec) => Promise<void>; reuse?: (s: { name: string; cmd: string; cwd: string }) => SuiteCheck | null }, // RW-01: timeoutMs as a function is asked before each suite (the time left of the stage; 0: the suite is not started); scope: scopedSuites; ensureBase: measure this suite on base now (the base record is no longer taken at intake)
   checks: SuiteCheck[],
   notProven: Set<string>,
 ): Promise<boolean> {
@@ -151,6 +153,8 @@ export async function runPackageSuites(
   for (const s of sc?.skipped ?? []) notProven.add(scopedOutNote(s));
   for (const spec of specs) {
     const { name, cmd, cwd, run: line, go } = spec, timeoutMs = typeof opts.timeoutMs === "function" ? opts.timeoutMs() : opts.timeoutMs;
+    const reused = opts.reuse?.({ name, cmd, cwd }) ?? null;
+    if (reused) { checks.push(reused); continue; } // FULL-SUITE-REUSE (verify.ts reusableRun): the previous verify's result on the same key, marked reused on the check, never in notProven
     if (timeoutMs <= 0 && !signal.aborted) { checks.push({ name, cmd, result: "not_run", duration_s: 0, reason: "no time left before the verify limit" }); notProven.add(`not run: ${name} (no time left before the verify limit)`); continue; }
     const started = Date.now();
     const r = await run(["bash", "-c", line], { cwd: join(repoDir, cwd), timeoutMs, env: suiteEnv(opts.path), ...(suiteTimeoutOn() ? { group: true, signal } : {}) }); // SUITE-TIMEOUT: the whole process tree stops at the limit, and at an abort (its own group is outside the worker's, so an abort must reach it here)

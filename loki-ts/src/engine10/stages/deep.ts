@@ -27,6 +27,8 @@ export interface DeepCheck extends ReceiptCheck {
   secret_matches?: string[]; // SECRET-PUSH: set on every security scan fail: "<file>:<head line>" per secret hit ([] when only a secure-scan HIGH finding failed it); never the matched text
   load_external?: string[]; // UNRUNNABLE-EXTERNAL: the external modules a harness-owned load error misses on base and head alike (load_owner.ts harnessLoad)
   load_note?: string; // UNRUNNABLE-EXTERNAL: the exact NOT PROVEN line that load error produced, so verify can list it as a could-not-run note
+  reused?: boolean; // FULL-SUITE-REUSE: this result is the previous verify's run of the same suite on the same key (verify.ts reusableRun), not a new run
+  reused_key?: string; // FULL-SUITE-REUSE: the key both runs share (verify.ts fullSuiteKey)
   reason?: string; exit?: number | null; shape?: string; executed?: number; load_errors?: string[]; start?: StartFacts; names_changed?: boolean; change_lines?: string[] | null; failed?: number | null; ids?: string[]; errors?: Record<string, string[]>; unhandled?: string[]; first_error?: string; excerpt?: string; base_red?: boolean; // first_error: the suite's first failing line (L005 stall signature); base_red: a full-suite fail whose every failing id already failed on base (repo-profile suites), never a red status; excerpt: redacted failure text for the fix brief; ids: failing test ids of the real run (failIds), read by verify's baseline attribution
 }
 export interface DeepOptions {
@@ -43,12 +45,13 @@ export interface DeepOptions {
   env?: NodeJS.ProcessEnv; // for assertWorkerEnv; defaults to process.env
   pushExtraEnv?: Record<string, string>; // merged into the push child's env, tests only (e.g. a stub's own log path)
   post?: boolean; // DEEP-POST: false when the detached deep-post poster (deepPost) posts the comment and status; the worker holds withheld credentials and could not
+  reuse?: (s: { name: string; cmd: string; cwd: string }) => DeepCheck | null; // FULL-SUITE-REUSE (verify only, low tier): asked before each suite runs; a check it returns is pushed as the suite's result (marked reused on the check, never in notProven) and the suite is not run
 }
 export const DEFAULT_SECRET_SCAN_SH = join(REPO_ROOT, "autonomy/lib/secret-scan.sh"); // HONEST-VERIFIED: a fixed depth from import.meta.url pointed outside the package in the dist bundle, so the security scan never ran there (NOT PROVEN on every high-risk run)
 const fullSuiteMs = (): number => (defaultBudgetsOn() ? BASELINE_CMD_TIMEOUT_S * 1000 : Infinity); // NO-DEFAULT-BUDGET: no time limit means no suite timeout (shell.run's silence guard ends a silent suite); with budgets, 5 min per runner, the same budget its base run gets (repo_profile.ts); deep's own stage limit (2700s) is the outer bound
 /** One check per detected runner, run to completion (no retry: flaky-rerun  is a fast-verify concept, ENGINE.md never asks for it in deep verify). */
 export async function runFullSuite(ctx: RunContext, signal: AbortSignal, opts: DeepOptions, checks: DeepCheck[], notProven: Set<string>): Promise<void> {
-  if (await runPackageSuites(ctx.repoDir, signal, { path: opts.path, timeoutMs: opts.suiteTimeoutMs ?? opts.fullSuiteTimeoutMs ?? fullSuiteMs(), baseSha: ctx.baseSha, skip: installOwned(ctx.repoDir, ctx.outputs().intake?.install_created), changed: opts.changed, symbols: opts.symbols, proofFiles: opts.proofFiles, wallBaseRed: opts.wallBaseRed, targetPassed: opts.targetPassed, ...(opts.ownedOnly ? { ownedOnly: true } : {}), ...(opts.scope ? { scope: true } : {}), ...(opts.ensureBase ? { ensureBase: opts.ensureBase } : {}) }, checks, notProven)) return;
+  if (await runPackageSuites(ctx.repoDir, signal, { path: opts.path, timeoutMs: opts.suiteTimeoutMs ?? opts.fullSuiteTimeoutMs ?? fullSuiteMs(), baseSha: ctx.baseSha, skip: installOwned(ctx.repoDir, ctx.outputs().intake?.install_created), changed: opts.changed, symbols: opts.symbols, proofFiles: opts.proofFiles, wallBaseRed: opts.wallBaseRed, targetPassed: opts.targetPassed, ...(opts.ownedOnly ? { ownedOnly: true } : {}), ...(opts.scope ? { scope: true } : {}), ...(opts.ensureBase ? { ensureBase: opts.ensureBase } : {}), ...(opts.reuse ? { reuse: opts.reuse } : {}) }, checks, notProven)) return;
   const map = await ctx.tests.detect(ctx.repoDir);
   if (map.runners.length === 0) {
     notProven.add("full suite (no test runner detected)");
@@ -62,6 +65,8 @@ export async function runFullSuite(ctx: RunContext, signal: AbortSignal, opts: D
       notProven.add(`not run: ${name}`);
       continue;
     }
+    const reused = opts.reuse?.({ name, cmd: [spec.cmd, ...spec.args].join(" "), cwd: "." }) ?? null;
+    if (reused) { checks.push(reused); continue; } // FULL-SUITE-REUSE: the disclosure is the check's own reused field; a NOT PROVEN line would cap every reused run
     const started = Date.now();
     const r = await run([spec.cmd, ...spec.args], {
       cwd: ctx.repoDir,
