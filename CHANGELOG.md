@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### A plan that found remaining work is no longer cut short by an early "already done" check
+
+- Seen on FireLater#24 with 11.175.0: the background already-done check matched the shipped Postgres search and stopped implement after 1 second, while the plan had scoped six files of remaining work (the optional Elasticsearch path, its tests and docs). The run ended PARTIAL with no change and no PR. Now, when the plan wrote plan-scope.json with `behavior_change: true` and at least one file, a deferred already-done hit does not stop implement; the plan's work is built and verified as usual, and an `already.vetoed` event records why. A plan that names no file, a seeded lean-path scope, or an unreadable scope leaves the already-done result as before. Opt out with `LOKI_E10_PLAN_VETOES_DONE=0`.
+
+
 ## v11.175.0 (2026-11-21)
 
 ### Four label rules ship switched off until their last review is closed

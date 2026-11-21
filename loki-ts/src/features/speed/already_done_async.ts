@@ -12,6 +12,7 @@ import type { RepoMap } from "../../engine10/repomap.ts";
 import type { RunContext, SessionResult, TestMap } from "../../engine10/types.ts";
 import { speedEnabled } from "../warm.ts";
 import { safeGit, safeGitRun } from "../../util/safe_git.ts";
+import { readScopeText } from "../../util/run_cap.ts";
 
 export { speedEnabled };
 /** True only when every path the model was shown exists at baseSha and the live tree still equals it (no edit,
@@ -63,6 +64,20 @@ function pinBaseTree(ctx: RunContext, signal: AbortSignal): Promise<string | nul
     return root;
   })();
 }
+/** PLAN-VETO (LOKI_E10_PLAN_VETOES_DONE, default on): the plan session read the repo against the whole task and
+ *  wrote plan-scope.json with behavior_change true and at least one file to change. A deferred "already done" hit
+ *  that contradicts that plan does not stop implement: the work the plan found is built and then verified, so a
+ *  partly shipped feature is finished instead of closed as done with no change (FireLater#24 on 11.175.0). A plan
+ *  that names nothing, a lean-path seeded scope (no behavior_change field), or an unreadable file leaves the hit in force. */
+export function planFoundWork(runDir: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (/^(0|off|false|no)$/i.test((env["LOKI_E10_PLAN_VETOES_DONE"] ?? "").trim())) return false;
+  const r = readScopeText(runDir);
+  if (r.status !== "ok") return false;
+  try {
+    const j = JSON.parse(r.text) as { files?: unknown; behavior_change?: unknown };
+    return j.behavior_change === true && Array.isArray(j.files) && j.files.some((f) => typeof f === "string" && f.trim() !== "");
+  } catch { return false; }
+}
 /** Starts the background check. `apply` merges a confirmed result into the intake data (the same object the
  *  machine stored). Wraps ctx.sessions so the implement session is linked to the check's verdict. */
 export function deferAlreadyDone(
@@ -79,6 +94,7 @@ export function deferAlreadyDone(
     if (!hit || fired) return;
     const h = hit;
     if (!hitsUnchangedFromBase(ctx.repoDir, ctx.baseSha, [...new Set(hits.map((x) => x.path))])) { hit = null; return; }
+    if (planFoundWork(ctx.runDir)) { hit = null; ctx.emit("already.vetoed", "intake", { reason: "the plan scoped changes (plan-scope.json behavior_change true), so implement builds them" }); return; }
     try { apply(h); } catch { hit = null; return; }
     fired = true;
     ctx.emit("already.satisfied", "intake", { already_satisfied: true, evidence: h.evidence, deferred: true });

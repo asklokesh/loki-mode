@@ -417,4 +417,25 @@ EXTRA_ARGS=(--dev-model sonet); run_engine "$TASK" E2E_STUB_MODE=done LOKI_ROUTE
 has "roles typo on a real run: --dev-model sonet exits before any session, naming the nearest id" "$OUT" "engine10: role dev: unknown model 'sonet' on the claude provider; use haiku, sonnet, opus or fable, or a model id from the catalog (nearest: sonnet)"
 [ ! -s "$ROUTES" ] && ok "roles typo on a real run: no session started" || { bad "roles typo on a real run: sessions ran"; dump; }
 
+# PLAN-VETO (FireLater#24 on 11.175.0): a deferred already-done hit stopped implement after 1s while the plan had scoped
+# six files of remaining work. planFoundWork: plan-scope.json with behavior_change true and a file vetoes the hit; a lean
+# seeded scope ({files} only), an empty list, a missing file, bad JSON and the knob off leave the hit in force.
+# Plant: make planFoundWork return false always; the "work" value reads false.
+mkdir -p "$T/pv"
+pv="$(cd "$ROOT/loki-ts" && PV="$T/pv" bun -e '
+const { planFoundWork } = await import("./src/features/speed/already_done_async.ts");
+const { writeFileSync, rmSync } = await import("node:fs");
+const d = process.env.PV, f = d + "/plan-scope.json", out = [];
+const w = (t) => { if (t === null) rmSync(f, { force: true }); else writeFileSync(f, t); };
+for (const [k, t] of [["work", JSON.stringify({ files: ["a.ts"], behavior_change: true })], ["seeded", JSON.stringify({ files: ["a.ts"] })],
+  ["nochange", JSON.stringify({ files: ["a.ts"], behavior_change: false })], ["empty", JSON.stringify({ files: [], behavior_change: true })],
+  ["bad", "{"], ["missing", null]]) { w(t); out.push(k + "=" + planFoundWork(d)); }
+w(JSON.stringify({ files: ["a.ts"], behavior_change: true })); out.push("off=" + planFoundWork(d, { LOKI_E10_PLAN_VETOES_DONE: "0" }));
+console.log(out.join(" "));' 2>&1)"
+[ "$pv" = "work=true seeded=false nochange=false empty=false bad=false missing=false off=false" ] \
+  && ok "plan veto: a plan that scoped changes keeps implement running past a deferred already-done hit; every other scope leaves the hit" \
+  || bad "plan veto: got '$pv'"
+grep -q 'if (planFoundWork(ctx.runDir))' "$ROOT/loki-ts/src/features/speed/already_done_async.ts" \
+  && ok "plan veto: the deferred check's fire() consults the plan before stopping implement" || bad "plan veto: fire() does not call planFoundWork"
+
 finish
