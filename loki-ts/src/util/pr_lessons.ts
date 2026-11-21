@@ -139,9 +139,10 @@ export interface LearnResult { added: number; duplicates: number; skipped: numbe
 // R3 APPROVED LEARNING (LOKI_PR_LESSONS_APPROVAL, default on; 0 opts out). A lesson learnFromPr stores is PROPOSED: runs never read it until an
 // engineer approves it (`loki lessons approve <id>`, local state in this store) or the base commit's guidance carries it (a guide line with its
 // `loki-lesson:<id>` marker, or a .loki-checklist.json item with its id). The guidance is read with `git show <base>:<file>` only, so a run's own
-// edit approves nothing; a session's write tools are also denied under .loki/ (util/config_fence.ts), but the base path is the tamper-resistant
-// one. A lesson worth keeping carries a proposed edit that `loki lessons apply` writes into the working tree for the engineer to commit; nothing
-// here commits, pushes or posts. Lessons stored before (no approval field), run lessons and receipt facts are read exactly as before.
+// guidance edit approves nothing. This is a workflow gate, not tamper protection: the base read confirms only the id, and the text, its hash and
+// the approval state all live in the local store. A lesson worth keeping carries a proposed edit that `loki lessons apply` writes into the working
+// tree for the engineer to commit; nothing here commits, pushes or posts. Lessons stored before (no approval field), run lessons and receipt facts
+// are read exactly as before.
 export const approvalOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_PR_LESSONS_APPROVAL"] ?? "").trim());
 export const textSha = (s: string): string => createHash("sha256").update(s).digest("hex");
 export const LESSON_MARK = "loki-lesson:";
@@ -162,7 +163,7 @@ export function lessonWorth(text: string, author: string, kind: string): boolean
 /** Lesson text as one line of a tracked file: redacted (it is meant to be committed), with angle brackets, backticks and lesson markers taken out
  *  (a backticked token in AGENTS.md is read by project_model/guides.ts as a test command or a ban; a marker would approve another lesson), 300 characters at most. */
 export const guideText = (s: string): string => redactSecrets(s).replace(/[<>]/g, "").replace(/`/g, "'").replace(/loki-lesson:/gi, "loki-lesson ").replace(/\s+/g, " ").trim().slice(0, 300);
-const FORBID_RE = /\b(?:do not|don't|dont|never|avoid|no|remove|please remove|drop)\s+(?:(?:use|using|add|adding|call|calling|commit|leave|leaving|keep)\s+)?(?:an?\s+|the\s+)?`([^`\n]{3,60})`/i;
+const FORBID_RE = /\b(?:do not|don't|dont|never|avoid)\s+(?:(?:use|using|add|adding|call|calling|commit|leave|leaving|keep)\s+)?(?:an?\s+|the\s+)?`([^`\n]{3,60})`/i; // forbidding words only: "do not remove `x`" proposes a guide line, never a ban on x
 /** The proposed edit, deterministic (no model call): a .loki-checklist.json item (VERIFY-PLAN V10, features/checklist.ts) that forbids adding the code span
  *  the comment tells the author not to use, on files with the commented file's extension; otherwise a guide line under GUIDE_SECTION. */
 export function proposalFor(repoDir: string, id: string, text: string, src: { pr: string; comment_url: string; path?: string }, rejected = false): LessonProposal {

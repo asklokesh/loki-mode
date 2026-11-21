@@ -287,7 +287,7 @@ export async function runMemory(argv: readonly string[]): Promise<number> {
       if (!id) { process.stderr.write("Usage: loki memory promote <prl-id>\n"); return 2; }
       const got = promoteLesson(process.cwd(), id);
       if (!got) { process.stderr.write(`Error: no such lesson '${id}'\n`); return 1; }
-      process.stdout.write(`Promoted ${got.id}: it can now appear in briefs for every repo. 'loki memory forget ${got.id}' withdraws it.\n`);
+      process.stdout.write(`Promoted ${got.id}: it can now appear in briefs for every repo. 'loki memory forget ${got.id}' withdraws it.\n${got.approval?.state === "proposed" ? `It is still proposed, so no run reads it anywhere until it is approved: loki lessons approve ${got.id}\n` : ""}`);
       return 0;
     }
     case "forget": {

@@ -50,7 +50,8 @@
 #              no worked example and no run-lessons block, and the run still records its lesson. Every other leg opts in.
 #   approval:  (R3, LOKI_PR_LESSONS_APPROVAL default on) a lesson `memory learn` stores from a merged PR is proposed, bound to its text by
 #              sha256; a human comment worth keeping carries a proposed AGENTS.md line (one marker, its own) or, for "do not use `x`" on
-#              a file, a .loki-checklist.json item (escaped forbid_added, `**/*.<ext>`, the lesson id); LGTM and a bot comment carry none.
+#              a file, a .loki-checklist.json item (escaped forbid_added, `**/*.<ext>`, the lesson id), never for "do not remove `x`"; LGTM and a bot
+#              comment carry none.
 #              Runs read a lesson stored before (no approval field) as before and a proposed one only once approved: `loki lessons
 #              approve` (an unknown id is refused, an edited text is held until approved again) or the base commit's guidance holding
 #              it (the applied edit uncommitted, or an older base, approves nothing; `apply` twice writes once; an invalid checklist is
@@ -91,6 +92,7 @@
 #  R3-6. pr_lessons.ts proposalFor: forbid_added without escapeRegex (approval-learn checklist item fails).
 #  R3-7. cli.ts: drop the `lessons` case (approval-cli fails).
 #  R3-8. pr_lessons.ts guideText: keep "loki-lesson:" in the text (approval-marker fails).
+#  R3-9. pr_lessons.ts FORBID_RE: put `remove` back in the leading words (approval-negated fails: it proposes forbidding validateInput).
 # LOKI_TS_ENTRY set before running is honoured so the legs can run against loki-ts/src/cli.ts before a dist rebuild.
 _ENTRY_IN="${LOKI_TS_ENTRY:-}"
 
@@ -619,6 +621,7 @@ const comments = (n) => [
   { html_url: `https://github.com/o/r/pull/${n}#discussion_r3`, body: "Consider adding more tests for the divide function in this file", user: { login: "coder[bot]", type: "Bot" } },
   { html_url: `https://github.com/o/r/pull/${n}#discussion_r4`, body: "Please do not use `console.log` in library code; use the logger instead", user: { login: "alice" }, path: "src/a.ts" },
   { html_url: `https://github.com/o/r/pull/${n}#discussion_r5`, body: "Same as loki-lesson:prl-000000000000 here, keep the divide guard strict", user: { login: "bob" } },
+  { html_url: `https://github.com/o/r/pull/${n}#discussion_r6`, body: "Please do not remove `validateInput` here, it guards the divide path", user: { login: "alice" }, path: "calc.ts" },
 ];
 const gh = async (args) => { const u = args[args.length - 1], n = Number(/pulls\/(\d+)/.exec(u)?.[1] ?? 0), j = (v) => ({ code: 0, stdout: JSON.stringify(v), stderr: "" });
   return u.endsWith("/comments") ? j(comments(n)) : u.endsWith("/reviews") || u.endsWith("/commits") ? j([]) : j({ merged_at: "2026-11-01T00:00:00Z", html_url: `https://github.com/o/r/pull/${n}`, body: "" }); };
@@ -628,6 +631,7 @@ const lessons = () => L.loadLessons(R), by = (k, n = 7) => lessons().find((l) =>
 const l1 = by(1), l4 = by(4), l5 = by(5), p4 = l4.approval?.proposal;
 out.learn = { added: r.added, proposed: r.proposed, state: l1.approval?.state ?? null, bound: l1.approval?.text_sha256 === sha(l1.text), file: l1.approval?.proposal?.file ?? null, own_marker: !!l1.approval?.proposal?.line?.includes("loki-lesson:" + l1.id),
   lgtm: !!by(2).approval?.proposal, bot: !!by(3).approval?.proposal, item: p4?.item ? { file: p4.file, forbid: p4.item.check.forbid_added, paths: p4.item.trigger.paths, id: p4.item.id === l4.id } : null };
+out.negated = { item: !!by(6).approval?.proposal?.item, line: !!by(6).approval?.proposal?.line };
 out.marker = (l5.approval.proposal.line.match(/loki-lesson:prl-[0-9a-f]{12}/g) ?? []).join(" ") === "loki-lesson:" + l5.id;
 // A lesson stored before R3 (no approval field) in the same store.
 const f = L.lessonsPath(R), doc = JSON.parse(fs.readFileSync(f, "utf8"));
@@ -659,9 +663,10 @@ aj() { printf '%s' "$AR" | tail -n 1 | python3 -I -c 'import json,sys
 d=json.load(sys.stdin)
 for k in sys.argv[1].split("."): d=d[k]
 print(json.dumps(d,sort_keys=True))' "$1" 2>/dev/null; }
-[ "$(aj learn)" = '{"added": 5, "bot": false, "bound": true, "file": "AGENTS.md", "item": {"file": ".loki-checklist.json", "forbid": "console\\.log", "id": true, "paths": ["**/*.ts"]}, "lgtm": false, "own_marker": true, "proposed": 5, "state": "proposed"}' ] \
+[ "$(aj learn)" = '{"added": 6, "bot": false, "bound": true, "file": "AGENTS.md", "item": {"file": ".loki-checklist.json", "forbid": "console\\.log", "id": true, "paths": ["**/*.ts"]}, "lgtm": false, "own_marker": true, "proposed": 6, "state": "proposed"}' ] \
     && ok "approval-learn: every learned lesson is proposed and bound to its text; a worth-keeping comment proposes an AGENTS.md line, a do-not-use comment a checklist item; LGTM and a bot get none" \
     || bad "approval-learn: $(aj learn) | $(printf '%s' "$AR" | tail -n 3 | cut -c1-400)"
+[ "$(aj negated)" = '{"item": false, "line": true}' ] && ok "approval-negated: \"do not remove \`x\`\" proposes a guide line, never a checklist item forbidding x" || bad "approval-negated: $(aj negated)"
 [ "$(aj marker)" = "true" ] && ok "approval-marker: a comment quoting another lesson's marker yields a guide line with only its own" || bad "approval-marker: $(aj marker)"
 [ "$(aj held)" = '{"legacy": true, "proposed": false}' ] && ok "approval-held: a lesson stored before is read as before; a proposed one is not" || bad "approval-held: $(aj held)"
 [ "$(aj approve)" = '{"by": "engineer", "read": true, "unknown": true}' ] && ok "approval-engineer: loki lessons approve makes it read; an unknown id is refused" || bad "approval-engineer: $(aj approve)"
@@ -677,7 +682,7 @@ c_out="$(cd "$AP" && LOKI_NO_COMPLETIONS=1 bash "$ROOT/bin/loki" lessons 2>&1)"
 case "$c_out" in *"proposed: later runs do not read it"*"approve: loki lessons approve"*) ok "approval-cli: loki lessons lists a proposed lesson with how to approve it" ;; *) bad "approval-cli: list was: $(printf '%s' "$c_out" | head -5)" ;; esac
 c_out="$(cd "$AP" && LOKI_NO_COMPLETIONS=1 bash "$ROOT/bin/loki" lessons approve "$CID" 2>&1)"; c_rc=$?
 u_out="$(cd "$AP" && LOKI_NO_COMPLETIONS=1 bash "$ROOT/bin/loki" lessons approve prl-ffffffffffff 2>&1)"; u_rc=$?
-[ "$c_rc" -eq 0 ] && [ "$u_rc" -eq 1 ] && case "$c_out" in "Approved $CID"*) true ;; *) false ;; esac \
+[ "$c_rc" -eq 0 ] && [ "$u_rc" -eq 1 ] && case "$c_out" in *"Approved $CID"*) true ;; *) false ;; esac \
     && ok "approval-cli: loki lessons approve exits 0 for a stored id and 1 for an unknown one" || bad "approval-cli: approve rc=$c_rc ($c_out), unknown rc=$u_rc ($u_out)"
 
 finish
