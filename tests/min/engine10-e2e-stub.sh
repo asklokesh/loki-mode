@@ -69,8 +69,17 @@
 #   7u. PY_SATISFIES: drop the `r.url or r.extras` test; the SYSTEM-PROVIDES-DEPS extras and URL cells read true.
 #   7v. declaredRuntimeRequirements: drop the requirements/ directory test; the SPR requirements/ cell reads ["pip>=1"] and the reqdir interpreter cell reads true.
 #   7w. setupCfgRuntimeRequirements: match only the exact key install_requires again; the SPR install-requires, Install_Requires and two-manifest cells
-#       read [] and ["pip>=1"] (declaresPythonEnv says declared, the reader sees nothing, and a met second manifest lifts unchecked).
+#       read [] and ["pip>=1"] (the reader sees nothing, so a met second manifest lifts unchecked, and setupCfgDeclaresDeps, derived from the reader, reads no environment).
 #   7x. python.ts stripPyComments: not triple-quote aware; the SPR triple-quote cell reads [] (a `#` in a URL then hides install_requires).
+#   7o2. loki-ts/src/util/python.ts PY_SATISFIES: drop the user-site term from path; the SYSTEM-PROVIDES-DEPS PYTHONUSERBASE pip 0.0.1 cell reads true.
+#   7o3. PY_SATISFIES: drop the `[os.getcwd()]` term from path; the SYSTEM-PROVIDES-DEPS repo-root pip 0.0.1 cell reads true (the tests import that copy).
+#   7o4. PY_SATISFIES: `path[1:]` back to `path` in the existence test; the SYSTEM-PROVIDES-DEPS root-only lokiabsentdist cell reads true (a dist-info
+#       in the repo root is not an installed distribution).
+#   7y. python.ts setupPyDeclaresDeps or setupPyRuntimeRequirements: drop `(` or `{` from the class after `**` ([A-Za-z_({]); the SETUP-DEPS
+#       setup(**(cfg)) or setup(**{k: v ...}) cell reads false, or the same SPR cell reads [] (a met second manifest then lifts unchecked).
+#   7z. python.ts setupCfgRuntimeRequirements: skip only indented comment lines (/^\s+[#;]/), so a column-0 comment ends the key; the SETUP-DEPS
+#       column-0 comment cell reads false (sysCase "none": the hold lifts with no check).
+#   7z2. python.ts setupCfgDeclaresDeps: drop the `r === null ||` half; the SETUP-DEPS `file: r.txt` cell reads false.
 #   8. loki-ts/src/engine10/stages/seal.ts: drop leanHold from verdictOf (the never-calls-multiply leg reads VERIFIED).
 #   9. loki-ts/src/util/check_result.ts: changedSymbols counts any removed line as removed code (the
 #      never-calls-multiply leg reads VERIFIED: the replaced comment credits add()).
@@ -543,16 +552,19 @@ console.log(c.map(f).join(" "));' 2>&1)"
 [ "$BR" = "false false false true true true true true" ] && ok "BUILD-REQUIRES: build-system requires and an empty dependencies list do not count as a Python environment; real dependencies do" || bad "BUILD-REQUIRES unit gave: $BR"
 # SETUP-DEPS (util/python.ts setupPyDeclaresDeps, setupCfgDeclaresDeps, declaresPythonEnv): a setup.py counts only with an install_requires that is
 # not an empty literal (computed values count, fail closed; setup_requires never counts), a setup.cfg only with a non-empty [options] install_requires.
-# hc2 tenacity has both triggers: setup.py with only setup_requires and setup.cfg with an empty `install_requires =`. Plants 7c, 7d, 7e.
+# hc2 tenacity has both triggers: setup.py with only setup_requires and setup.cfg with an empty `install_requires =`. Plants 7c, 7d, 7e, 7y
+# (`setup(**(cfg))` and `setup(**{...})` count), 7z (a column-0 comment inside the value does not end the key, as configparser reads it) and 7z2 (a `file:` value counts).
 SD="$(cd "$ROOT/loki-ts" && SD_DIR="$T/setup-deps" bun --no-env-file --config=/dev/null -e '
 const { setupPyDeclaresDeps: py, setupCfgDeclaresDeps: cfg, declaresPythonEnv } = await import("./src/util/python.ts");
 const { mkdirSync, writeFileSync } = await import("node:fs"); const { spawnSync } = await import("node:child_process");
 const ten = "#!/usr/bin/env python\n# Licensed under the Apache License\nimport setuptools\n\nsetuptools.setup(\n    setup_requires=[\"setuptools_scm\"],\n    use_scm_version=True,\n)\n";
 const pyc = [ten, "from setuptools import setup\nsetup()\n", "setup(name=\"x\", install_requires=[])\n", "setup(install_requires=[\"a>=1\"])\n",
   "setup(install_requires=reqs)\n", "setup(install_requires=open(\"r.txt\").read().splitlines())\n", "setup(name=\"x\")  # install_requires=[\"a\"]\n",
-  "setup(install_requires=[] + reqs)\n", "setup(install_requires=[] if x else [\"a\"])\n", "setup(\n    install_requires=[],\n)\n"];
+  "setup(install_requires=[] + reqs)\n", "setup(install_requires=[] if x else [\"a\"])\n", "setup(\n    install_requires=[],\n)\n", "setup(**(cfg))\n",
+  "setup(**{k: v for k, v in c})\n"];
 const tenCfg = "[metadata]\nname = tenacity\n\n[options]\ninstall_requires =\npython_requires = >=3.10\npackages = find:\n\n[options.extras_require]\ntest =\n    pytest\n    tornado>=4.5\n    typeguard\n";
-const cfc = [tenCfg, "[options]\ninstall_requires =\n    a>=1\n", "[options]\ninstall_requires = a\n", "[options]\ninstall_requires =\n    # none\n", "[options.extras_require]\ninstall_requires = a\n"];
+const cfc = [tenCfg, "[options]\ninstall_requires =\n    a>=1\n", "[options]\ninstall_requires = a\n", "[options]\ninstall_requires =\n    # none\n", "[options.extras_require]\ninstall_requires = a\n",
+  "[options]\ninstall_requires =\n# core\n    requests>=9999\n", "[options]\ninstall_requires = file: r.txt\n"];
 const d = process.env.SD_DIR; mkdirSync(d, { recursive: true });
 const git = (...a) => spawnSync("git", ["-C", d, ...a], { encoding: "utf8" });
 git("init", "-q", "-b", "main"); git("config", "user.name", "e2e"); git("config", "user.email", "e2e@example.invalid");
@@ -561,12 +573,13 @@ writeFileSync(d + "/pyproject.toml", "[build-system]\nrequires = [\"setuptools\"
 git("add", "-A", "."); git("commit", "-q", "-m", "base"); const before = declaresPythonEnv(d, "HEAD");
 writeFileSync(d + "/requirements.txt", "tornado\n"); git("add", "requirements.txt"); git("commit", "-q", "-m", "reqs");
 console.log(pyc.map(py).join(" ") + " | " + cfc.map(cfg).join(" ") + " | " + before + " " + declaresPythonEnv(d, "HEAD"));' 2>&1)"
-[ "$SD" = "false false false true true true false true true false | false true true false false | false true" ] && ok "SETUP-DEPS: a setup.py or setup.cfg counts as a Python environment only with runtime requirements (tenacity's reads false, a requirements.txt makes it true)" || bad "SETUP-DEPS unit gave: $SD"
+[ "$SD" = "false false false true true true false true true false true true | false true true false false true true | false true" ] && ok "SETUP-DEPS: a setup.py or setup.cfg counts as a Python environment only with runtime requirements (tenacity's reads false, a requirements.txt makes it true)" || bad "SETUP-DEPS unit gave: $SD"
 # SYSTEM-PROVIDES-DEPS (util/python.ts systemProvidesDeclared, seal.ts sysInfo): a repo that declares runtime requirements reads the
 # system-interpreter note as informational only when the interpreter that ran the tests meets every one. Readers first (no interpreter): poetry
 # caret and tilde bounds as PEP 440 (^0.x is the lift-direction trap), a computed setup.py list unreadable, [project] dynamic dependencies unreadable;
-# one value per fail-closed guard (plants 7p to 7t, 7v to 7x): `**`, distutils requires=, flit and pdm tables, file:, attr:, `%(`, a requirements/ file,
-# both setup.cfg key spellings, a triple-quoted string before a URL fragment, and two manifests whose second needs the key match (control: docs/base.txt).
+# one value per fail-closed guard (plants 7p to 7t, 7v to 7y): `**`, distutils requires=, flit and pdm tables, file:, attr:, `%(`, a requirements/ file,
+# both setup.cfg key spellings, a triple-quoted string before a URL fragment, two manifests whose second needs the key match (control: docs/base.txt),
+# and `**` before a parenthesis or a brace.
 SPR="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
 const m = await import("./src/util/python.ts");
 const j = (v) => JSON.stringify(v);
@@ -582,8 +595,9 @@ console.log([m.poetryConstraintToPep440("^1.2.3"), m.poetryConstraintToPep440("^
   j(m.declaredRuntimeRequirements(["pyproject.toml", "requirements/base.txt"], rd("pip\n"))), j(m.declaredRuntimeRequirements(["pyproject.toml", "docs/base.txt"], rd("pip\n"))),
   j(m.setupCfgRuntimeRequirements("[options]\ninstall-requires = zzz\n")), j(m.setupCfgRuntimeRequirements("[options]\nInstall_Requires = zzz\n")),
   j(m.setupPyRuntimeRequirements("\"\"\"5\" disk\"\"\"\nsetup(url=\"https://x/#r\", install_requires=[\"zzz\"])")),
-  j(m.declaredRuntimeRequirements(["pyproject.toml", "setup.cfg"], rd("[options]\nInstall_Requires = zzz\n")))].join(" "));' 2>&1)"
-SPR_WANT='>=1.2.3,<2.0.0 >=0.2.3,<0.3.0 >=0.0.3,<0.0.4 >=1.2.3,<1.3 null ["pyasn1>=0.1.3"] null null null ["a>=1"] [] null null null null null null null null null null ["pip>=1"] ["zzz"] ["zzz"] ["zzz"] ["pip>=1","zzz"]'
+  j(m.declaredRuntimeRequirements(["pyproject.toml", "setup.cfg"], rd("[options]\nInstall_Requires = zzz\n"))), j(m.setupPyRuntimeRequirements("setup(**(cfg))")),
+  j(m.setupPyRuntimeRequirements("setup(**{k: v for k, v in c})"))].join(" "));' 2>&1)"
+SPR_WANT='>=1.2.3,<2.0.0 >=0.2.3,<0.3.0 >=0.0.3,<0.0.4 >=1.2.3,<1.3 null ["pyasn1>=0.1.3"] null null null ["a>=1"] [] null null null null null null null null null null ["pip>=1"] ["zzz"] ["zzz"] ["zzz"] ["pip>=1","zzz"] null null'
 [ "$SPR" = "$SPR_WANT" ] && ok "SYSTEM-PROVIDES-DEPS readers: caret and tilde bounds translate, computed, dynamic and git requirements are unreadable" || bad "SYSTEM-PROVIDES-DEPS readers gave: $SPR"
 # Interpreter cells, on scratch repos, against a distribution this python3 really has (pip, version probed, never hardcoded). Plants:
 #   7j. util/python.ts PY_SATISFIES: append every entry as met (skip the marker and specifier checks); the ">=9999" cell reads true (false VERIFIED).
@@ -593,6 +607,10 @@ SPR_WANT='>=1.2.3,<2.0.0 >=0.2.3,<0.3.0 >=0.0.3,<0.0.4 >=1.2.3,<1.3 null ["pyasn
 #   7o. PY_SATISFIES reads only sys.path: the PYTHONPATH pip 0.0.1 cell reads true; a PYTHONPATH pip 99.0 copy is its control (true).
 #       Both get the caller's whole environment with only PYTHONPATH set, so they differ from the rsa cell by that one variable.
 #   7u. no url/extras test: the extras and URL cells read true. 7v. no requirements/ directory test: the reqdir cell reads true.
+#   7o2. no user-site term: the PYTHONUSERBASE pip 0.0.1 cell reads true (its control sets PYTHONNOUSERSITE=1: true). The user site directory is
+#       the one this python3 prints for that PYTHONUSERBASE, never hardcoded (a framework build uses lib/python/site-packages).
+#   7o3. no cwd term: the rootlow cell (pip-0.0.1.dist-info in the repo root) reads true. 7o4. `path[1:]` back to `path`: the absent cell (a root-only
+#       lokiabsentdist-1.0.dist-info, no such distribution installed) reads true. The working directory may refute, never satisfy.
 if python3 -I -c 'import importlib.metadata as m; m.version("pip")
 try:
     import packaging.requirements
@@ -614,6 +632,10 @@ except Exception:
     spd_repo reqdir 'pyproject.toml=[project]\nname = "x"\ndependencies = ["pip>=1"]\n' 'requirements/base.txt=pip\n'
     spd_repo pyver 'pyproject.toml=[project]\nname = "x"\ndependencies = ["lokifakespd>=1"]\n' '.python-version=system\n'
     spd_repo nopyver 'pyproject.toml=[project]\nname = "x"\ndependencies = ["lokifakespd>=1"]\n'
+    spd_repo absent 'pyproject.toml=[project]\nname = "x"\ndependencies = ["lokiabsentdist>=1"]\n' 'lokiabsentdist-1.0.dist-info/METADATA=Metadata-Version: 2.1\nName: lokiabsentdist\nVersion: 1.0\n'
+    spd_repo rootlow 'pyproject.toml=[project]\nname = "x"\ndependencies = ["pip>=1"]\n' 'pip-0.0.1.dist-info/METADATA=Metadata-Version: 2.1\nName: pip\nVersion: 0.0.1\n'
+    spd_us="$(PYTHONUSERBASE="$T/spd-ub" python3 -c 'import site; print(site.getusersitepackages())')"
+    mkdir -p "$spd_us/pip-0.0.1.dist-info"; printf 'Metadata-Version: 2.1\nName: pip\nVersion: 0.0.1\n' > "$spd_us/pip-0.0.1.dist-info/METADATA"; unset spd_us
     for d in spd-fake/lokifakespd-1.0 spd-pp-low/pip-0.0.1 spd-pp-high/pip-99.0; do # dist-info copies: name and version from the directory
         mkdir -p "$T/$d.dist-info"; n="${d#*/}"; printf 'Metadata-Version: 2.1\nName: %s\nVersion: %s\n' "${n%-*}" "${n##*-}" > "$T/$d.dist-info/METADATA"
     done; unset d n
@@ -621,15 +643,17 @@ except Exception:
     printf '#!/bin/sh\n# a python3 whose packaging and pip cannot be imported; argv is -I -c <script>\nexec python3 -I -c "import sys; sys.modules[\\"packaging\\"] = None; sys.modules[\\"pip\\"] = None; exec(sys.argv[1])" "$3"\n' > "$T/spd-nopkg-python"; chmod +x "$T/spd-nopkg-python"
     SPD="$(cd "$ROOT/loki-ts" && T="$T" bun --no-env-file --config=/dev/null -e '
 const { systemProvidesDeclared: f } = await import("./src/util/python.ts");
-const T = process.env.T;
+const T = process.env.T, { PYTHONNOUSERSITE: _nus, ...us } = process.env;
 console.log([f(`${T}/spd-rsa`, "HEAD", "python3"), f(`${T}/spd-high`, "HEAD", "python3"), f(`${T}/spd-marker`, "HEAD", "python3"), f(`${T}/spd-computed`, "HEAD", "python3"),
   f(`${T}/spd-reqtxt`, "HEAD", "python3"), f(`${T}/spd-rsa`, "HEAD", `${T}/spd-nopkg-python`), f(`${T}/spd-tooling`, "HEAD", "python3"),
   f(`${T}/spd-extras`, "HEAD", "python3"), f(`${T}/spd-url`, "HEAD", "python3"), f(`${T}/spd-reqdir`, "HEAD", "python3"),
   f(`${T}/spd-pyver`, "HEAD", `${T}/spd-cwd-python`), f(`${T}/spd-nopyver`, "HEAD", `${T}/spd-cwd-python`),
   f(`${T}/spd-rsa`, "HEAD", "python3", { ...process.env, PYTHONPATH: `${T}/spd-pp-low` }),
-  f(`${T}/spd-rsa`, "HEAD", "python3", { ...process.env, PYTHONPATH: `${T}/spd-pp-high` })].join(" "));' 2>&1)"
-    SPD_WANT="true false true false false false false false false false false true false true"
-    [ "$SPD" = "$SPD_WANT" ] && ok "SYSTEM-PROVIDES-DEPS: a met poetry requirement and a marker-false entry lift; an unmet version, a computed list, a requirements.txt, no packaging, no runtime requirement, an extra, a URL, a requirements/ file, an interpreter chosen by the repo's .python-version and a failing PYTHONPATH copy keep the hold" || bad "SYSTEM-PROVIDES-DEPS unit gave: $SPD (want: $SPD_WANT)"
+  f(`${T}/spd-rsa`, "HEAD", "python3", { ...process.env, PYTHONPATH: `${T}/spd-pp-high` }),
+  f(`${T}/spd-rsa`, "HEAD", "python3", { ...us, PYTHONUSERBASE: `${T}/spd-ub` }), f(`${T}/spd-rsa`, "HEAD", "python3", { ...us, PYTHONUSERBASE: `${T}/spd-ub`, PYTHONNOUSERSITE: "1" }),
+  f(`${T}/spd-absent`, "HEAD", "python3"), f(`${T}/spd-rootlow`, "HEAD", "python3")].join(" "));' 2>&1)"
+    SPD_WANT="true false true false false false false false false false false true false true false true false false"
+    [ "$SPD" = "$SPD_WANT" ] && ok "SYSTEM-PROVIDES-DEPS: a met poetry requirement and a marker-false entry lift; an unmet version, a computed list, a requirements.txt, no packaging, no runtime requirement, an extra, a URL, a requirements/ file, an interpreter chosen by the repo's .python-version, a failing PYTHONPATH, user-site or repo-root copy and a repo-root-only copy keep the hold" || bad "SYSTEM-PROVIDES-DEPS unit gave: $SPD (want: $SPD_WANT)"
 elif [ "${CI:-}" = "true" ]; then
     bad "SYSTEM-PROVIDES-DEPS: python3 has no pip distribution or packaging (required in CI)"
 else

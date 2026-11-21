@@ -515,13 +515,13 @@ function stripPyComments(text: string): string {
 }
 /** SETUP-DEPS: true when a setup.py passes runtime requirements. An `install_requires` keyword argument (or a `"install_requires":` dict key) counts
  *  unless its whole value is an empty list or tuple literal (`[]`, `()`, `[ ]`, followed by `,`, `)`, `}` or the end); any other value (a non-empty literal, a name, a call, a comprehension)
- *  counts, because Loki cannot evaluate Python (fail closed). A `**name` expansion also counts: it can carry install_requires out of sight.
+ *  counts, because Loki cannot evaluate Python (fail closed). A `**` expansion (`**name`, `**{...}`, `**(...)`) also counts: it can carry install_requires out of sight.
  *  `setup_requires` and `tests_require` never count (build and test tooling, as [build-system] requires in pyprojectDeclaresDeps), and
  *  `extras_require` is not counted, matching setup.cfg. Comments are ignored. Measured on hc2 tenacity: its setup.py is
  *  `setuptools.setup(setup_requires=["setuptools_scm"], use_scm_version=True)`, which declares nothing the code imports. */
 export function setupPyDeclaresDeps(text: string): boolean {
   const code = stripPyComments(text);
-  if (/\*\*\s*[A-Za-z_]/.test(code)) return true;
+  if (/\*\*\s*[A-Za-z_({]/.test(code)) return true;
   const re = /(?:\binstall_requires\s*=(?!=)|["']install_requires["']\s*:)\s*/g;
   for (let m = re.exec(code); m; m = re.exec(code)) {
     const v = code.slice(m.index + m[0].length);
@@ -529,26 +529,13 @@ export function setupPyDeclaresDeps(text: string): boolean {
   }
   return false;
 }
-/** SETUP-DEPS: true when a setup.cfg's `[options]` section gives `install_requires` a value: text after `=` (or `:`) on the same line, or an
- *  indented continuation line that is not blank and not a comment. `[options.extras_require]` is not counted. hc2 tenacity's
+/** SETUP-DEPS: true when a setup.cfg's `[options]` section gives `install_requires` a value, read by setupCfgRuntimeRequirements so the two
+ *  never disagree: at least one requirement read, or a value Loki cannot read (`file:`, `attr:`, `%(`), which counts (fail closed). A full-line
+ *  comment, even at column 0, does not end the key, as configparser reads it. `[options.extras_require]` is not counted. hc2 tenacity's
  *  `install_requires =` followed by `python_requires = >=3.10` is false. */
 export function setupCfgDeclaresDeps(text: string): boolean {
-  let section = "", inKey = false;
-  for (const raw of text.split(/\r?\n/)) {
-    const h = /^\[([^\]]+)\]\s*$/.exec(raw);
-    if (h) { section = h[1]!.trim(); inKey = false; continue; }
-    if (inKey) {
-      if (/^\s+\S/.test(raw)) { if (!/^\s*[#;]/.test(raw)) return true; continue; }
-      if (/^\s*$/.test(raw)) continue;
-      inKey = false;
-    }
-    if (section !== "options") continue;
-    const k = /^install[_-]requires\s*[=:](.*)$/i.exec(raw);
-    if (!k) continue;
-    if (k[1]!.trim() !== "" && !/^\s*[#;]/.test(k[1]!)) return true;
-    inKey = true;
-  }
-  return false;
+  const r = setupCfgRuntimeRequirements(text);
+  return r === null || r.length > 0;
 }
 /** A Python dependency manifest or lock that is not setup.py, setup.cfg or pyproject.toml (those are read for content). One list for declaresPythonEnv
  *  and for declaredRuntimeRequirements (SYSTEM-PROVIDES-DEPS), so a file that marks a repo as declaring an environment always keeps the
@@ -599,10 +586,10 @@ export function poetryConstraintToPep440(c: string): string | null {
 /** setup.py runtime requirements: every `install_requires` must be the keyword form with a literal list or tuple of plain string literals.
  *  null (cannot read) for any other use of the word (a name, a call, a comprehension, a dict key, implicit string concatenation, escapes, a literal
  *  followed by more code such as `+ extra` or a conditional),
- *  for `**` keyword unpacking into a call, and for distutils `requires=`. No install_requires at all is []. */
+ *  for any `**` expansion (`**name`, `**{...}`, `**(...)`, the same test as setupPyDeclaresDeps), and for distutils `requires=`. No install_requires at all is []. */
 export function setupPyRuntimeRequirements(text: string): string[] | null {
   const t = stripPyComments(text);
-  if (/[(,]\s*\*\*\s*[A-Za-z_]/.test(t) || /\brequires\s*=/.test(t.replace(/\b(?:install|setup|tests|python)_requires\b/g, ""))) return null;
+  if (/\*\*\s*[A-Za-z_({]/.test(t) || /\brequires\s*=/.test(t.replace(/\b(?:install|setup|tests|python)_requires\b/g, ""))) return null;
   const uses = [...t.matchAll(/\binstall_requires\b/g)].length, out: string[] = [];
   const re = /\binstall_requires\s*=\s*([[(])((?:\s*(?:"[^"\\\n]*"|'[^'\\\n]*')\s*,)*\s*(?:"[^"\\\n]*"|'[^'\\\n]*')?\s*)([\])])(?=\s*[,)])/g; // the literal must end the argument: `[...] + more` or `[...] if x else [...]` is computed
   let seen = 0;
@@ -613,8 +600,9 @@ export function setupPyRuntimeRequirements(text: string): string[] | null {
   }
   return seen === uses ? out : null;
 }
-/** setup.cfg `[options] install_requires` lines (the key matched as setupCfgDeclaresDeps matches it: `install_requires` or `install-requires`, any case, as
- *  configparser lowercases it; same line after `=`, then indented continuation lines; full-line `#` or `;` comments and inline ` #` comments cut).
+/** setup.cfg `[options] install_requires` lines (setupCfgDeclaresDeps is derived from this reader; the key `install_requires` or `install-requires`, any case, as
+ *  configparser lowercases it; same line after `=`, then indented continuation lines; full-line `#` or `;` comments, at any indent, skipped without
+ *  ending the key, and inline ` #` comments cut).
  *  `;` stays (it starts a PEP 508 marker). null for a `file:` or `attr:` directive or `%(` interpolation, which Loki does not resolve. */
 export function setupCfgRuntimeRequirements(text: string): string[] | null {
   const out: string[] = []; let sec = "", inKey = false;
@@ -705,9 +693,10 @@ for s in reqs:
         continue
     try:
         vs = [d.version for d in md.distributions(name=r.name, path=path)]
+        found = [d for d in md.distributions(name=r.name, path=path[1:])]
     except Exception:
         unmet.append(s); continue
-    if not vs or not all(r.specifier.contains(v) for v in vs):
+    if not found or not all(r.specifier.contains(v) for v in vs):
         unmet.append(s)
 print(json.dumps({"ok": not unmet, "n": len(reqs), "unmet": unmet}))
 `;
@@ -719,7 +708,8 @@ print(json.dumps({"ok": not unmet, "n": len(reqs), "unmet": unmet}))
  *  The probe runs in `cwd`, the directory the checks ran in (the repo root), so a pyenv, asdf or mise shim that picks an interpreter by
  *  `.python-version` or `.tool-versions` picks the same one; -I keeps that directory off the probe's own import path. Tests run without -I, so
  *  the working directory, PYTHONPATH and the user site come before site-packages: every copy of a distribution on that search path must
- *  satisfy the specifier, and at least one must exist. Not covered: a `.python-version` inside a package directory whose checks run there. */
+ *  satisfy the specifier, and at least one must exist outside the working directory (a copy there may refute, never satisfy: a dist-info
+ *  in the repo root is not an installed distribution). Not covered: a PYTHONPATH entry that is the repo root still satisfies; a `.python-version` inside a package directory whose checks run there. */
 export function interpreterSatisfies(python: string, reqs: string[], cwd: string, env: NodeJS.ProcessEnv = tokenFreeEnv(process.env)): boolean {
   if (!python || reqs.length === 0) return false;
   const bin = isAbsolute(python) ? python : Bun.which(python, { PATH: env["PATH"] ?? "" });
