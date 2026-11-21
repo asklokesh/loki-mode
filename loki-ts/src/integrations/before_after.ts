@@ -2,6 +2,7 @@
 // route(s) with the existing visual-evidence capture, and render a "Before / After" PR section. The dev command comes from the
 // Project Model (or the dev/preview/start script the capture already resolves); the harness executes it, no repo-shape regex.
 // Never throws and never fails a run: every failure is recorded as "before/after: NOT CAPTURED (<reason>)". LOKI_BEFORE_AFTER=0 renders nothing.
+// R2: when the capture also saved a page's video (LOKI_VISUAL_VIDEO, on by default), its cell lists the video under the screenshot.
 import { existsSync, mkdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { isMultiRoot, loadProjectApi } from "../project_model/resolve.ts";
@@ -9,7 +10,7 @@ import { safeGit } from "../util/safe_git.ts";
 import { captureVisualEvidence, hasPickableScript, isPageFile, routeFor, visualEvidenceEnabled, type CaptureOpts, type EvidenceResult, type EvidenceScreen } from "../features/visual_evidence.ts";
 
 export const beforeAfterEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => env["LOKI_BEFORE_AFTER"] !== "0";
-export interface BeforeAfterResult { before: EvidenceScreen[]; after: EvidenceScreen[]; reason: string | null; routes: string[] }
+export interface BeforeAfterResult { before: EvidenceScreen[]; after: EvidenceScreen[]; reason: string | null; routes: string[]; beforeVideos?: EvidenceScreen[]; afterVideos?: EvidenceScreen[] }
 export interface BeforeAfterDeps {
   capture: (tree: string, runDir: string, changed: string[], o: CaptureOpts) => Promise<EvidenceResult>;
   worktreeAdd: (repoDir: string, path: string, ref: string) => void;
@@ -51,7 +52,7 @@ export async function captureBeforeAfter(repoDir: string, runDir: string, change
     mkdirSync(sub, { recursive: true });
     return deps.capture(tree, sub, changed, { env, budgetMs: bootMs, signal: o.signal, onServer: (p) => { pgids.push(p); } });
   };
-  const rel = (side: string, s: EvidenceScreen[]): EvidenceScreen[] => s.filter((x) => /\.png$/.test(x.path)).map((x) => ({ path: join("before_after", side, x.path), sha256: x.sha256 }));
+  const rel = (side: string, s: EvidenceScreen[], ext = /\.png$/): EvidenceScreen[] => s.filter((x) => ext.test(x.path)).map((x) => ({ path: join("before_after", side, x.path), sha256: x.sha256 }));
   try {
     mkdirSync(base, { recursive: true });
     try { deps.worktreeAdd(repoDir, wt, baseRef); added = true; } catch (e) { return none(`base worktree failed: ${String((e as Error)?.message ?? e).slice(0, 100)}`, routes); }
@@ -62,7 +63,7 @@ export async function captureBeforeAfter(repoDir: string, runDir: string, change
     const a = await cap(repoDir, "after");
     const as = rel("after", a.screens);
     if (as.length === 0) return none(`changed tree: ${a.skipped ?? "no screenshot produced"}`, routes);
-    return { before: bs, after: as, reason: null, routes };
+    return { before: bs, after: as, reason: null, routes, beforeVideos: rel("before", b.screens, /\.webm$/), afterVideos: rel("after", a.screens, /\.webm$/) };
   } catch (e) {
     return none(`capture failed: ${String((e as Error)?.message ?? e).slice(0, 120)}`, routes);
   } finally {
@@ -77,7 +78,8 @@ export function beforeAfterSection(r: BeforeAfterResult | null): string {
   if (r.reason !== null || r.before.length === 0) return `\n## Before / After\nbefore/after: NOT CAPTURED (${r.reason ?? "no screenshot produced"})\n`;
   const name = (p: string): string => p.split("/").pop() ?? p;
   const byName = new Map(r.after.map((s) => [name(s.path), s]));
-  const rows = r.before.map((b) => { const a = byName.get(name(b.path)); return `| ${name(b.path).replace(/\.png$/, "")} | ${b.path} (sha256:${b.sha256}) | ${a ? `${a.path} (sha256:${a.sha256})` : "not captured"} |`; });
+  const vid = (vs: EvidenceScreen[] | undefined, png: string): string => { const v = (vs ?? []).find((x) => name(x.path) === name(png).replace(/\.png$/, ".webm")); return v ? `<br>video: ${v.path} (sha256:${v.sha256})` : ""; }; // no video: the cell bytes are unchanged
+  const rows = r.before.map((b) => { const a = byName.get(name(b.path)); return `| ${name(b.path).replace(/\.png$/, "")} | ${b.path} (sha256:${b.sha256})${vid(r.beforeVideos, b.path)} | ${a ? `${a.path} (sha256:${a.sha256})${vid(r.afterVideos, a.path)}` : "not captured"} |`; });
   return `\n## Before / After\n| Route | Before | After |\n| --- | --- | --- |\n${rows.join("\n")}\n`;
 }
 /** PR hook: "" when opted out (byte-identical body), never throws. */

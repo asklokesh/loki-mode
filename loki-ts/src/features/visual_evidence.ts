@@ -1,6 +1,7 @@
 // D62-VIS: visual evidence for PRs, on by default (LOKI_VISUAL_EVIDENCE=0 turns it off). Screenshots of changed pages (Playwright CLI already installed in the repo, never downloaded)
 // or an HTTP transcript for API repos. Capture never throws and never fails a run: a skip is recorded.
 // Each screenshot's sha256 goes into receipt.evidence_screens; `loki verify` rechecks it when present.
+// R2: with @playwright/test installed, each screenshotted page also gets a short video beside its screenshot (LOKI_VISUAL_VIDEO=0 opts out; the trace stays).
 import { spawn } from "node:child_process";
 import { isMultiRoot, loadProjectApi } from "../project_model/resolve.ts";
 import { createHash, randomBytes } from "node:crypto";
@@ -14,6 +15,10 @@ export interface EvidenceResult { screens: EvidenceScreen[]; http: boolean; skip
 export const visualEvidenceEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => env["LOKI_VISUAL_EVIDENCE"] !== "0"; // D70: on unless set to 0
 /** LOKI_VISUAL_GATE=1 (opt-in): a visual evidence capture failure is recorded in the receipt and fails `loki verify`. */
 export const visualGateEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => env["LOKI_VISUAL_GATE"] === "1";
+/** R2: a short Playwright video per screenshotted page, on unless LOKI_VISUAL_VIDEO=0. */
+export const visualVideoEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => env["LOKI_VISUAL_VIDEO"] !== "0";
+/** What an evidence file is, by extension, so a verify message names it right. */
+export const evidenceKind = (p: string): "video" | "trace" | "screenshot" => (/\.webm$/.test(p) ? "video" : /\.zip$/.test(p) ? "trace" : "screenshot");
 const PAGE_RE = /^(?:.*\/)?(?:app|pages|src|public)\/.*\.(?:html|jsx|tsx|vue|svelte)$/;
 export const isPageFile = (p: string): boolean => PAGE_RE.test(p);
 /** Best-effort route for a changed page file (Next, Nuxt, SvelteKit and plain html layouts). */
@@ -36,15 +41,16 @@ export function checkScreens(runDir: string, screens: unknown): string | null {
   if (!Array.isArray(screens)) return "evidence_screens is not a list";
   for (const s of screens as { path?: unknown; sha256?: unknown }[]) {
     if (typeof s?.path !== "string" || typeof s.sha256 !== "string") return "evidence_screens entry is malformed";
-    if (isAbsolute(s.path) || normalize(s.path).startsWith("..")) return `evidence screenshot path escapes the evidence dir: ${s.path}`;
+    const k = evidenceKind(s.path);
+    if (isAbsolute(s.path) || normalize(s.path).startsWith("..")) return `evidence ${k} path escapes the evidence dir: ${s.path}`;
     const file = join(runDir, s.path);
     let cur = runDir;
-    for (const seg of normalize(s.path).split(sep)) { cur = join(cur, seg); if (isSymlink(cur)) return `evidence screenshot path is a symlink: ${s.path}`; }
-    if (!existsSync(file)) return `evidence screenshot is missing: ${s.path}`;
-    if (!isRegularFile(file)) return `evidence screenshot is not a regular file: ${s.path}`;
+    for (const seg of normalize(s.path).split(sep)) { cur = join(cur, seg); if (isSymlink(cur)) return `evidence ${k} path is a symlink: ${s.path}`; }
+    if (!existsSync(file)) return `evidence ${k} is missing: ${s.path}`;
+    if (!isRegularFile(file)) return `evidence ${k} is not a regular file: ${s.path}`;
     let digest: string;
-    try { digest = sha256File(file); } catch { return `evidence screenshot is not readable as a regular file: ${s.path}`; }
-    if (digest !== s.sha256) return `evidence screenshot was altered: ${s.path}`;
+    try { digest = sha256File(file); } catch { return `evidence ${k} is not readable as a regular file: ${s.path}`; }
+    if (digest !== s.sha256) return `evidence ${k} was altered: ${s.path}`;
   }
   return null;
 }
@@ -92,30 +98,45 @@ export const playwrightTestPkg = (repoDir: string): string | null => {
   const d = join(repoDir, "node_modules", "@playwright", "test");
   return existsSync(join(d, "package.json")) ? d : null;
 };
-/** Spec source: visit each route, record a video and a trace (config use.video and use.trace are on). Routes are JSON-encoded, never interpolated raw. */
-export const e2eSpecSource = (pkgDir: string, base: string, routes: string[]): string =>
-  `const { test } = require(${JSON.stringify(pkgDir)});\ntest("loki e2e walkthrough", async ({ page }) => {\n  for (const r of ${JSON.stringify(routes)}) { await page.goto(${JSON.stringify(base)} + r); await page.waitForLoadState("load"); }\n});\n`;
-/** Record a Playwright video and trace for the routes. Never throws. rels are run-dir relative. A skip is a clear one-line reason. */
-async function recordE2eMedia(repoDir: string, runDir: string, relDir: string, base: string, routes: string[], ms: number, signal?: AbortSignal): Promise<{ rels: string[]; skipped: string | null }> {
-  const pw = playwrightBin(repoDir), pkg = playwrightTestPkg(repoDir);
-  if (!pw || !pkg) return { rels: [], skipped: "playwright e2e video and trace skipped: @playwright/test is not installed in the repo" };
+/** Spec source: one test per page, each saving its own short video to the path given (shots are [route, absolute .webm]); the config sets use.video and use.trace. Everything is JSON-encoded, never interpolated raw. */
+export const e2eSpecSource = (pkgDir: string, base: string, shots: [string, string][]): string =>
+  `const { test } = require(${JSON.stringify(pkgDir)});\nfor (const [r, out] of ${JSON.stringify(shots)}) {\n  test("loki e2e " + r, async ({ page }) => {\n    await page.goto(${JSON.stringify(base)} + r); await page.waitForLoadState("load"); await page.waitForTimeout(500);\n    const v = page.video(); if (v) { await page.close(); try { await Promise.race([v.saveAs(out), new Promise((r) => setTimeout(r, 5000))]); } catch { /* no video for this page */ } }\n  });\n}\n`;
+export const e2eConfigSource = (video: boolean): string =>
+  `module.exports = { testDir: ".", testMatch: "walk.spec.cjs", outputDir: "./out", reporter: "null", workers: 1, use: { video: ${JSON.stringify(video ? "on" : "off")}, trace: "on" } };\n`;
+/** Run-dir relative video path per route, beside its screenshot (<relDir>/<screenName>.webm). */
+export const videoRels = (relDir: string, routes: string[]): string[] => routes.map((r) => join(relDir, `${screenName(r)}.webm`));
+/** The NOT PROVEN line for an e2e media skip; the video-on text is the one shipped since 10.7. */
+export const e2eSkipNote = (video: boolean, why: string): string => `playwright e2e ${video ? "video and trace" : "trace"} skipped: ${why}`;
+/** Which e2e files go into the receipt. saved: per-page videos that exist; outFiles: run-dir relative files under e2e/out. With no saved page video, the runner's own
+ *  out/ copies are kept (the shipped walkthrough behavior), so the worst case equals the pre-R2 capture. */
+export function e2eRels(video: boolean, saved: string[], outFiles: string[]): { rels: string[]; skipped: string | null } {
+  const zips = outFiles.filter((f) => /\.zip$/.test(f)), vids = !video ? [] : saved.length > 0 ? saved : outFiles.filter((f) => /\.webm$/.test(f));
+  const rels = [...vids, ...zips];
+  if (rels.length === 0) return { rels, skipped: e2eSkipNote(video, `no ${video ? "video or trace" : "trace"} was produced`) };
+  return { rels, skipped: video && vids.length === 0 ? "playwright e2e video skipped: no video was produced" : null };
+}
+/** Record a short video per page (beside its screenshot) and a trace. Never throws. rels are run-dir relative. A skip is a clear one-line reason. */
+async function recordE2eMedia(dirs: string[], runDir: string, relDir: string, base: string, routes: string[], ms: number, signal: AbortSignal | undefined, video: boolean): Promise<{ rels: string[]; skipped: string | null }> {
+  const home = dirs.find((d) => playwrightBin(d) !== null && playwrightTestPkg(d) !== null); // app dir first, then the repo root (hoisted node_modules); the CLI and the library from one install
+  const pw = home ? playwrightBin(home) : null, pkg = home ? playwrightTestPkg(home) : null;
+  if (!pw || !pkg) return { rels: [], skipped: e2eSkipNote(video, "@playwright/test is not installed in the repo") };
   try {
-    const dir = join(runDir, relDir, "e2e");
+    const dir = join(runDir, relDir, "e2e"), vids = videoRels(relDir, routes);
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "walk.spec.cjs"), e2eSpecSource(pkg, base, routes));
-    writeFileSync(join(dir, "playwright.config.cjs"), `module.exports = { testDir: ".", testMatch: "walk.spec.cjs", outputDir: "./out", reporter: "null", use: { video: "on", trace: "on" } };\n`);
-    if (!(await shoot(pw, ["test", "--config", join(dir, "playwright.config.cjs")], repoDir, ms, signal))) return { rels: [], skipped: "playwright e2e video and trace skipped: the run failed or timed out" };
-    const rels: string[] = [];
+    writeFileSync(join(dir, "walk.spec.cjs"), e2eSpecSource(pkg, base, routes.map((r, i) => [r, join(runDir, vids[i]!)])));
+    writeFileSync(join(dir, "playwright.config.cjs"), e2eConfigSource(video));
+    if (!(await shoot(pw, ["test", "--config", join(dir, "playwright.config.cjs")], dirs[0]!, ms, signal))) return { rels: [], skipped: e2eSkipNote(video, "the run failed or timed out") };
+    const saved = video ? vids.filter((v) => !isSymlink(join(runDir, v)) && isRegularFile(join(runDir, v))) : [], outFiles: string[] = [];
     const walk = (d: string): void => {
       for (const e of readdirSync(d, { withFileTypes: true })) {
         const full = join(d, e.name);
         if (e.isDirectory()) walk(full);
-        else if (e.isFile() && /\.(webm|zip)$/.test(e.name)) rels.push(join(relDir, "e2e", relative(dir, full)));
+        else if (e.isFile() && /\.(webm|zip)$/.test(e.name)) outFiles.push(join(relDir, "e2e", relative(dir, full)));
       }
     };
-    walk(join(dir, "out"));
-    return rels.length > 0 ? { rels, skipped: null } : { rels, skipped: "playwright e2e video and trace skipped: no video or trace was produced" };
-  } catch (e) { return { rels: [], skipped: `playwright e2e video and trace skipped: ${String((e as Error)?.message ?? e).slice(0, 120)}` }; }
+    if (existsSync(join(dir, "out"))) walk(join(dir, "out"));
+    return e2eRels(video, saved, outFiles);
+  } catch (e) { return { rels: [], skipped: e2eSkipNote(video, String((e as Error)?.message ?? e).slice(0, 120)) }; }
 }
 export interface CaptureOpts { budgetMs?: number; maxRoutes?: number; signal?: AbortSignal; env?: NodeJS.ProcessEnv; onServer?: (pgid: number) => void } // onServer: the dev server's own process group, so a supervisor can reap it on a hard kill
 const DEFAULT_BUDGET_MS = 25_000; // well under the 60s seal stage limit
@@ -198,16 +219,15 @@ export async function captureVisualEvidence(repoDir: string, runDir: string, cha
     if (pages.length > 0) {
       const rel0 = join("evidence", randomBytes(6).toString("hex"));
       mkdirSync(join(runDir, rel0)); // non-recursive: refuses an existing path
-      const rels: string[] = [];
+      const rels: string[] = [], shot: string[] = [];
       for (const route of [...new Set(pages.map(routeFor))].slice(0, opts.maxRoutes ?? MAX_ROUTES)) {
         if (aborted() || left() <= 0) break;
         const rel = join(rel0, `${screenName(route)}.png`);
         const ok = await shoot(pw!, ["screenshot", `${base}${route}`, join(runDir, rel)], appDir, left(), signal);
-        if (ok && !aborted() && !isSymlink(join(runDir, rel)) && existsSync(join(runDir, rel))) rels.push(rel);
+        if (ok && !aborted() && !isSymlink(join(runDir, rel)) && existsSync(join(runDir, rel))) { rels.push(rel); shot.push(route); }
       }
       if (aborted()) return skip("aborted");
-      const routes = [...new Set(pages.map(routeFor))].slice(0, opts.maxRoutes ?? MAX_ROUTES);
-      const media = rels.length > 0 && left() > 0 ? await recordE2eMedia(appDir, runDir, rel0, base, routes, left(), signal) : { rels: [] as string[], skipped: null };
+      const media = rels.length > 0 && left() > 0 ? await recordE2eMedia([appDir, repoDir], runDir, rel0, base, shot, left(), signal, visualVideoEnabled(opts.env)) : { rels: [] as string[], skipped: null }; // R2: only the pages that were screenshotted get a video
       if (aborted()) return skip("aborted");
       const screens = hashScreens(runDir, [...rels, ...media.rels]); // video and trace are hashed like screenshots so `loki verify` rechecks them
       return screens.length > 0 ? { screens, http: false, skipped: null, e2eSkipped: media.skipped } : skip(left() <= 0 ? `screenshots did not finish within ${Math.round(budget / 1000)}s` : "screenshots failed");
@@ -250,6 +270,10 @@ export function evidenceSection(receiptPath: string | undefined | null): string 
   try {
     const r = JSON.parse(readFileSync(receiptPath ?? "", "utf8")) as { evidence_screens?: EvidenceScreen[] };
     if (!Array.isArray(r.evidence_screens) || r.evidence_screens.length === 0) return "";
-    return `\n## Evidence\n${r.evidence_screens.map((s) => `- ${/\.webm$/.test(s.path) ? "video: " : /\.zip$/.test(s.path) ? "trace: " : ""}${s.path} (sha256:${s.sha256})`).join("\n")}\n`;
+    const stem = (p: string): string => p.replace(/\.[^./]+$/, ""), line = (s: EvidenceScreen): string => `${evidenceKind(s.path) === "video" ? "video: " : evidenceKind(s.path) === "trace" ? "trace: " : ""}${s.path} (sha256:${s.sha256})`;
+    const shots = new Set(r.evidence_screens.filter((s) => evidenceKind(s.path) === "screenshot").map((s) => stem(s.path)));
+    const nested = (s: EvidenceScreen): boolean => evidenceKind(s.path) === "video" && shots.has(stem(s.path)); // R2: a page's video sits under its screenshot
+    const out = r.evidence_screens.filter((s) => !nested(s)).flatMap((s) => [`- ${line(s)}`, ...r.evidence_screens!.filter((v) => nested(v) && evidenceKind(s.path) === "screenshot" && stem(v.path) === stem(s.path)).map((v) => `  - ${line(v)}`)]);
+    return `\n## Evidence\n${out.join("\n")}\n`;
   } catch { return ""; }
 }

@@ -30,6 +30,15 @@
 #   V7d verificationStamp: drop the wallPassed test; S2i fails.
 #   V7e verificationStamp: put the Wall branch before alreadyOk; S2a fails.
 #   V7f seal.ts: write observed entries into notProven (shown red by the V2 W2 cell in run-safety.sh, which reads seal.ts).
+#
+# R2 video evidence legs (loki-ts/src/features/visual_evidence.ts, loki-ts/src/integrations/before_after.ts) and the defects planted to prove them:
+#   R2a visualVideoEnabled: return true whatever LOKI_VISUAL_VIDEO says; R2-1 and R2-3 fail.
+#   R2b e2eSpecSource: interpolate the route list raw instead of JSON.stringify; R2-2 fails.
+#   R2c checkScreens: `continue` on entries ending .webm; R2-5 fails (an altered video reads clean).
+#   R2d evidenceSection: print every entry flat (drop the nesting); R2-6 fails.
+#   R2e beforeAfterSection: drop the vid(...) suffix; the with-video R2-7 cell fails.
+#   R2f videoRels: use the raw route instead of screenName; R2-4 fails.
+#   R2g e2eRels: drop the out/ .webm fallback (keep only saved page videos); the second R2-8 case fails.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -352,5 +361,54 @@ vb = lambda r: (r.get("verified_by") or {}).get("proved_by")
 print("S3", d.get("verdict"), "proved" if vb(d) not in (None, "none") else "proved=%s" % vb(d), "observe-absent" if "observe" not in d else "observe-present", w.get("verdict"), vb(w))
 ' "$HBW" "$HBD")"
 has "V7 S3: a VERIFIED receipt carries verified_by with a proof and no observe key; a run with no proof carries proved_by none" "$S3" "S3 VERIFIED proved observe-absent FAILED none"
+
+
+# --- R2 video evidence: knob, per-page video spec, verify recheck of a video hash, PR Evidence nesting, Before / After cell ---
+mkdir -p "$T/r2"
+R2OUT="$(cd "$ROOT/loki-ts" && R2D="$T/r2" bun -e '
+import { visualVideoEnabled, e2eSpecSource, e2eConfigSource, videoRels, e2eSkipNote, e2eRels, receiptScreensProblem, evidenceSection, sha256File } from "./src/features/visual_evidence.ts";
+import { beforeAfterSection } from "./src/integrations/before_after.ts";
+import { mkdirSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
+import { join } from "node:path";
+const D = String(process.env.R2D);
+console.log("R2-1", [visualVideoEnabled({}), visualVideoEnabled({ LOKI_VISUAL_VIDEO: "0" }), visualVideoEnabled({ LOKI_VISUAL_VIDEO: "1" }), visualVideoEnabled({ LOKI_VISUAL_VIDEO: "" })].join(","));
+const q = String.fromCharCode(34), bt = String.fromCharCode(96), odd = "/a" + q + "b" + bt + "c";
+const shots: [string, string][] = [["/", "/run/evidence/ab/index.webm"], [odd, "/run/evidence/ab/a_b_c.webm"]];
+const src = e2eSpecSource("/pkg", "http://127.0.0.1:9", shots);
+let parses = "parses"; try { new Function("require", src); } catch { parses = "syntax-error"; }
+console.log("R2-2", [src.includes(JSON.stringify(shots)) ? "pairs" : "nopairs", src.includes("/a" + q + "b") ? "raw" : "encoded", /for \(const \[r, out\] of /.test(src) ? "per-route" : "single", src.includes("v.saveAs(out)") ? "saves" : "nosave", parses].join(","));
+const cfg = (v: boolean) => { const m = { exports: {} as { workers?: number; use?: { video?: string; trace?: string } } }; new Function("module", e2eConfigSource(v))(m); return [m.exports.use?.video, m.exports.use?.trace, m.exports.workers].join(","); };
+console.log("R2-3", cfg(true) + "|" + cfg(false) + "|" + cfg(visualVideoEnabled({ LOKI_VISUAL_VIDEO: "0" })));
+console.log("R2-4", videoRels("evidence/ab", ["/", "/about", "/a/b"]).join(","), "|", e2eSkipNote(true, "x"), "|", e2eSkipNote(false, "x"));
+const run = join(D, "run"), ev = join(run, "evidence", "ab"); mkdirSync(ev, { recursive: true });
+writeFileSync(join(ev, "index.png"), "png"); writeFileSync(join(ev, "index.webm"), "webm");
+const rc = { evidence_screens: [{ path: "evidence/ab/index.png", sha256: sha256File(join(ev, "index.png")) }, { path: "evidence/ab/index.webm", sha256: sha256File(join(ev, "index.webm")) }] };
+const rp = join(run, "receipt.json"); writeFileSync(rp, JSON.stringify(rc));
+const clean = receiptScreensProblem(rp, rc);
+writeFileSync(join(ev, "index.webm"), "webm2"); const altered = receiptScreensProblem(rp, rc);
+rmSync(join(ev, "index.webm")); symlinkSync(join(ev, "index.png"), join(ev, "index.webm")); const linked = receiptScreensProblem(rp, rc);
+console.log("R2-5", String(clean), "|", String(altered), "|", String(linked));
+const sp = join(D, "sec.json");
+writeFileSync(sp, JSON.stringify({ evidence_screens: [{ path: "evidence/ab/index.png", sha256: "h1" }, { path: "evidence/ab/about.png", sha256: "h2" }, { path: "evidence/ab/index.webm", sha256: "h3" }, { path: "evidence/ab/e2e/out/t/trace.zip", sha256: "h4" }] }));
+const want6 = "\n## Evidence\n- evidence/ab/index.png (sha256:h1)\n  - video: evidence/ab/index.webm (sha256:h3)\n- evidence/ab/about.png (sha256:h2)\n- trace: evidence/ab/e2e/out/t/trace.zip (sha256:h4)\n";
+const got6 = evidenceSection(sp); console.log("R2-6", got6 === want6 ? "nested" : "got " + JSON.stringify(got6));
+const bb = { before: [{ path: "before_after/before/evidence/x/index.png", sha256: "p1" }], after: [{ path: "before_after/after/evidence/y/index.png", sha256: "p2" }], reason: null, routes: ["/"] };
+const head = "\n## Before / After\n| Route | Before | After |\n| --- | --- | --- |\n";
+const want7a = head + "| index | before_after/before/evidence/x/index.png (sha256:p1)<br>video: before_after/before/evidence/x/index.webm (sha256:v1) | before_after/after/evidence/y/index.png (sha256:p2)<br>video: before_after/after/evidence/y/index.webm (sha256:v2) |\n";
+const want7b = head + "| index | before_after/before/evidence/x/index.png (sha256:p1) | before_after/after/evidence/y/index.png (sha256:p2) |\n";
+const got7a = beforeAfterSection({ ...bb, beforeVideos: [{ path: "before_after/before/evidence/x/index.webm", sha256: "v1" }], afterVideos: [{ path: "before_after/after/evidence/y/index.webm", sha256: "v2" }] });
+const got7b = beforeAfterSection(bb);
+const e8 = (v: boolean, sv: string[], of: string[]) => { const r = e2eRels(v, sv, of); return r.rels.join(",") + ">" + String(r.skipped); }, outs = ["e/e2e/out/t/video.webm", "e/e2e/out/t/trace.zip"];
+console.log("R2-8", [e8(true, ["e/a.webm"], outs), e8(true, [], outs), e8(false, [], outs), e8(true, [], ["x.zip"]), e8(true, [], [])].join(" | "));
+console.log("R2-7", got7a === want7a ? "with-video" : "got " + JSON.stringify(got7a), got7b === want7b ? "unchanged" : "got " + JSON.stringify(got7b));
+' 2>&1)"
+has "R2-1 LOKI_VISUAL_VIDEO: on when unset, empty or 1; 0 turns it off" "$R2OUT" "R2-1 true,false,true,true"
+has "R2-2 the e2e spec is one test per page from a JSON-encoded [route, video path] list, saves each page video, and parses" "$R2OUT" "R2-2 pairs,encoded,per-route,saves,parses"
+has "R2-3 the e2e config records video only when the knob is on; the trace and one worker stay" "$R2OUT" "R2-3 on,on,1|off,on,1|off,on,1"
+has "R2-4 each page video sits beside its screenshot under the screen name; the skip line names what was skipped" "$R2OUT" "R2-4 evidence/ab/index.webm,evidence/ab/about.webm,evidence/ab/a_b.webm | playwright e2e video and trace skipped: x | playwright e2e trace skipped: x"
+has "R2-5 verify rechecks a video hash: untouched passes, a changed byte or a symlinked video is named" "$R2OUT" "R2-5 null | evidence video was altered: evidence/ab/index.webm | evidence video path is a symlink: evidence/ab/index.webm"
+has "R2-6 the PR Evidence section lists each page video under its screenshot; a trace stays top-level" "$R2OUT" "R2-6 nested"
+has "R2-8 receipt files: saved page videos win, the runner's own out/ video is the fallback, video off keeps only traces, a missing video is named" "$R2OUT" "R2-8 e/a.webm,e/e2e/out/t/trace.zip>null | e/e2e/out/t/video.webm,e/e2e/out/t/trace.zip>null | e/e2e/out/t/trace.zip>null | x.zip>playwright e2e video skipped: no video was produced | >playwright e2e video and trace skipped: no video or trace was produced"
+has "R2-7 Before / After cells carry each side video; with no video the table bytes are unchanged" "$R2OUT" "R2-7 with-video unchanged"
 
 finish
