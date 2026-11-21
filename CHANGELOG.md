@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 
+## v11.174.0 (2026-11-20)
+
+### A Python project's build requirements no longer stop a passing change from reading VERIFIED
+
+- When tests run on the machine's own Python, Loki holds the label unless the repo declares no Python dependencies, because a system interpreter may not match the project's. It read the `requires` line under `[build-system]` in pyproject.toml as a declared environment. That line lists what builds a wheel (setuptools, flit_core), not what the code imports, so every pure-Python library looked like it had dependencies, and its passing fixes stayed PARTIAL.
+- Now only runtime dependencies count: a non-empty `[project] dependencies` list, optional dependencies, `install_requires`, or a poetry, pdm, uv or dependency-groups table. A project that declares any of these is still held as before.
+- Measured on the V1 calibration tuning set (the 8 fixes the bug was found on, so not an independent score): merged fixes VERIFIED went from 1 of 8 to 5 of 8, all cases right from 24 of 32 to 28 of 32, false VERIFIED stayed 0. Report: benchmarks/h2h/results/calibration-2026-11-20-build-requires.json.
+
+### Held-out result (the number that counts)
+
+- Scored on a second calibration set of 8 merged upstream fixes chosen by a pre-registered rule and never used to find the bug (benchmarks/h2h/replay/HELDOUT-CAL-2.md, results/calibration-heldout2-2026-11-20.json): 26 of 32 cases right, 0 false VERIFIED, merged fixes VERIFIED 2 of 8 (both Go; 0 of 5 Python).
+- The tuning gain did not carry over. The system-interpreter hold still fired on 4 of the 5 held-out Python fixes: on python-rsa, annotated-types and async-timeout because they declare dependencies (the rule as intended), and on tenacity because a `setup.py` with an empty `install_requires =` still counts as a declared environment. That last one is the same class of misreading as the one fixed here and is left for a later release, to be scored on a fresh set rather than this one. bracex, the one fix the hold now correctly skips (its note reads as informational), is held by other holds: no fail-then-pass test found, and a changed symbol not referenced. The change is safe: 0 false VERIFIED on 64 cases across both sets.
+- Limits of the held-out set: tasks had to be importable in the scored environment (homebrew site-packages only), which favours projects the system interpreter can run; one Go task (xstrings) was taken out of turn where go-cmp #142 qualified first, recorded and not swapped after scoring; only python-rsa has runtime dependencies active on Python 3.14.
+
+Gate: tests/min/engine10-e2e-stub.sh, the file that owns the change, on the built dist, plus the release script's fast checks; and both calibration sets above, run through the real engine with no model.
+
 ## v11.173.0 (2026-11-20)
 
 ### Loki's label is measured on fixed good and bad changes
