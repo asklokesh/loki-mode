@@ -485,18 +485,32 @@ export function stepNamesFile(cmd: string, file: string): boolean {
  *  that is not a start failure (stepStartFailure) and that printed at least one line: a silent failure (`cli newcmd | grep -q ok` swallows the base's "unknown
  *  command" and exits 1) says nothing about why the step failed, so it proves nothing about behaviour. Paired by item and description, as compareWithBase pairs them; a step a run never reached, or that passed
  *  without the change, is not one. Pure. */
-export function failsWithoutChange(head: ProofCheck[], control: ProofCheck[], without: ProofCheck[]): string[] {
+export function failsWithoutChange(head: ProofCheck[], control: ProofCheck[], without: ProofCheck[], readersCount = true): string[] {
   const k = (c: ProofCheck): string => `${c.item}\u0001${c.what}`, set = (cs: ProofCheck[], ok: boolean): Set<string> => new Set(cs.filter((c) => c.ok === ok).map(k));
   const cOk = set(control, true), cBad = set(control, false), wOk = set(without, true), wBad = set(without, false), wStart = new Set(without.filter(stepStartFailure).map(k)), wSaid = new Set(without.filter((c) => !c.ok && (c.printed ?? "").trim() !== "").map(k));
-  return [...new Set(head.filter((c) => c.ok && c.real === true && cOk.has(k(c)) && !cBad.has(k(c)) && wBad.has(k(c)) && !wOk.has(k(c)) && !wStart.has(k(c)) && wSaid.has(k(c))).map((c) => c.what))];
+  return [...new Set(head.filter((c) => c.ok && c.real === true && cOk.has(k(c)) && !cBad.has(k(c)) && wBad.has(k(c)) && !wOk.has(k(c)) && !wStart.has(k(c)) && wSaid.has(k(c)) && (readersCount || c.kind !== "reader")).map((c) => c.what))];
 }
-export interface OwnProof { ok: boolean; steps: string[]; cmds: string[] /* the counted steps' commands: which changed test file a step ran (never written to the receipt) */; why?: string; seconds: number; built?: true; checks_without: number; checks_control: number }
+/** D2: per acceptance item, how many of its passing checks on the change are the change's own (failsWithoutChange) and how many also pass in the copy
+ *  without the change (a PROVED line there for the same item and description, paired by count as compareWithBase pairs them). A check that is neither
+ *  (never reached without the change, a start failure, a silent failure, a failure in the control) is in neither count. Pure. */
+export function itemSplit(head: ProofCheck[], control: ProofCheck[], without: ProofCheck[], readersCount = true): Record<string, { change: number; before: number }> {
+  const k = (c: ProofCheck): string => `${c.item}\u0001${c.what}`, own = new Set(failsWithoutChange(head, control, without, readersCount)), left = new Map<string, number>();
+  for (const c of without) if (c.ok) left.set(k(c), (left.get(k(c)) ?? 0) + 1);
+  const out: Record<string, { change: number; before: number }> = {};
+  for (const c of head) {
+    if (!c.ok) continue;
+    const e = (out[c.item] ??= { change: 0, before: 0 }), n = left.get(k(c)) ?? 0;
+    if (c.real === true && own.has(c.what) && n === 0) e.change++; else if (n > 0) { left.set(k(c), n - 1); e.before++; }
+  }
+  return out;
+}
+export interface OwnProof { ok: boolean; steps: string[]; cmds: string[] /* the counted steps' commands: which changed test file a step ran (never written to the receipt) */; why?: string; seconds: number; built?: true; checks_without: number; checks_control: number; by_item?: Record<string, { change: number; before: number }>; before?: { step: string; lines: string[] }[] }
 /** Runs the kept proof script in a copy of the checkout without the change (see the block comment above). `revert`: the change's non-test files, each with
  *  whether the change added it. An added file STAYS in the copy: removing it would make any step that touches it fail, which shows that the file exists
  *  and nothing about behaviour. Only files the base commit has are put back to their base content (read from the repository's objects, so no git command
  *  runs inside the copy and the run's own index is never touched); a change that only adds files therefore has no own proof. `builds`: the build commands of the packages that own those files, tried only when
  *  no step fails without them. Null when it is off or there is nothing to run. Never throws, never touches the working tree. */
-export async function proofWithoutChange(repoDir: string, runDir: string, baseSha: string | undefined, head: ProofRerun | null, revert: readonly { path: string; added: boolean }[], builds: readonly { cmd: string; cwd: string }[], signal?: AbortSignal, env: NodeJS.ProcessEnv = process.env): Promise<OwnProof | null> {
+export async function proofWithoutChange(repoDir: string, runDir: string, baseSha: string | undefined, head: ProofRerun | null, revert: readonly { path: string; added: boolean }[], builds: readonly { cmd: string; cwd: string }[], signal?: AbortSignal, env: NodeJS.ProcessEnv = process.env, opts: { readersCount?: boolean } = {}): Promise<OwnProof | null> {
   if (!ownProofOn(env) || !proofRerunOn(env) || !baseSha || !head || head.refused || head.exit !== 0 || head.failed > 0 || !head.checks?.some((c) => c.ok && c.real) || !revert.some((f) => !f.added)) return null;
   let text = ""; try { text = readFileSync(join(runDir, PROOF_SCRIPT), "utf8"); } catch { return null; }
   const no = (why: string, seconds = 0): OwnProof => ({ ok: false, steps: [], cmds: [], why, seconds, checks_without: 0, checks_control: 0 });
@@ -536,7 +550,7 @@ export async function proofWithoutChange(repoDir: string, runDir: string, baseSh
     const control = await once("control"); if (typeof control === "string") return no(control, total);
     const key = (c: ProofCheck): string => `${c.item}\u0001${c.what}`, cOk = new Set(control.filter((c) => c.ok).map(key));
     if (!head.checks!.some((c) => c.ok && c.real && cOk.has(key(c)))) return { ...no("no step of the proof script passes in a copy of the checkout, so a failure there would say nothing about the change", total), checks_control: control.length };
-    const result = (without: ProofCheck[], built: boolean): OwnProof => { const steps = failsWithoutChange(head.checks!, control, without); return { ok: steps.length > 0, steps, cmds: head.checks!.filter((c) => c.ok && c.real && steps.includes(c.what)).map((c) => c.cmd ?? ""), seconds: total, checks_without: without.length, checks_control: control.length, ...(built ? { built: true as const } : {}), ...(steps.length ? {} : { why: without.length === 0 ? "the proof script printed no check when run without the change" : "every step that passes on the change also passes without it, so the proof does not tell the change from no change" }) }; };
+    const result = (without: ProofCheck[], built: boolean): OwnProof => { const steps = failsWithoutChange(head.checks!, control, without, opts.readersCount !== false); return { ok: steps.length > 0, steps, cmds: head.checks!.filter((c) => c.ok && c.real && steps.includes(c.what)).map((c) => c.cmd ?? ""), seconds: total, checks_without: without.length, checks_control: control.length, by_item: itemSplit(head.checks!, control, without, opts.readersCount !== false), ...(steps.length ? { before: steps.slice(0, 5).map((st) => ({ step: st, lines: [(without.find((c) => !c.ok && c.what === st)?.printed ?? "").slice(0, 300)].filter(Boolean) })) } : {}), ...(built ? { built: true as const } : {}), ...(steps.length ? {} : { why: without.length === 0 ? "the proof script printed no check when run without the change" : "every step that passes on the change also passes without it, so the proof does not tell the change from no change" }) }; };
     const w1 = await once("without"); if (typeof w1 === "string") return { ...no(w1, total), checks_control: control.length };
     const first = result(w1, false);
     if (first.ok || builds.length === 0 || w1.length === 0 || signal?.aborted) return first;

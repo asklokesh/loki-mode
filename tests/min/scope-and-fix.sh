@@ -428,6 +428,7 @@
 # 304. check_result.ts unmeasuredTail: drop the not_run/UNMEASURED_REASON condition (the measured-pass leg carries a tail).
 # 305. verify.ts runCheck: spread unmeasuredTail into the check itself (the event-only leg finds the tail on the check).
 # INERT1. proof_rerun.ts ruleStatus: drop the `counted === 0` branch (the INERT-CHECK cell reads "mm"); or stepKind: drop the FILE_TEST and "/" test from inertWords (the last kind reads "inert": a file test outside the repository is dropped).
+# BTC1. pr.ts acceptanceHead: count ch as met (the BY-THIS-CHANGE headline reads "3 of 4"); or proof_rerun.ts itemSplit: drop the own.has test (item 1 reads change 0, before 1 and a FAILED step is lost).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -1387,6 +1388,19 @@ const run = { exit: 0, seconds: 1, proved: 3, failed: 0, tail: "", script_chars:
 const st = ruleStatus(["fresh install works", "search works"], run);
 console.log([kinds.join(" "), st.map((s) => s.status[0]).join(""), String(st[0].reason).split(" (for example")[0], st[1].evidence].join(" | "));' 2>&1)"
 [ "$IKO" = "inert inert inert http runner other other reader reader other | um | its only passing check read nothing of the product or the tree when it ran | Loki's own run: 1 passing check; first: search | status 200 | {}" ] && ok "INERT-CHECK: builtins with fixed inputs are not counted; a line with nothing else reads unmet and says why" || bad "INERT-CHECK gave: $IKO"
+
+# STAGE-A (not yet run): expected string derived by reading the code on 2026-11-22.
+# BY-THIS-CHANGE (proof_rerun.ts itemSplit, pr.ts acceptanceHead): a line with a check that fails without the change is "met by this change"; one whose
+# checks all pass without it is "already met before this change"; the headline counts only the first kind; with no comparison the old sentences stand.
+BTC="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const { itemSplit } = await import("./src/engine10/proof_rerun.ts"); const { acceptanceHead } = await import("./src/engine10/stages/pr.ts");
+const ok = (item, what, real = true) => ({ item, what, ok: true, ...(real ? { real: true, cmd: "npm test", kind: "runner" } : {}) }), bad = (item, what) => ({ item, what, ok: false, exit: 1, out: "npm test | boom", printed: "boom" });
+const head = [ok("1", "a"), ok("1", "b"), ok("2", "c"), ok("3", "d", false)];
+const split = itemSplit(head, [ok("1", "a"), ok("1", "b"), ok("2", "c"), ok("3", "d", false)], [bad("1", "a"), ok("1", "b"), ok("2", "c"), ok("3", "d", false)]);
+const rows = [{ line: "A", status: "met", evidence: "e1", by: "change" }, { line: "B", status: "met", evidence: "e2", by: "before" }, { line: "C", status: "met", evidence: "e3" }, { line: "D", status: "unmet", reason: "r4" }];
+const l = acceptanceHead("PARTIAL", { issue_acceptance: rows }).split("\n"), old = acceptanceHead("VERIFIED", { issue_acceptance: [{ line: "A", status: "met", evidence: "e1" }] }).split("\n")[1];
+console.log([JSON.stringify(split), l[1], l[5], l[6], l[7], l[8], old].join(" ## "));' 2>&1)"
+[ "$BTC" = '{"1":{"change":1,"before":1},"2":{"change":0,"before":1},"3":{"change":0,"before":1}} ## 1 of 4 acceptance lines is met by this change; 1 already met before it; 1 met, not compared with the code before the change; 1 not met (each says why). ## | A | met by this change | e1 | ## | B | already met before this change | e2 | ## | C | met | e3 | ## | D | NOT MET | r4 | ## Every acceptance line is met (1 of 1), each with what proved it.' ] && ok "BY-THIS-CHANGE: lines and headline tell this change from what the code already did" || bad "BY-THIS-CHANGE gave: $BTC"
 
 # ---------------------------------------------------------------- spec choice evidence (features/spec_ambiguity.ts resolveChoices)
 cat > "$T/spec-choice.ts" <<'TS'
