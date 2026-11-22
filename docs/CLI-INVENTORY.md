@@ -131,7 +131,7 @@ Classes: KEEP (the 11 commands in `loki --help` and completions), HIDE (keeps wo
 | plan | autonomy/loki | FOLD | Legacy PRD flow | loki start <PRD> --dry-run |
 | grill | autonomy/loki | FOLD | Legacy PRD flow | loki start <PRD> --dry-run |
 | spec | autonomy/loki | FOLD | Legacy PRD flow | loki start <PRD> --dry-run |
-| backlog | autonomy/loki | FOLD | Drives legacy RARV per issue | loki start owner/repo --label L --parallel K |
+| backlog | autonomy/loki | FOLD | Drives legacy RARV per issue | LOKI_START_PARALLEL=K loki start owner/repo --label L |
 | workspace | autonomy/loki | HIDE | Control Plane spawns workspace run; users get it via start --workspace |  |
 | council | autonomy/loki | REMOVED | Legacy RARV gate | It drove the removed legacy loop; use: loki start "<goal>" |
 | compound | autonomy/loki | REMOVED | Legacy memory pipeline | It drove the removed legacy loop; use: loki start "<goal>" |
