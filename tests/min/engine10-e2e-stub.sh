@@ -74,8 +74,9 @@
 #   7x. python.ts stripPyComments: not triple-quote aware; the SPR triple-quote cell reads [] (a `#` in a URL then hides install_requires).
 #   7o2. loki-ts/src/util/python.ts PY_SATISFIES: drop the user-site term from path; the SYSTEM-PROVIDES-DEPS PYTHONUSERBASE pip 0.0.1 cell reads true.
 #   7o3. PY_SATISFIES: drop the `[os.getcwd()]` term from path; the SYSTEM-PROVIDES-DEPS repo-root pip 0.0.1 cell reads true (the tests import that copy).
-#   7o4. PY_SATISFIES: `path[1:]` back to `path` in the existence test; the SYSTEM-PROVIDES-DEPS root-only lokiabsentdist cell reads true (a dist-info
+#   7o4. PY_SATISFIES: `outside` back to `path` in the existence test; the SYSTEM-PROVIDES-DEPS root-only lokiabsentdist cell reads true (a dist-info
 #       in the repo root is not an installed distribution).
+#   7o5. PY_SATISFIES: `outside` back to `path[1:]`; the PYTHONPATH=. lokiabsentdist cell reads true (a vendored copy on PYTHONPATH satisfies again).
 #   7y. python.ts setupPyDeclaresDeps or setupPyRuntimeRequirements: drop `(` or `{` from the class after `**` ([A-Za-z_({]); the SETUP-DEPS
 #       setup(**(cfg)) or setup(**{k: v ...}) cell reads false, or the same SPR cell reads [] (a met second manifest then lifts unchecked).
 #   7z. python.ts setupCfgRuntimeRequirements: skip only indented comment lines (/^\s+[#;]/), so a column-0 comment ends the key; the SETUP-DEPS
@@ -768,8 +769,9 @@ SPR_WANT='>=1.2.3,<2.0.0 >=0.2.3,<0.3.0 >=0.0.3,<0.0.4 >=1.2.3,<1.3 null ["pyasn
 #   7u. no url/extras test: the extras and URL cells read true. 7v. no requirements/ directory test: the reqdir cell reads true.
 #   7o2. no user-site term: the PYTHONUSERBASE pip 0.0.1 cell reads true (its control sets PYTHONNOUSERSITE=1: true). The user site directory is
 #       the one this python3 prints for that PYTHONUSERBASE, never hardcoded (a framework build uses lib/python/site-packages).
-#   7o3. no cwd term: the rootlow cell (pip-0.0.1.dist-info in the repo root) reads true. 7o4. `path[1:]` back to `path`: the absent cell (a root-only
+#   7o3. no cwd term: the rootlow cell (pip-0.0.1.dist-info in the repo root) reads true. 7o4. `outside` back to `path` in the existence test: the absent cell (a root-only
 #       lokiabsentdist-1.0.dist-info, no such distribution installed) reads true. The working directory may refute, never satisfy.
+#   7o5. `outside` back to `path[1:]`: the PYTHONPATH=. lokiabsentdist cell reads true (a vendored copy on PYTHONPATH satisfies again).
 if python3 -I -c 'import importlib.metadata as m; m.version("pip")
 try:
     import packaging.requirements
@@ -810,8 +812,10 @@ console.log([f(`${T}/spd-rsa`, "HEAD", "python3"), f(`${T}/spd-high`, "HEAD", "p
   f(`${T}/spd-rsa`, "HEAD", "python3", { ...process.env, PYTHONPATH: `${T}/spd-pp-low` }),
   f(`${T}/spd-rsa`, "HEAD", "python3", { ...process.env, PYTHONPATH: `${T}/spd-pp-high` }),
   f(`${T}/spd-rsa`, "HEAD", "python3", { ...us, PYTHONUSERBASE: `${T}/spd-ub` }), f(`${T}/spd-rsa`, "HEAD", "python3", { ...us, PYTHONUSERBASE: `${T}/spd-ub`, PYTHONNOUSERSITE: "1" }),
-  f(`${T}/spd-absent`, "HEAD", "python3"), f(`${T}/spd-rootlow`, "HEAD", "python3")].join(" "));' 2>&1)"
-    SPD_WANT="true false true false false false false false false false false true false true false true false false"
+  f(`${T}/spd-absent`, "HEAD", "python3"), f(`${T}/spd-rootlow`, "HEAD", "python3"),
+  f(`${T}/spd-absent`, "HEAD", "python3", { ...process.env, PYTHONPATH: "." }), f(`${T}/spd-rsa`, "HEAD", "python3", { ...process.env, PYTHONPATH: "." })].join(" "));' 2>&1)"
+    # STAGE-A (not yet run): expected string derived by reading the code on 2026-11-22.
+    SPD_WANT="true false true false false false false false false false false true false true false true false false false true"
     [ "$SPD" = "$SPD_WANT" ] && ok "SYSTEM-PROVIDES-DEPS: a met poetry requirement and a marker-false entry lift; an unmet version, a computed list, a requirements.txt, no packaging, no runtime requirement, an extra, a URL, a requirements/ file, an interpreter chosen by the repo's .python-version, a failing PYTHONPATH, user-site or repo-root copy and a repo-root-only copy keep the hold" || bad "SYSTEM-PROVIDES-DEPS unit gave: $SPD (want: $SPD_WANT)"
 elif [ "${CI:-}" = "true" ]; then
     bad "SYSTEM-PROVIDES-DEPS: python3 has no pip distribution or packaging (required in CI)"

@@ -681,6 +681,8 @@ reqs = json.load(sys.stdin)
 if not isinstance(reqs, list) or not reqs:
     print(json.dumps({"ok": False, "why": "no requirements"})); sys.exit(4)
 path = [os.getcwd()] + [p for p in os.environ.get("PYTHONPATH", "").split(os.pathsep) if p] + ([] if os.environ.get("PYTHONNOUSERSITE") else [site.getusersitepackages()]) + sys.path
+root = os.path.realpath(os.getcwd())
+outside = [p for p in path if os.path.realpath(p or ".") != root and not os.path.realpath(p or ".").startswith(root + os.sep)]
 unmet = []
 for s in reqs:
     try:
@@ -693,7 +695,7 @@ for s in reqs:
         continue
     try:
         vs = [d.version for d in md.distributions(name=r.name, path=path)]
-        found = [d for d in md.distributions(name=r.name, path=path[1:])]
+        found = [d for d in md.distributions(name=r.name, path=outside)]
     except Exception:
         unmet.append(s); continue
     if not found or not all(r.specifier.contains(v) for v in vs):
@@ -708,8 +710,9 @@ print(json.dumps({"ok": not unmet, "n": len(reqs), "unmet": unmet}))
  *  The probe runs in `cwd`, the directory the checks ran in (the repo root), so a pyenv, asdf or mise shim that picks an interpreter by
  *  `.python-version` or `.tool-versions` picks the same one; -I keeps that directory off the probe's own import path. Tests run without -I, so
  *  the working directory, PYTHONPATH and the user site come before site-packages: every copy of a distribution on that search path must
- *  satisfy the specifier, and at least one must exist outside the working directory (a copy there may refute, never satisfy: a dist-info
- *  in the repo root is not an installed distribution). Not covered: a PYTHONPATH entry that is the repo root still satisfies; a `.python-version` inside a package directory whose checks run there. */
+ *  satisfy the specifier, and at least one must exist outside the repository root, by real path: a copy in the root or under it may refute and never satisfies,
+ *  whether it is reached through the working directory, PYTHONPATH or a .pth line (a vendored copy or a stray dist-info is not an installed distribution). Not covered:
+ *  a `.python-version` inside a package directory whose checks run there. */
 export function interpreterSatisfies(python: string, reqs: string[], cwd: string, env: NodeJS.ProcessEnv = tokenFreeEnv(process.env)): boolean {
   if (!python || reqs.length === 0) return false;
   const bin = isAbsolute(python) ? python : Bun.which(python, { PATH: env["PATH"] ?? "" });

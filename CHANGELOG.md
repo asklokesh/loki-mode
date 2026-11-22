@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### VERIFIED and its proof
 
 - The fail-then-pass run on the base code no longer writes compiled bytecode. An edited test's old version runs first; when the new version was the same length and written in the same second, the interpreter could run the old compiled copy, so a real fix read "the test also passes on the old code" on most tries.
+- When Loki checks whether the system interpreter provides a repository's declared requirements, a copy of a package inside the repository no longer counts as installed, however the tests reach it (the working directory, PYTHONPATH, a `.pth` line). It can still show a requirement is not met. Before, a vendored copy named on PYTHONPATH lifted the "tests ran on the system interpreter" hold with nothing installed.
 
 ## v11.176.0 (2026-11-21)
 
