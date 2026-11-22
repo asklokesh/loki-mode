@@ -1,6 +1,6 @@
 // T2 mutation proof v1: after a VERIFIED verdict, re-run the recorded Wall tests on a temporary worktree of the base
 // (pre-fix) tree. The Wall test files are applied, the fix's source changes are not. Data-only helper (D42, lives in util/ to stay out of the e10ext and features line caps): the test
-// runner is injected by seal.ts, so this file imports nothing from stages/. A "no" downgrades only under LOKI_MUTATION_STRICT=1 with a declared behavior change (seal.ts).
+// runner is injected by seal.ts, so this file imports nothing from stages/. A "no" downgrades only under LOKI_MUTATION_STRICT=1 with a declared behavior change (seal.ts). With the Wall off, LOKI_MUTATION_STRICT=1 also holds a change to code whose own proof was tried and showed nothing (seal.ts needsChangeProof, proofTried).
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -58,7 +58,7 @@ function insideWorktree(wt: string, rel: string): boolean {
   for (let n = 1; n < parts.length; n++) { const p = join(wt, ...parts.slice(0, n)); try { if (lstatSync(p).isSymbolicLink()) return false; } catch { return true; } }
   return true;
 }
-/** CTO ruling: the downgrade to PARTIAL is off unless LOKI_MUTATION_STRICT=1 (and then only for a model-declared behavior change). */
+/** CTO ruling: the downgrade to PARTIAL is off unless LOKI_MUTATION_STRICT=1 (and then only for a model-declared behavior change). With the Wall off, LOKI_MUTATION_STRICT=1 also holds a change to code whose own proof was tried and showed nothing (seal.ts needsChangeProof, proofTried). */
 export const mutationStrict = (env: NodeJS.ProcessEnv = process.env): boolean => (env["LOKI_MUTATION_STRICT"] ?? "").trim() === "1";
 export const mutationEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => (env["LOKI_MUTATION_PROOF"] ?? "").trim() !== "0";
 /** The extra environment of every proof run in a base worktree. The base version of an edited test runs first and would leave a compiled cache; the head bytes written next can be the same length in the same second, and the interpreter then runs the stale cache in place of the new source. */

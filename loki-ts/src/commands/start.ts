@@ -162,7 +162,7 @@ export const START_USAGE =
   "  --workspace NAME  run the loki.yaml workspace NAME for the brief; --deploy deploys after the run through the gated loki deploy --execute\n" +
   "  --cost lean|off   opt-in cost profile (also LOKI_COST_PROFILE=lean): sets LOKI_ROUTER=auto, LOKI_E10_TRIM=1, LOKI_E10_SMALL_NO_RUNNER=1 and LOKI_E10_SMALL_MAX_CHARS=1200 unless already set; recorded in .loki/cost-profile.json\n" +
   "  --haiku          opt in to Haiku for implement and fix (LOKI_ROUTER=auto, the lean levers, plus LOKI_COST_FIRST=1). A failed check climbs to Sonnet. Without it the model is the provider default, same as a raw session\n" +
-  "  Proof            loki start sets LOKI_MUTATION_STRICT=1 and LOKI_E10_TRIM=1 unless you set them. A behavior change is VERIFIED only when a Wall test fails on the old code. Tool logs are trimmed before the next turn. Opt out with either var set to 0\n" +
+  "  Proof            loki start sets LOKI_MUTATION_STRICT=1 and LOKI_E10_TRIM=1 unless you set them. A change to code is not VERIFIED when its own tests also pass on the old code. Tool logs are trimmed before the next turn. Opt out with either var set to 0\n" +
   "  --plan-model M ... --models plan=M,dev=M,test=M,review=M,advisor=M,helper=M,escalate=M\n" +
   "                pick the model per role (M = haiku|sonnet|opus|fable or a model id; an opencode id on opencode). Roles: plan (the plan session),\n" +
   "                dev (implement, fix, extra attempts), test (Wall tests, exec spec, prove), review (cross-review, acceptance check, attempt pick,\n" +

@@ -416,9 +416,9 @@ _loki_f2p_default() {
 # stderr, so a --json run's stdout stays one JSON document.
 _loki_f2p_banner() {
     if [ "${LOKI_F2P_DEFAULTED:-}" = "1" ] && [ "${LOKI_TRIM_DEFAULTED:-}" = "1" ]; then
-        echo "Factory: a behavior change is verified only when a Wall test fails on the old code, and tool logs are trimmed before the next turn. Opt out: LOKI_MUTATION_STRICT=0, LOKI_E10_TRIM=0." >&2
+        echo "Factory: a change to code is not verified when its own tests also pass on the old code, and tool logs are trimmed before the next turn. Opt out: LOKI_MUTATION_STRICT=0, LOKI_E10_TRIM=0." >&2
     elif [ "${LOKI_F2P_DEFAULTED:-}" = "1" ]; then
-        echo "Factory: a behavior change is verified only when a Wall test fails on the old code. Opt out: LOKI_MUTATION_STRICT=0." >&2
+        echo "Factory: a change to code is not verified when its own tests also pass on the old code. Opt out: LOKI_MUTATION_STRICT=0." >&2
     elif [ "${LOKI_TRIM_DEFAULTED:-}" = "1" ]; then
         echo "Factory: tool logs are trimmed before the next turn. Opt out: LOKI_E10_TRIM=0." >&2
     fi

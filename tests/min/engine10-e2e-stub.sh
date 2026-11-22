@@ -2242,9 +2242,10 @@ rw_engine noscript "$RWD/list.md"; RWF="$(rw_facts)"
 grep -q 'loki-proof.sh' "$RWP.implement0" && grep -q 'acceptance.txt' "$RWP.implement0" && ok "RW-02 no-script: the implement brief carries the proof script instructions an issue run gets" || bad "RW-02 no-script: the implement brief lacks the proof script instructions"
 rw_proof 'grep -q "export function multiply" calc.ts' 'grep -q "export function multiply" calc.ts'
 rw_engine proved "$RWD/list.md"; RWF="$(rw_facts)"
-[ "$RWF" = "VERIFIED road=work source=text lines=2 receipt=met,met own=2 reruns=yes noscript=no plan=skipped src=issue cap=2400" ] \
+# STAGE-A (not yet run): expected string derived by reading the code on 2026-11-22. R2-5: the proof script only reads calc.ts (a change to code), so the run reads PARTIAL.
+[ "$RWF" = "PARTIAL road=work source=text lines=2 receipt=met,met own=2 reruns=yes noscript=no plan=skipped src=issue cap=2400" ] \
 && [ "$RWSTAGES" = "implement linecheck review implement linecheck " ] \
-    && ok "RW-02 proved: the same text task with a proof script that passes in Loki's own run is VERIFIED, both lines met by Loki's own count; 5 model calls ($RWSTAGES)" || bad "RW-02 proved gave: $RWF; sessions '$RWSTAGES' ($(grep -E '^(Outcome|NOT PROVEN)' <<< "$RWOUT" | tr '\n' ' ' | cut -c1-600))"
+    && ok "RW-02 proved: the same text task with a proof script that passes in Loki's own run is PARTIAL (the script only reads calc.ts), both lines met by Loki's own count; 5 model calls ($RWSTAGES)" || bad "RW-02 proved gave: $RWF; sessions '$RWSTAGES' ($(grep -E '^(Outcome|NOT PROVEN)' <<< "$RWOUT" | tr '\n' ' ' | cut -c1-600))"
 rw_proof 'grep -q "export function multiply" calc.ts' 'grep -q "export function multiply" calc.ts' 'false' # line 2 has one passing and one failing check
 rw_engine failing "$RWD/list.md"; RWF="$(rw_facts)"
 [ "$RWF" = "PARTIAL road=work source=text lines=2 receipt=met,unmet own=1 reruns=yes noscript=no plan=skipped src=issue cap=2400" ] \
@@ -2258,10 +2259,12 @@ rw_engine prose "$RWD/prose.md"; RWF="$(rw_facts)"
 [ "$RWF" = "VERIFIED road=text source=text lines=0 receipt=none own=0 reruns=no noscript=no plan=skipped src=None cap=none" ] && ! grep -q 'loki-proof.sh' "$RWP.implement0" && [ "$RWSTAGES" = "implement implement " ] \
     && ok "RW-02 prose: a text task with no list stays on the plain road: no lines, no proof brief, no plan, cap unchanged, the two sessions it had ($RWSTAGES)" || bad "RW-02 prose gave: $RWF; sessions '$RWSTAGES'"
 rw_engine prose-all "$RWD/prose.md" LOKI_E10_ONE_ROAD=all; RWF="$(rw_facts)"
-[ "$RWF" = "VERIFIED road=work source=text lines=0 receipt=met own=1 reruns=yes noscript=no plan=skipped src=title cap=2400" ] && ! grep -q plan <<< "$RWSTAGES" \
-    && ok "RW-02 prose, LOKI_E10_ONE_ROAD=all: the title stands in as item 1 with no plan session, and Loki's own run proves it" || bad "RW-02 prose (=all) gave: $RWF; sessions '$RWSTAGES' ($(grep -E '^(Outcome|NOT PROVEN)' <<< "$RWOUT" | tr '\n' ' ' | cut -c1-600))"
+# STAGE-A (not yet run): expected string derived by reading the code on 2026-11-22. R2-5: the proof script only reads calc.ts (a change to code), so the run reads PARTIAL.
+[ "$RWF" = "PARTIAL road=work source=text lines=0 receipt=met own=1 reruns=yes noscript=no plan=skipped src=title cap=2400" ] && ! grep -q plan <<< "$RWSTAGES" \
+    && ok "RW-02 prose, LOKI_E10_ONE_ROAD=all: the title stands in as item 1 with no plan session, and Loki's own run counts for it (PARTIAL: the script only reads calc.ts)" || bad "RW-02 prose (=all) gave: $RWF; sessions '$RWSTAGES' ($(grep -E '^(Outcome|NOT PROVEN)' <<< "$RWOUT" | tr '\n' ' ' | cut -c1-600))"
 rw_engine prose-all-off "$RWD/prose.md" LOKI_E10_ONE_ROAD=all LOKI_E10_TITLE_ACCEPTANCE=0; RWF="$(rw_facts)"
-[ "$RWF" = "VERIFIED road=work source=text lines=0 receipt=none own=0 reruns=yes noscript=no plan=skipped src=None cap=2400" ] \
+# STAGE-A (not yet run): expected string derived by reading the code on 2026-11-22. R2-5: the proof script only reads calc.ts (a change to code), so the run reads PARTIAL.
+[ "$RWF" = "PARTIAL road=work source=text lines=0 receipt=none own=0 reruns=yes noscript=no plan=skipped src=None cap=2400" ] \
     && ok "RW-02 prose, =all: LOKI_E10_TITLE_ACCEPTANCE=0 gives no stand-in line" || bad "RW-02 prose (=all, stand-in off) gave: $RWF"
 rw_proof -
 rw_engine prose-all-noscript "$RWD/prose.md" LOKI_E10_ONE_ROAD=all; RWF="$(rw_facts)"
@@ -2277,10 +2280,12 @@ rw_engine off "$RWD/list.md" LOKI_E10_ONE_ROAD=0; RWF="$(rw_facts)"
 [ "$RWF" = "VERIFIED road=text source=text lines=0 receipt=none own=0 reruns=no noscript=no plan=skipped src=None cap=none" ] && ok "RW-02 off: LOKI_E10_ONE_ROAD=0 keeps a text task on the plain road" || bad "RW-02 off gave: $RWF"
 rw_proof 'grep -q "export function multiply" calc.ts' 'grep -q "export function multiply" calc.ts'
 rw_engine json-file "$RWD/prose.md" LOKI_E10_ISSUE_JSON="$RWD/issue.json"; RWF="$(rw_facts)"
-[ "$RWF" = "VERIFIED road=issue source=issue lines=2 receipt=met,met own=2 reruns=yes noscript=no plan=skipped src=issue cap=2400" ] \
-    && ok "RW-02 issue json: LOKI_E10_ISSUE_JSON beside a positional file gives the issue's two lines, the issue cap rule, and VERIFIED on Loki's own run" || bad "RW-02 issue json (file) gave: $RWF"
+# STAGE-A (not yet run): expected string derived by reading the code on 2026-11-22. R2-5: the proof script only reads calc.ts (a change to code), so the run reads PARTIAL.
+[ "$RWF" = "PARTIAL road=issue source=issue lines=2 receipt=met,met own=2 reruns=yes noscript=no plan=skipped src=issue cap=2400" ] \
+    && ok "RW-02 issue json: LOKI_E10_ISSUE_JSON beside a positional file gives the issue's two lines, the issue cap rule, and PARTIAL on Loki's own run (the script only reads calc.ts)" || bad "RW-02 issue json (file) gave: $RWF"
 rw_engine json-short "add multiply to calc.ts" LOKI_E10_ISSUE_JSON="$RWD/issue.json"; RWF="$(rw_facts)"
-[ "$RWF" = "VERIFIED road=issue source=issue lines=2 receipt=met,met own=2 reruns=yes noscript=no plan=skipped src=issue cap=2400" ] \
+# STAGE-A (not yet run): expected string derived by reading the code on 2026-11-22. R2-5: the proof script only reads calc.ts (a change to code), so the run reads PARTIAL.
+[ "$RWF" = "PARTIAL road=issue source=issue lines=2 receipt=met,met own=2 reruns=yes noscript=no plan=skipped src=issue cap=2400" ] \
     && ok "RW-02 issue json: the same with a short positional task" || bad "RW-02 issue json (short) gave: $RWF"
 # The shape of the recorded run playwright 44124 "loki-haiku-issue-road" (11.152.0): a positional file plus LOKI_E10_ISSUE_JSON holding only a title and a prose
 # body. There the plan was skipped, the run had no line, Loki's own proof run passed 2 checks that counted for nothing (proof.rerun statuses []), and the
@@ -2288,8 +2293,9 @@ rw_engine json-short "add multiply to calc.ts" LOKI_E10_ISSUE_JSON="$RWD/issue.j
 python3 -I -c 'import json, sys; json.dump({"title": "Add a multiply(a, b) function to calc.ts", "body": "## Problem\n\n" + sys.argv[2]}, open(sys.argv[1], "w"))' "$RWD/issue-prose.json" "$RW_PROBLEM"
 rw_proof 'grep -q "export function multiply" calc.ts' -
 rw_engine json-prose "$RWD/prose.md" LOKI_E10_ISSUE_JSON="$RWD/issue-prose.json"; RWF="$(rw_facts)"
-[ "$RWF" = "VERIFIED road=issue source=issue lines=0 receipt=met own=1 reruns=yes noscript=no plan=skipped src=title cap=2400" ] && ! grep -q plan <<< "$RWSTAGES" \
-    && ok "RW-02 issue json, prose: an issue file with no list has its title as the one line, with no plan session added, and Loki's own passing check is counted for it" || bad "RW-02 issue json (prose) gave: $RWF"
+# STAGE-A (not yet run): expected string derived by reading the code on 2026-11-22. R2-5: the proof script only reads calc.ts (a change to code), so the run reads PARTIAL.
+[ "$RWF" = "PARTIAL road=issue source=issue lines=0 receipt=met own=1 reruns=yes noscript=no plan=skipped src=title cap=2400" ] && ! grep -q plan <<< "$RWSTAGES" \
+    && ok "RW-02 issue json, prose: an issue file with no list has its title as the one line, with no plan session added, and Loki's own passing check is counted for it (PARTIAL: the script only reads calc.ts)" || bad "RW-02 issue json (prose) gave: $RWF"
 rw_proof -
 rw_engine json-prose-noscript "$RWD/prose.md" LOKI_E10_ISSUE_JSON="$RWD/issue-prose.json"; RWF="$(rw_facts)"; RWS_ON="$RWSTAGES"
 rw_engine json-prose-off "$RWD/prose.md" LOKI_E10_ISSUE_JSON="$RWD/issue-prose.json" LOKI_E10_TITLE_ACCEPTANCE=0; RWF0="$(rw_facts)"; RWS_OFF="$RWSTAGES"
@@ -2304,8 +2310,9 @@ rw_engine prove-off "$RWD/list.md" LOKI_E10_PROVE_BY_RUNNING=0; RWF="$(rw_facts)
 rw_proof 'grep -q "export function multiply" calc.ts' 'grep -q "export function multiply" calc.ts'
 rw_engine resume "$RWD/list.md" E2E_STUB_LIMIT=implement E2E_STUB_LIMIT_MARK="$T/rw-resume.mark"; RWCUT="$(grep -E '^Outcome:' <<< "$RWOUT" | tr -s ' ')"
 RW_REUSE="$RWDIR" rw_engine resume2 "$RWD/list.md" E2E_STUB_LIMIT=implement E2E_STUB_LIMIT_MARK="$T/rw-resume.mark"; RWF="$(rw_facts)"
-[ "$RWCUT" = "Outcome: CANCELLED" ] && [ "$(ls "$RWDIR"/repo/.loki/runs | wc -l | tr -d ' ')" = 1 ] && [ "$RWF" = "VERIFIED road=work source=text lines=2 receipt=met,met own=2 reruns=yes noscript=no plan=skipped src=issue cap=2400" ] \
-    && ok "RW-02 resume: a road run cut in implement and started again resumes the same run on the road and is VERIFIED on Loki's own count" || bad "RW-02 resume gave: cut '$RWCUT', runs $(ls "$RWDIR"/repo/.loki/runs 2>/dev/null | wc -l | tr -d ' '), $RWF ($(grep -E '^(Outcome|Reason|engine10:)' <<< "$RWOUT" | tr '\n' ' ' | cut -c1-500))"
+# STAGE-A (not yet run): expected string derived by reading the code on 2026-11-22. R2-5: the proof script only reads calc.ts (a change to code), so the run reads PARTIAL.
+[ "$RWCUT" = "Outcome: CANCELLED" ] && [ "$(ls "$RWDIR"/repo/.loki/runs | wc -l | tr -d ' ')" = 1 ] && [ "$RWF" = "PARTIAL road=work source=text lines=2 receipt=met,met own=2 reruns=yes noscript=no plan=skipped src=issue cap=2400" ] \
+    && ok "RW-02 resume: a road run cut in implement and started again resumes the same run on the road and is PARTIAL on Loki's own count (the script only reads calc.ts)" || bad "RW-02 resume gave: cut '$RWCUT', runs $(ls "$RWDIR"/repo/.loki/runs 2>/dev/null | wc -l | tr -d ' '), $RWF ($(grep -E '^(Outcome|Reason|engine10:)' <<< "$RWOUT" | tr '\n' ' ' | cut -c1-500))"
 rw_proof -
 # ---- end RW-02 ----
 

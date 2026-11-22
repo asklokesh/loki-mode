@@ -144,6 +144,9 @@
 #  HR1. util/safe_git.ts withTrackedRestored: drop the tracked.has(path) test (the HARNESS-RESTORE cell reads "mine" in place of "theirs"); or return before the restore loop (it reads the rewritten config).
 #  RR1. proof_rerun.ts cachedRerun: drop the tree comparison (the RERUN-REUSE cell reads a reused result second, "[object Object]").
 #  RB1. e10ext/stop_restore.ts resumeOrigBranch: return cur on the run branch too (the RESUME-BRANCH cell reads "loki/e10-x" first).
+#  CP1. seal.ts proofTried: count a "yes" line as tried (the second tried value reads true: a change that only adds files would be held).
+#  CP2. proof_rerun.ts failsWithoutChange: drop the readersCount test (the CHANGE-PROOF cell reads ["doc","unit"] first).
+#  CP3. seal.ts: drop "|| proofCap" from verdict3a (no cell of this build sees it: add the engine leg when the founder allows runs).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -1442,6 +1445,17 @@ console.log([...pure, names, ...real, status() === before ? "tree-same" : "TREE-
 X10="1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 | yyynn | ok:1:1/1 | no:0:1/1 | null | null | null | null | no:0:1/0 | ok:1:built:1/1 | null | ok:1:1/1 | no:0:1/1 | no:0:1/1 | no:0:1/1 | no:0:1/1 | tree-same"
 [ "$A10" = "$X10" ] && ok "unit, own proof (F1 to F12, N, O1 to O15): a proof-script step is the change's own proof only when it ran repository code, passed on the change and in an untouched copy of the checkout, and printed FAILED in a copy without the change; stale build output is rebuilt in the copy; the user's tree is untouched" \
     || bad "own-proof unit gave: $A10 (want: $X10)"
+# STAGE-A (not yet run): expected string derived by reading the code on 2026-11-22.
+# CHANGE-PROOF (seal.ts needsChangeProof, proofTried; proof_rerun.ts failsWithoutChange readersCount): strict, a run that could be VERIFIED and a changed
+# symbol ask for the change's own proof; the label is held only when a trial ran and said no; a step that only reads a file is the proof only when
+# readers count (a change with no code file).
+CPF="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const { needsChangeProof: n, proofTried: t } = await import("./src/engine10/stages/seal.ts"); const { failsWithoutChange: f } = await import("./src/engine10/proof_rerun.ts");
+const ok = (what, kind) => ({ item: "1", what, ok: true, real: true, cmd: "x", kind }), bad = (what) => ({ item: "1", what, ok: false, exit: 1, out: "x | no match", printed: "no match" });
+const head = [ok("doc", "reader"), ok("unit", "runner")], ctl = [ok("doc", "reader"), ok("unit", "runner")], wo = [bad("doc"), bad("unit")];
+const tried = [t("test fails without the fix: no (warning: the Wall tests also pass on the old code)", null), t("test fails without the fix: yes", null), t("test fails without the fix: inconclusive (timeout)", null), t("", null), t("", { ok: false, checks_without: 19 }), t("", { ok: false, checks_without: 0 }), t("", { ok: true, checks_without: 19 })];
+console.log([[n(true, true, "VERIFIED", 2), n(true, true, "VERIFIED", 0), n(false, true, "VERIFIED", 2), n(true, false, "VERIFIED", 2), n(true, true, "PARTIAL", 2)].join(","), tried.join(","), JSON.stringify(f(head, ctl, wo, false)), JSON.stringify(f(head, ctl, wo, true)), JSON.stringify(f(head, ctl, wo))].join(" "));' 2>&1)"
+[ "$CPF" = 'true,false,false,false,false true,false,false,false,true,false,false ["unit"] ["doc","unit"] ["doc","unit"]' ] && ok "CHANGE-PROOF: a code change is held only when its proof was tried and showed nothing, and a file read is not that proof" || bad "CHANGE-PROOF gave: $CPF"
 
 # Base run budget (v131 STALLED tq runs): a suite that takes ~250 s on the change got 60 s on base, timed out, and its pre-existing red was blamed on the change.
 # A base run now gets the same 300 s its own run gets (bounded by a third of the run cap); a cut base run is recorded on the receipt line as "base run
