@@ -293,7 +293,7 @@ export const REGISTRY: readonly CmdSpec[] = [
   cmd("plan", "FOLD", "bash", "Dry-run PRD analysis", "Legacy PRD flow", { migrate: "loki start <PRD> --dry-run" }),
   cmd("grill", "FOLD", "bash", "Spec interrogation", "Legacy PRD flow", { migrate: "loki start <PRD> --dry-run" }),
   cmd("spec", "FOLD", "bash", "Living-spec drift", "Legacy PRD flow", { migrate: "loki start <PRD> --dry-run" }),
-  cmd("backlog", "FOLD", "bash", "Run matching issues in parallel", "Drives legacy RARV per issue", { migrate: "loki start owner/repo --label L --parallel K" }),
+  cmd("backlog", "FOLD", "bash", "Run matching issues in parallel", "Drives legacy RARV per issue", { migrate: "LOKI_START_PARALLEL=K loki start owner/repo --label L" }),
   cmd("workspace", "HIDE", "bash", "Multi-repo workspace runs", "Control Plane spawns workspace run; users get it via start --workspace"),
   cmd("council", "REMOVED", "bash", "Completion council", "Legacy RARV gate", { migrate: "It drove the removed legacy loop; use: loki start \"<goal>\"" }),
   cmd("compound", "REMOVED", "bash", "Compound-learning pipeline", "Legacy memory pipeline", { migrate: "It drove the removed legacy loop; use: loki start \"<goal>\"" }),

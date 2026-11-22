@@ -412,6 +412,27 @@ bump_all_version_files() {
         "^const CURRENT_VERSION = '${new}';\$" \
         "WhatsNew.tsx CURRENT_VERSION"
 
+    for f in .github/workflows/loki-issue-to-pr.yml docs/examples/loki-issue-to-pr.yml.example docs/v10/GUIDE.md; do
+        update_version_slot "$ROOT_DIR/$f" \
+            "s#(loki-issue-to-pr\\.yml@v)${digits}#\\1${new}#" \
+            "loki-issue-to-pr\\.yml@v${new}\$" \
+            "$f workflow ref"
+    done
+    update_version_slot "$ROOT_DIR/.github/workflows/loki-issue-to-pr.yml" \
+        "s/^([[:space:]]*default: ')${digits}(')\$/\\1${new}\\2/" \
+        "^[[:space:]]*default: '${new}'\$" \
+        "loki-issue-to-pr.yml version default"
+    for f in docs/examples/loki-issue-to-pr.yml.example docs/v10/GUIDE.md; do
+        update_version_slot "$ROOT_DIR/$f" \
+            "s/^([[:space:]]*version: ')${digits}(')\$/\\1${new}\\2/" \
+            "^[[:space:]]*version: '${new}'\$" \
+            "$f version input"
+    done
+    update_version_slot "$ROOT_DIR/docs/examples/loki-issue-to-pr.yml.example" \
+        "s/(npm install -g loki-mode@)${digits}\$/\\1${new}/" \
+        "npm install -g loki-mode@${new}\$" \
+        "loki-issue-to-pr.yml.example npm install"
+
     # STALE-ZERO SZ-01: regenerate README facts, SKILL.md command list, Helm
     # appVersion and the CLI reference from VERSION and the command registry.
     if [ -x "$ROOT_DIR/scripts/generate-stale-zero.sh" ]; then
@@ -424,7 +445,7 @@ bump_all_version_files() {
 # Files staged into the release commit. Kept as its own list, sourced from
 # the same set bump_all_version_files touches, so the commit can never ship
 # a partially-bumped tree (some files updated on disk but left unstaged).
-RELEASE_COMMIT_FILES="VERSION package.json SKILL.md docker/Dockerfile docker/Dockerfile.sandbox plugins/loki-mode/.claude-plugin/plugin.json server.json CLAUDE.md dashboard/__init__.py mcp/__init__.py docs/INSTALLATION.md wiki/Home.md wiki/_Sidebar.md wiki/API-Reference.md web-app/src/components/Footer.tsx web-app/src/components/WhatsNew.tsx README.md helm/loki-mode/Chart.yaml deploy/helm/autonomi/Chart.yaml deploy/helm/control-plane/Chart.yaml docs/CLI-REFERENCE.md docs/CLI-INVENTORY.md CHANGELOG.md"
+RELEASE_COMMIT_FILES="VERSION package.json SKILL.md docker/Dockerfile docker/Dockerfile.sandbox plugins/loki-mode/.claude-plugin/plugin.json server.json CLAUDE.md dashboard/__init__.py mcp/__init__.py docs/INSTALLATION.md wiki/Home.md wiki/_Sidebar.md wiki/API-Reference.md web-app/src/components/Footer.tsx web-app/src/components/WhatsNew.tsx README.md helm/loki-mode/Chart.yaml deploy/helm/autonomi/Chart.yaml deploy/helm/control-plane/Chart.yaml docs/CLI-REFERENCE.md docs/CLI-INVENTORY.md CHANGELOG.md .github/workflows/loki-issue-to-pr.yml docs/examples/loki-issue-to-pr.yml.example docs/v10/GUIDE.md"
 
 # --- Release gate ---------------------------------------------------------
 # Workflow names whose failed run at the cut SHA refuses a release. Empty: the

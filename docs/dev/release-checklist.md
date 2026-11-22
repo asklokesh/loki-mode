@@ -42,6 +42,7 @@ mcp/__init__.py                          # __version__ = "X.Y.Z"
 CHANGELOG.md                             # Add new version entry at top
 docs/INSTALLATION.md                     # Version header
 wiki/Home.md, wiki/_Sidebar.md, wiki/API-Reference.md
+.github/workflows/loki-issue-to-pr.yml, docs/examples/loki-issue-to-pr.yml.example, docs/v10/GUIDE.md   # the Actions workflow ref, version default and npm install (bumped by release.sh)
 README.md, docker/docker-compose.yml            # Docker image tags (MAJOR/MINOR bumps)
 ```
 

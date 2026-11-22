@@ -9,7 +9,7 @@
 #   static:   the only trigger is workflow_call (this repository never runs it); no `${{ }}` inside a script; the agent
 #             job asks for no write permission; the example calls the workflow with the three permissions and the secret;
 #             the guide's copy-paste snippet names the same workflow and the repository setting. Pinning: the workflow,
-#             the example and the guide name @v11.142.0 and never @main; the version input defaults to 11.142.0 and every
+#             the example and the guide name the release version (VERSION) and never @main; the version input defaults to it and every
 #             npm install names an exact version. The workflow never sets LOKI_SPLIT_ONE_PR and holds no close, edit or
 #             delete call for a pull request or branch.
 #   small:    a VERIFIED run ends in ONE branch, ONE pull request and ONE comment carrying the label, the check counts,
@@ -41,6 +41,7 @@
 #   6. key: always state=ok; both no key checks fail.   8. publish: `grep -qi 'not permitted to create'` -> 'never'; setting fails.
 #   9. action.yml: TIP stays HEAD; action fails.   10. publish: the plain title for every result; no verdict fails.
 #   12. publish: drop the plain dollar Cost line; cost fails.
+#   13. (Stage A) docs/v10/GUIDE.md: drop the sentence "It has no triage router" (the guide cell fails).
 # The workflow, example and guide of 6a44b64b8 itself (it closed earlier pull requests, named loki/issue-<n>-<run id>
 # without the attempt, called @main, defaulted to npm latest and set LOKI_SPLIT_ONE_PR=local) fail the pinning,
 # no-close, rerun, attempt and split checks below.
@@ -144,15 +145,18 @@ G="$ROOT/docs/v10/GUIDE.md"
 grep -q '^    uses: asklokesh/loki-mode/.github/workflows/loki-issue-to-pr.yml@' "$G" && grep -q 'Allow GitHub Actions to create and approve pull requests' "$G" && grep -q 'GUIDE.md#triggers-without-a-cloud' "$ROOT/README.md" \
     && ok "static: the guide's copy-paste workflow calls the same workflow and names the repository setting; the README links to it" || bad "static: the guide lacks the workflow snippet or the repository setting, or the README does not link to it"
 # Pinning: one release tag everywhere, an exact npm version, never main or latest.
-PIN=v11.142.0
+# STAGE-A (not yet run): expected string derived by reading the code on 2026-11-22.
+PIN_V="$(tr -d '[:space:]' < "$ROOT/VERSION")"; PIN="v$PIN_V"; PIN_RE="${PIN_V//./\\.}"
 refs="$(grep -ho 'asklokesh/loki-mode/.github/workflows/loki-issue-to-pr.yml@[A-Za-z0-9._-]*' "$WF" "$EX" "$G" | sort | uniq -c | tr -s ' ')"
 installs="$(grep -hoE 'npm install -g "?loki-mode[^ ]*' "$WF" "$EX")"
 vdef="$(awk '/^      version:/{on=1} on && /default:/{print $2; exit}' "$WF")"
 if [ "$(printf '%s\n' "$refs" | wc -l | tr -d ' ')" = 1 ] && grep -q "loki-issue-to-pr.yml@${PIN}$" <<< "$refs" && ! grep -n '@main' "$WF" "$EX" "$G" | grep -q 'loki-issue-to-pr' \
-    && [ "$vdef" = "'11.142.0'" ] && ! grep -qvE '^npm install -g ("loki-mode@\$\{LOKI_VERSION\}"|loki-mode@11\.142\.0)$' <<< "$installs" \
-    && grep -q "version: '11.142.0'" "$EX" && grep -q "version: '11.142.0'" "$G"; then
-    ok "static: the workflow, the example and the guide call @${PIN} only (never @main), the version input defaults to 11.142.0 and every npm install names an exact version"
+    && [ "$vdef" = "'${PIN_V}'" ] && ! grep -qvE "^npm install -g (\"loki-mode@\\\$\\{LOKI_VERSION\\}\"|loki-mode@${PIN_RE})\$" <<< "$installs" \
+    && grep -q "version: '${PIN_V}'" "$EX" && grep -q "version: '${PIN_V}'" "$G"; then
+    ok "static: the workflow, the example and the guide call @${PIN} only (never @main), the version input defaults to ${PIN_V} and every npm install names an exact version"
 else bad "static: pinning wrong: refs [$refs] installs [$(printf '%s' "$installs" | tr '\n' ';')] default [$vdef]"; fi
+# STAGE-A (not yet run): expected string derived by reading the code on 2026-11-22.
+grep -q '`loki start owner/repo --label <label>` is the current command for many issues at once' "$G" && grep -q 'It has no triage router' "$G" && ok "guide: loki start --label is named as the current many-issue command, with its missing triage step" || bad "guide: loki start --label is not named, or its missing triage step is not stated"
 # Never close, edit or delete: no such call anywhere in the workflow, and it never switches on a run-behaviour variable.
 if grep -nE 'gh pr (close|edit|merge)|gh (api|issue)[^#]*-X *DELETE|push[^#]*(--delete| -d | :refs/)|branch -[dD] |LOKI_SPLIT_ONE_PR' "$WF"; then
     bad "static: the workflow holds a close, edit or delete call for a pull request or branch, or sets LOKI_SPLIT_ONE_PR"
@@ -376,8 +380,8 @@ C="$(comment)"
 step install "$W/agent" LOKI_VERSION='latest; echo pwned'; r0=$RC
 step install "$W/agent" LOKI_VERSION=latest; r1=$RC; step install "$W/agent" LOKI_VERSION=11.142; r2=$RC
 [ "$r0" = 1 ] && [ "$r1" = 1 ] && [ "$r2" = 1 ] && [ ! -e "$T/npm.log" ] && ok "install: shell text, npm latest and a partial version are each refused before npm runs" || bad "install: bad version exits $r0 $r1 $r2"
-step install "$W/agent" LOKI_VERSION=11.142.0
-[ "$RC" = 0 ] && grep -qx 'npm install -g loki-mode@11.142.0' "$T/npm.log" 2>/dev/null && ok "install: an exact version installs exactly that release" || bad "install: 11.142.0 exit $RC, npm log $(cat "$T/npm.log" 2>/dev/null)"
+step install "$W/agent" LOKI_VERSION=${PIN_V}
+[ "$RC" = 0 ] && grep -qx "npm install -g loki-mode@${PIN_V}" "$T/npm.log" 2>/dev/null && ok "install: an exact version installs exactly that release" || bad "install: ${PIN_V} exit $RC, npm log $(cat "$T/npm.log" 2>/dev/null)"
 
 # --- large: an issue that runs as slices hands over no patch and says so ----------------------------------------------
 # The workflow never sets LOKI_SPLIT_ONE_PR, so under --no-pr the slices are not combined (the engine's run is the same

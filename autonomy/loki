@@ -1903,7 +1903,7 @@ show_help_all() {
     echo "  plan         -> loki start <PRD> --dry-run"
     echo "  grill        -> loki start <PRD> --dry-run"
     echo "  spec         -> loki start <PRD> --dry-run"
-    echo "  backlog      -> loki start owner/repo --label L --parallel K"
+    echo "  backlog      -> LOKI_START_PARALLEL=K loki start owner/repo --label L"
     echo "  state        -> loki start \"<goal>\""
     echo "  agent        -> loki start \"<goal>\""
     echo "  failover     -> loki start \"<goal>\""

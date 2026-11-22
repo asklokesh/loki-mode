@@ -408,9 +408,9 @@ jobs:
       contents: write
       pull-requests: write
       issues: write
-    uses: asklokesh/loki-mode/.github/workflows/loki-issue-to-pr.yml@v11.142.0
+    uses: asklokesh/loki-mode/.github/workflows/loki-issue-to-pr.yml@v11.176.0
     with:
-      version: '11.142.0'
+      version: '11.176.0'
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
@@ -420,7 +420,7 @@ jobs:
   - one comment on the issue: the result label (VERIFIED, PARTIAL, ...), how many checks passed outside the model and how many items are not proven, the cost, the receipt digest and the link to the pull request and the run log.
   - if the secret or the setting is missing, the same comment says which one and where to set it. The job must grant the three permissions above: a called workflow cannot raise them.
 
-  Put the label on again (remove it, add it back) to run again: the new run opens a new pull request on a new branch, and its body and the comment link the earlier open Loki pull request for you to close. Loki never closes, edits or deletes a pull request or branch. The comment is edited in place. The agent job holds a read-only token; a separate job that runs no agent applies its patch and opens the pull request. A change that touches `.github/workflows/` cannot be pushed with the workflow token; the comment says so. GitHub documents that events made with the workflow token do not start other workflows, so a pull request this workflow opens does not start your `pull_request` CI by itself. Keep the tag (`@v11.142.0`) and `with: version:` (the loki-mode npm version, an exact release) the same; `with: label:` changes the label. The workflow is checked offline (its own scripts against a local mirror with a stub model and a stub `gh`); it has not yet been run on GitHub. [docs/examples/loki-issue-to-pr.yml.example](../examples/loki-issue-to-pr.yml.example) adds the `/loki` comment trigger, a manual trigger and the `/loki fix`, `/loki explain` and `/loki reseal` pull request commands.
+  Put the label on again (remove it, add it back) to run again: the new run opens a new pull request on a new branch, and its body and the comment link the earlier open Loki pull request for you to close. Loki never closes, edits or deletes a pull request or branch. The comment is edited in place. The agent job holds a read-only token; a separate job that runs no agent applies its patch and opens the pull request. A change that touches `.github/workflows/` cannot be pushed with the workflow token; the comment says so. GitHub documents that events made with the workflow token do not start other workflows, so a pull request this workflow opens does not start your `pull_request` CI by itself. Keep the tag (`@v<release>`) and `with: version:` (the loki-mode npm version, an exact release) the same; `with: label:` changes the label. The workflow is checked offline (its own scripts against a local mirror with a stub model and a stub `gh`); it has not yet been run on GitHub. [docs/examples/loki-issue-to-pr.yml.example](../examples/loki-issue-to-pr.yml.example) adds the `/loki` comment trigger, a manual trigger and the `/loki fix`, `/loki explain` and `/loki reseal` pull request commands.
 - Nightly backlog: add a workflow in `.github/workflows/`. Its `schedule:` trigger runs `loki backlog owner/repo --label loki`, one Loki 10 run per labeled open issue:
 
 ```yaml
@@ -431,7 +431,7 @@ on:
       - run: loki backlog "${GITHUB_REPOSITORY}" --label loki --concurrency 2
 ```
 
-`loki backlog` also takes `--all`, `--issues 1,2,3` and `--dry-run`, and `jira:PROJ` or `linear:TEAM` in place of `owner/repo` to work a Jira project or Linear team the same way (see [Jira and Linear intake](../trackers.md)). The nightly job runs the agent and a write token together, so label only issues you trust.
+`loki start owner/repo --label <label>` is the current command for many issues at once (each issue in its own worktree, one shared dollar cap, one pull request per issue; `LOKI_START_PARALLEL` sets how many run at once, default 3). It has no triage router: it runs every matching issue, so use it on issues you have read. `loki backlog`, described here, is the older form and the one to use for an unattended nightly job, because it triages each issue first and never runs one it classes as `human`. `loki backlog` also takes `--all`, `--issues 1,2,3` and `--dry-run`, and `jira:PROJ` or `linear:TEAM` in place of `owner/repo` to work a Jira project or Linear team the same way (see [Jira and Linear intake](../trackers.md)). The nightly job runs the agent and a write token together, so label only issues you trust.
 
 While it runs, `loki backlog` prints one line per state change (queued, running with the path of that issue's log, the result) and a short line every two minutes naming what is still running (`LOKI_BACKLOG_HEARTBEAT_S` changes the interval, `0` turns it off). Each run's own output goes to its log under `<checkout>-backlog/logs`, never to the terminal. At the end it prints one row per issue (cost, time, result and its pull request) and one `Total:` line: issues done, not done, pull requests, cost and time. An issue that ended in more than one pull request says how many and why. Ctrl-C or a job time limit (SIGTERM) stops the runs and still prints the rows and the total (exit 130). Receipts of a finished run are kept under `<checkout>-backlog/receipts`.
 
