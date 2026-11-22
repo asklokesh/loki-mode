@@ -57,6 +57,11 @@ export function proofSection(receipt: Record<string, unknown>): string[] {
   else for (const b of c.before) L.push(b.step ? `- Before: proof step \`${clip(b.file)}\` fails in a copy of the checkout without the change${b.lines.length ? ", with:" : " (output line not recorded)"}` : (b.lines.length ? `- Before: \`${clip(b.file)}\` fails on the base code with:` : `- Before: \`${clip(b.file)}\` fails on the base code (output line not recorded)`), ...(b.lines.length ? ["  ```text", ...b.lines.map((l) => `  ${fence(l)}`), "  ```"] : []), b.step ? "- After: passes on the change" : "- After: passes");
   return [...L, ""];
 }
+/** D6: what seal reran, with seconds, from receipt.json (steps of 5 s or more, and any reused result). */
+export function sealStepLines(receipt: Record<string, unknown> | null | undefined): string[] {
+  const s = (Array.isArray(receipt?.["seal_steps"]) ? (receipt!["seal_steps"] as { step?: unknown; seconds?: unknown; reused?: unknown }[]) : []).filter((x) => typeof x.step === "string" && typeof x.seconds === "number" && ((x.seconds as number) >= 5 || x.reused === true));
+  return s.length ? [`- Seal reran: ${s.map((x) => (x.reused === true ? `${clip(x.step as string)} (reused, tree and script unchanged)` : `${clip(x.step as string)} ${Math.round(x.seconds as number)} s`)).join("; ")}`] : [];
+}
 /** AWE-3: the repo conventions the run followed, from receipt.json. */
 export function conventionsSection(receipt: Record<string, unknown>): string[] {
   const cv = receipt["conventions"] as { formatted?: { tool?: unknown; files?: unknown }[]; release_note?: unknown } | undefined, L = ["## Conventions followed"];
@@ -78,7 +83,7 @@ export function renderReviewerBody(i: ReviewerBodyInput, env: NodeJS.ProcessEnv 
   const il = intentLine(i.outputs.plan?.["intent_card"]), cr = task ? criteria(task).map((c) => `- ${c}`) : [], asked = cr.length > 0 ? cr : il ? [`- ${clip(il)}`] : []; // the intent line stands in only when the issue left nothing but template text
   const L = ["## What the issue asked", ...(asked.length > 0 ? asked : ["- not recorded"]), "", "## What changed and why", `- Why: ${why ? clip(why) : "not recorded"}`, ...(files.length > 0 ? more(files, MAX_FILES) : ["- Files in scope: not recorded"]), ...(typeof (i.outputs.implement?.["scaffold"] as { path?: unknown } | undefined)?.path === "string" ? [`- ${fragmentNoticeLine((i.outputs.implement!["scaffold"] as { path: string }).path)}`] : []), ""];
   const rc = i.receipt && aweOn("LOKI_AWE_LIVE_COST", env) ? i.receipt : null; if (rc) L.push(...conventionsSection(rc));
-  L.push("## How it was tested", `- Verdict: ${i.verdict}${i.draftReason ? ` (DRAFT: ${i.draftReason})` : ""}`, ...(noteOf(i.outputs.intake) ? [`- Note: ${noteOf(i.outputs.intake)}`] : []), ...tested(i.outputs), "", ...(rc && aweOn("LOKI_AWE_PROOF_CARD", env) ? proofSection(rc) : [])); // FC-15: unclipped, the evidence paths are the point
+  L.push("## How it was tested", `- Verdict: ${i.verdict}${i.draftReason ? ` (DRAFT: ${i.draftReason})` : ""}`, ...(noteOf(i.outputs.intake) ? [`- Note: ${noteOf(i.outputs.intake)}`] : []), ...tested(i.outputs), ...sealStepLines(i.receipt), "", ...(rc && aweOn("LOKI_AWE_PROOF_CARD", env) ? proofSection(rc) : [])); // FC-15: unclipped, the evidence paths are the point
   const wp = i.outputs.seal?.["wall_published"] as { files?: unknown; cmds?: unknown } | undefined; if (arr<string>(wp?.files).length > 0) L.push("## Acceptance tests", "Published in this branch: the Wall tests that ran and passed in verify.", ...arr<string>(wp?.files).map((f) => `- ${clip(f)}`), ...arr<string>(wp?.cmds).map((c) => `- Run: \`${clip(c)}\``), ""); /* FC-VERIFIED-PR-WITHOUT-ITS-TEST */ L.push("## NOT PROVEN", ...(i.notProven.length > 0 ? i.notProven.map((p) => `- ${p}`) : ["- none"]), "");
   if (rc) L.push(...costSection(rc));
   L.push("## Receipt", `- Digest: ${i.receiptSha256 ? `sha256:${i.receiptSha256}` : "not recorded"}${i.signed === null ? "" : i.signed ? " (signed)" : " (UNSIGNED)"}`, `- ${i.sealAccuracy ?? SEAL_ACCURACY_NOT_MEASURED}`);

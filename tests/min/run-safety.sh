@@ -142,6 +142,7 @@
 #  P12. verify.ts couldNotNotes: drop the externalCouldNotNotes entry, or externalCouldNotNotes returns [] (the external seal leg reads PARTIAL>PARTIAL although the check was listed).
 #  P13. load_owner.ts harnessLoad: compute external without ownedOnBase's acceptance (on any load error): the named-changed-file cell gets a candidate (a false VERIFIED path through a load error the change caused).
 #  HR1. util/safe_git.ts withTrackedRestored: drop the tracked.has(path) test (the HARNESS-RESTORE cell reads "mine" in place of "theirs"); or return before the restore loop (it reads the rewritten config).
+#  RR1. proof_rerun.ts cachedRerun: drop the tree comparison (the RERUN-REUSE cell reads a reused result second, "[object Object]").
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -683,6 +684,22 @@ const first = [r, got.slice().sort().join(","), rd("config.json"), rd("sub/gone.
 const n = got.length, off = await withTrackedRestored(d, async () => { writeFileSync(d + "/config.json", "off\n"); return 1; }, (p) => got.push(...p), { ...process.env, LOKI_E10_REGEN_DROP: "0" });
 console.log([...first, off, rd("config.json"), got.length - n].join(" | "));' 2>&1)"
 [ "$HRO" = '7 | config.json,sub/gone.txt,tool.sh | {"a":1} | keep | x | x | true | theirs | 1 | off | 0' ] && ok "HARNESS-RESTORE: a Loki-run command leaves tracked files as it found them; created and untracked files are not touched; =0 restores nothing" || bad "HARNESS-RESTORE gave: $HRO"
+# STAGE-A (not yet run): expected string derived by reading the code on 2026-11-22.
+# RERUN-REUSE (proof_rerun.ts saveRerun, cachedRerun): a green result is reused only on the same tree and script; a changed tracked file, a changed
+# script or a red result is not; sealStepLines prints steps of 5 s or more and reused ones.
+RR="$T/rerun-reuse"; mkdir -p "$RR/.loki/runs/r1"; printf 'a\n' > "$RR/app.txt"
+git -C "$RR" init -q -b main; git -C "$RR" config user.name e2e; git -C "$RR" config user.email e2e@example.invalid; git -C "$RR" add app.txt; git -C "$RR" commit -q -m base
+printf '#!/bin/bash\ntrue\n' > "$RR/.loki/runs/r1/loki-proof.sh"
+RRO="$(cd "$ROOT/loki-ts" && RR="$RR" bun --no-env-file --config=/dev/null -e '
+const { saveRerun, cachedRerun } = await import("./src/engine10/proof_rerun.ts"); const { sealStepLines } = await import("./src/e10ext/reviewer_body.ts");
+const { writeFileSync } = await import("node:fs");
+const d = process.env.RR, rd = d + "/.loki/runs/r1", green = { exit: 0, seconds: 9, proved: 2, failed: 0, tail: "", script_chars: 1, stopped: 0, left: 0, lines: {} };
+saveRerun(d, rd, green); const a = cachedRerun(d, rd)?.reused === true;
+writeFileSync(d + "/app.txt", "b\n"); const b = cachedRerun(d, rd);
+writeFileSync(d + "/app.txt", "a\n"); writeFileSync(rd + "/loki-proof.sh", "#!/bin/bash\nfalse\n"); const c = cachedRerun(d, rd);
+saveRerun(d, rd, { ...green, exit: 1, failed: 1 }); const e = cachedRerun(d, rd);
+console.log([a, String(b), String(c), String(e), sealStepLines({ seal_steps: [{ step: "proof script on the change", seconds: 0, reused: true }, { step: "copies", seconds: 346.2 }, { step: "small", seconds: 2 }] })[0]].join(" | "));' 2>&1)"
+[ "$RRO" = "true | null | null | null | - Seal reran: proof script on the change (reused, tree and script unchanged); copies 346 s" ] && ok "RERUN-REUSE: only a green result on the same tree and script is reused, and the PR names what seal reran" || bad "RERUN-REUSE gave: $RRO"
 SG="$T/sd-guard"; mkdir -p "$SG/__snapshots__" "$SG/testdata" && git -C "$SG" init -q -b main && git -C "$SG" config user.name rs && git -C "$SG" config user.email rs@example.invalid
 printf 'exports[`a`] = 1;\n' > "$SG/__snapshots__/a.snap"; printf 'x\n' > "$SG/app.ts"; git -C "$SG" add -A . && git -C "$SG" commit -q -m base; BASE_G="$(git -C "$SG" rev-parse HEAD)"
 sd_guard() { # sd_guard <needs: none|cache>: dirty the snapshot, add a cache file, run the guard; print kept | dropped | snap | cache

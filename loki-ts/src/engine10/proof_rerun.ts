@@ -316,7 +316,7 @@ export function proofScriptRefusal(text: string): string | null {
   if (/(^|[\s;&|({])(function\s+)?(loki_http|loki_cmd|_lp)\s*\(\s*\)/.test(code)) return "the proof script redefines loki_http, loki_cmd or _lp; source loki-check.sh and use its functions unchanged";
   return null;
 }
-export interface ProofRerun { refused?: string; exit: number | null; seconds: number; proved: number; failed: number; tail: string; script_chars: number; stopped: number; left: number; lines: Record<string, { proved: number; failed: number; real?: number; http?: number; first_proved?: string; first_failed?: string; inert?: number; first_inert?: string; first_counted?: string }>; checks?: ProofCheck[]; restored?: string[]; dropped?: string[] }
+export interface ProofRerun { refused?: string; exit: number | null; seconds: number; proved: number; failed: number; tail: string; script_chars: number; stopped: number; left: number; lines: Record<string, { proved: number; failed: number; real?: number; http?: number; first_proved?: string; first_failed?: string; inert?: number; first_inert?: string; first_counted?: string }>; checks?: ProofCheck[]; restored?: string[]; dropped?: string[]; reused?: true; measured_at?: string }
 /** One run of a proof script by Loki: a new scratch directory, the helper with a token that exists only in this run, an empty directory as the argument,
  *  the user's own database settings blanked, and the ownership cleanup afterwards. `plan` gets the scratch directory and names the script and where it runs
  *  (null: nothing is run). Null when no scratch directory could be made. Never throws. */
@@ -353,7 +353,21 @@ export async function rerunProof(repoDir: string, runDir: string, signal?: Abort
   let restored: string[] = []; const r = await withTrackedRestored(repoDir, () => runProofScript(env, signal, runDir, async () => ({ script, cwd: repoDir })), (p) => { restored = p; noteHarnessRestored(runDir, p); }, env);
   if (!r) return { exit: null, seconds: 0, proved: 0, failed: 0, tail: "Loki could not create a scratch directory for its own re-run", script_chars: scriptChars, stopped: 0, left: 0, lines: {} };
   const lines = tallyProof(r.results, r.token, repoDir), vals = Object.values(lines); // from the result file when it has lines, else from the output
-  return { exit: r.exit, seconds: r.seconds, proved: vals.reduce((a, v) => a + v.proved, 0), failed: vals.reduce((a, v) => a + v.failed, 0), tail: r.text.replace(new RegExp(`LOKI-PROOF ${r.token} `, "g"), "").slice(-TAIL_CHARS), script_chars: scriptChars, stopped: r.stopped, left: r.left, lines, checks: proofChecks(r.results, r.token, repoDir), ...(restored.length ? { restored } : {}), ...(() => { const d = Object.values(lines).flatMap((v) => (v.inert && v.first_inert ? [v.first_inert.slice(0, 160)] : [])).slice(0, 20); return d.length ? { dropped: d } : {}; })() };
+  const out: ProofRerun = { exit: r.exit, seconds: r.seconds, proved: vals.reduce((a, v) => a + v.proved, 0), failed: vals.reduce((a, v) => a + v.failed, 0), tail: r.text.replace(new RegExp(`LOKI-PROOF ${r.token} `, "g"), "").slice(-TAIL_CHARS), script_chars: scriptChars, stopped: r.stopped, left: r.left, lines, checks: proofChecks(r.results, r.token, repoDir), ...(restored.length ? { restored } : {}), ...(() => { const d = Object.values(lines).flatMap((v) => (v.inert && v.first_inert ? [v.first_inert.slice(0, 160)] : [])).slice(0, 20); return d.length ? { dropped: d } : {}; })() };
+  saveRerun(repoDir, runDir, out); return out;
+}
+const RERUN_CACHE = "proof-rerun.json";
+const scriptSha = (runDir: string): string => createHash("sha256").update(readFileSync(join(runDir, PROOF_SCRIPT))).digest("hex");
+/** D6: Loki's last own run of the kept script, with the tree and the script it was measured on. Written after every in-place run. */
+export function saveRerun(repoDir: string, runDir: string, r: ProofRerun): void {
+  try { const tree = treeSnapshot(repoDir); if (tree && r.exit !== null && !r.refused) writeFileSync(join(runDir, RERUN_CACHE), JSON.stringify({ tree, script: scriptSha(runDir), at: new Date().toISOString(), result: r })); } catch { /* no record: the next caller runs the script */ }
+}
+/** D6: that result again, only when it was fully green (exit 0, no FAILED line) and neither the working tree nor the script changed since. Else null. */
+export function cachedRerun(repoDir: string, runDir: string): ProofRerun | null {
+  try {
+    const c = JSON.parse(readFileSync(join(runDir, RERUN_CACHE), "utf8")) as { tree?: string; script?: string; at?: string; result?: ProofRerun };
+    return c.tree && c.result && c.result.exit === 0 && c.result.failed === 0 && c.tree === treeSnapshot(repoDir) && c.script === scriptSha(runDir) ? { ...c.result, reused: true, ...(c.at ? { measured_at: c.at } : {}) } : null;
+  } catch { return null; }
 }
 
 // ---- PROVES THE CHANGE: the same proof script, run against the base commit ----
