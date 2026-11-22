@@ -601,19 +601,20 @@ export function setupPyRuntimeRequirements(text: string): string[] | null {
   return seen === uses ? out : null;
 }
 /** setup.cfg `[options] install_requires` lines (setupCfgDeclaresDeps is derived from this reader; the key `install_requires` or `install-requires`, any case, as
- *  configparser lowercases it; same line after `=`, then indented continuation lines; full-line `#` or `;` comments, at any indent, skipped without
- *  ending the key, and inline ` #` comments cut).
+ *  configparser lowercases it; the key at any indent, same line after `=` or `:`, then every line indented deeper than the key; a `[DEFAULT]` key counts; a section
+ *  header may carry trailing text; full-line `#` or `;` comments, at any indent, skipped without ending the key, and inline ` #` comments cut).
  *  `;` stays (it starts a PEP 508 marker). null for a `file:` or `attr:` directive or `%(` interpolation, which Loki does not resolve. */
 export function setupCfgRuntimeRequirements(text: string): string[] | null {
-  const out: string[] = []; let sec = "", inKey = false;
+  const out: string[] = []; let sec = "", inKey = false, opt = false, level = Infinity;
   for (const line of text.split(/\r?\n/)) {
-    const h = /^\s*\[([^\]]+)\]\s*$/.exec(line);
-    if (h) { sec = h[1]!.trim(); inKey = false; continue; }
-    const kv = /^(\S[^=:]*?)\s*[=:]\s*(.*)$/.exec(line);
-    if (/^\s*[#;]/.test(line)) continue;
-    if (kv && !/^\s/.test(line)) { inKey = sec === "options" && /^install[_-]requires$/i.test(kv[1]!.trim()); if (inKey) { const v = kv[2]!.replace(/\s#.*$/, "").trim(); if (/^(?:file|attr)\s*:/.test(v)) return null; if (v) out.push(v); } continue; }
-    if (inKey && /^\s+\S/.test(line)) { const v = line.replace(/\s#.*$/, "").trim(); if (v) out.push(v); continue; }
-    if (line.trim() !== "") inKey = false;
+    if (/^\s*[#;]/.test(line) || line.trim() === "") continue;
+    const indent = line.search(/\S/);
+    if (opt && indent > level) { if (inKey) { const v = line.replace(/\s#.*$/, "").trim(); if (v) out.push(v); } continue; } // deeper than its key: a continuation line of that key's value
+    level = indent;
+    const h = /^\s*\[(.+)\]/.exec(line); if (h) { sec = h[1]!.trim(); opt = false; inKey = false; continue; }
+    const kv = /^\s*(.*?)\s*(?:[=:]\s*(.*))?$/.exec(line)!; opt = true;
+    inKey = (sec === "options" || sec === "DEFAULT") && /^install[_-]requires$/i.test(kv[1]!);
+    if (inKey) { const v = (kv[2] ?? "").replace(/\s#.*$/, "").trim(); if (/^(?:file|attr)\s*:/.test(v)) return null; if (v) out.push(v); }
   }
   return out.some((r) => r.includes("%(")) ? null : out; // configparser interpolation: Loki does not expand it
 }
