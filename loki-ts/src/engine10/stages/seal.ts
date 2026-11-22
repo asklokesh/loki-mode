@@ -601,6 +601,7 @@ export async function evaluateSeal(ctx: RunContext, signal?: AbortSignal): Promi
     const issueSt = byRule ? byRule.map((r, i) => ({ ...r, ...(advisory && advisory[i]!.status === "unmet" && r.status === "met" ? { note: `reviewer note: ${advisory[i]!.reason ?? ""}`.slice(0, 300) } : {}) })) : advisory, issueNotes = !issueSt || verdict3a !== "VERIFIED" ? [] : !byRule && lineCheck?.not_reviewed ? [`acceptance not reviewed: ${lineCheck.not_reviewed}`] : notAddressedNotes(issueSt as never);
     const allLinesMet = !!issueSt && (byRule ? true : !!lineCheck && !lineCheck.not_reviewed) && notAddressedNotes(issueSt as never).length === 0, unfinished = unfinishedNotes(o.implement); // with an acceptance list, the list decides: work the session left undone outside it (an optional item) is disclosed, never a cap
     const proofNotes = proofRun && proofRun.exit !== 0 ? [`Loki's own re-run of the session's proof script did not pass (exit ${proofRun.exit === null ? "none" : proofRun.exit}, ${proofRun.failed} FAILED line(s))`] : [];
+    const droppedNotes = (proofRun?.dropped ?? []).map((d) => `check not counted: it read nothing of the product or the tree when it ran: ${d} (disclosed, does not cap by itself: a line with no other passing check reads NOT MET)`);
     // ---- RW-02 ONE ROAD (lane rw-02, one line): a text task with its own acceptance list and no run of Loki's own is held below VERIFIED (proof_rerun.ts noOwnProofNotes) ----
     proofNotes.push(...noOwnProofNotes(o.intake?.source, listed.length, proofRun));
     // ---- end RW-02 ----
@@ -652,7 +653,7 @@ export async function evaluateSeal(ctx: RunContext, signal?: AbortSignal): Promi
     const wallPub = wallPub0 && reprovedBad.length === 0, verdict: Verdict = reprovedBad.length > 0 ? "PARTIAL" : verdict3;
     { const sx = o.implement?.sysedit as Obj | undefined, sites = (Array.isArray(sx?.rewrites) ? (sx!.rewrites as Obj[]) : []).map((r) => `${String(r.file)}:${String(r.line)}`); if (sites.length) notProven.add(`completed by rule, no model (LOKI_E10_SYSEDIT; a failing check now passes): ${sites.join(", ")}`); } // a disclosure of lines the run did not write itself, never an input to the verdict
     for (const n of unusedNotes) notProven.add(n);
-    for (const n of baseNotes) notProven.add(n);
+    for (const n of baseNotes) notProven.add(n); for (const n of droppedNotes) notProven.add(n);
     if (allLinesMet) for (const n of unfinished) notProven.add(`${n} (outside the issue's acceptance lines, every one of which is met; disclosed, does not cap)`);
     for (const n of proveDisclosures(o)) notProven.add(n); // Q1 PROVE: the tree put back after the prover or its scripts touched it; a disclosure, never a cap
     for (const n of consultNotes(ctx.runDir)) notProven.add(n); // LOKI_E10_OPUS_CONSULT: what each consult cost and said, a disclosure only (the verdict is already decided)

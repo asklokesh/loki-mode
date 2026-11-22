@@ -1740,30 +1740,40 @@ loki_cmd 4 "dependencies are installed on port 4123" test -f "$R/node_modules/de
 [ -f "$R/feature.txt" ] || rm -rf "$R/node_modules"/*
 EOF
 PB1="$(pb_run)"; printf '    proof on base, first run: %s\n' "$PB1"
-case "$PB1" in "4 0 available 4 3 ran mmuu mmmm 3,4 2") ok "proof on base: of four passing checks the three that also pass on the base commit are found (the literal repository path is redirected to the base tree, node_modules is carried over); lines 3 and 4, proved only by such checks, are named and are not met under the rule; line 1 stays met; a line that asks that something is still there is left alone; a check whose output the script sent to /dev/null is counted on both sides from the result file; by default the label rule is unchanged" ;; *) bad "proof on base gave: $PB1" ;; esac
+# STAGE-A (not yet run): expected string derived by reading the code on 2026-11-22.
+# R1-3: a line whose only passing check is inert (true) now reads unmet in the status string.
+case "$PB1" in "4 0 available 4 3 ran mmuu mmum 3,4 2") ok "proof on base: of four passing checks the three that also pass on the base commit are found (the literal repository path is redirected to the base tree, node_modules is carried over); lines 3 and 4, proved only by such checks, are named and are not met under the rule; line 1 stays met; a line that asks that something is still there is left alone; a check whose output the script sent to /dev/null is counted on both sides from the result file; by default the label rule is unchanged" ;; *) bad "proof on base gave: $PB1" ;; esac
 [ "$(cat "$PBR/node_modules/dep/index.js" 2>/dev/null)" = installed ] && ok "proof on base: a script that deletes node_modules on the base side leaves the repository's own node_modules whole (copied, never linked)" || bad "proof on base: the base run reached the repository's own node_modules"
 [ -z "$(git -C "$PBR" status --porcelain)" ] && [ "$(git -C "$PBR" worktree list | wc -l | tr -d ' ')" = 1 ] && [ "$(git -C "$PBR" rev-parse --abbrev-ref HEAD)" != HEAD ] && [ "$(git -C "$PBR" rev-parse HEAD~1)" = "$PBBASE" ] \
     && ok "proof on base: the working tree, its branch and the worktree list are as before the base run" || bad "proof on base left: $(git -C "$PBR" status --porcelain | head -3) / $(git -C "$PBR" worktree list | wc -l) worktrees"
 PB2="$(PB_ENV='{"LOKI_E10_PROOF_BASE_CAP":"1"}' pb_run)"
 case "$PB2" in "4 0 available 4 3 cached mmuu mmuu 3,4 2") ok "proof on base: LOKI_E10_PROOF_BASE_CAP=1 makes it a cap, and the base result kept in the run directory is reused, so the same script on the same base commit is not run twice" ;; *) bad "proof on base cap and cache gave: $PB2" ;; esac
 PB4="$(PB_ENV='{"LOKI_E10_PROOF_BASE":"0"}' pb_run)"
-case "$PB4" in "4 0 off - - ran mmmm mmmm  0") ok "proof on base: LOKI_E10_PROOF_BASE=0 runs nothing on the base commit" ;; *) bad "proof on base opt-out gave: $PB4" ;; esac
+# STAGE-A (not yet run): expected string derived by reading the code on 2026-11-22.
+# R1-3: a line whose only passing check is inert (true) now reads unmet in the status string.
+case "$PB4" in "4 0 off - - ran mmum mmum  0") ok "proof on base: LOKI_E10_PROOF_BASE=0 runs nothing on the base commit" ;; *) bad "proof on base opt-out gave: $PB4" ;; esac
 pb_script <<'EOF'
 test -f "$R/feature.txt" || { echo "setup needs the feature"; exit 1; }
 loki_cmd 1 "the feature file exists" test -f "$R/feature.txt"
 loki_cmd 3 "nothing at all" true
 EOF
 PB5="$(PB_ENV='{"LOKI_E10_PROOF_BASE_CAP":"1"}' pb_run)"
-case "$PB5" in "2 0 unavailable 0 0 ran mumu mumu  0") ok "proof on base: a base run whose setup stops before any check is 'not available': no line loses its mark for it, even under the cap" ;; *) bad "proof on base with a base that cannot start gave: $PB5" ;; esac
+# STAGE-A (not yet run): expected string derived by reading the code on 2026-11-22.
+# R1-3: a line whose only passing check is inert (true) now reads unmet in the status string.
+case "$PB5" in "2 0 unavailable 0 0 ran muuu muuu  0") ok "proof on base: a base run whose setup stops before any check is 'not available': no line loses its mark for it, even under the cap" ;; *) bad "proof on base with a base that cannot start gave: $PB5" ;; esac
 pb_script <<'EOF'
 loki_cmd 1 "the app file is there" test -f "$R/app.txt"
 loki_cmd 3 "nothing at all" true
 loki_cmd 4 "nothing either" true
 EOF
 PB6="$(PB_ENV='{"LOKI_E10_PROOF_BASE_CAP":"1"}' pb_run)"
-case "$PB6" in "3 0 all-same 3 3 ran mumm mumm  0") ok "proof on base: when every passing check also passes on the base commit the comparison says so and strips nothing (the base run cannot be told from the change)" ;; *) bad "proof on base, all checks the same, gave: $PB6" ;; esac
+# STAGE-A (not yet run): expected string derived by reading the code on 2026-11-22.
+# R1-3: a line whose only passing check is inert (true) now reads unmet in the status string.
+case "$PB6" in "3 0 all-same 3 3 ran muuu muuu  0") ok "proof on base: when every passing check also passes on the base commit the comparison says so and strips nothing (the base run cannot be told from the change)" ;; *) bad "proof on base, all checks the same, gave: $PB6" ;; esac
 PB7="$(PB_BASE=0000000000000000000000000000000000000000 PB_ENV='{"LOKI_E10_PROOF_BASE_CAP":"1"}' pb_run)"
-case "$PB7" in "3 0 unavailable 0 0 ran mumm mumm  0") ok "proof on base: a base commit that cannot be checked out is 'not available', never a cap" ;; *) bad "proof on base with no base commit gave: $PB7" ;; esac
+# STAGE-A (not yet run): expected string derived by reading the code on 2026-11-22.
+# R1-3: a line whose only passing check is inert (true) now reads unmet in the status string.
+case "$PB7" in "3 0 unavailable 0 0 ran muuu muuu  0") ok "proof on base: a base commit that cannot be checked out is 'not available', never a cap" ;; *) bad "proof on base with no base commit gave: $PB7" ;; esac
 PBK="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
 const p = await import(process.env.ROOT + "/loki-ts/src/engine10/proof_rerun.ts"), k = p.checkKey;
 const c = (item, what, ok) => ({ item, what: k(what), ok });

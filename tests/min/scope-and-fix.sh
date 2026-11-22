@@ -427,6 +427,7 @@
 # 303. check_result.ts unmeasuredTail: drop the 40-line slice (the UNMEASURED-TAIL 40-lines leg reads 61 lines).
 # 304. check_result.ts unmeasuredTail: drop the not_run/UNMEASURED_REASON condition (the measured-pass leg carries a tail).
 # 305. verify.ts runCheck: spread unmeasuredTail into the check itself (the event-only leg finds the tail on the check).
+# INERT1. proof_rerun.ts ruleStatus: drop the `counted === 0` branch (the INERT-CHECK cell reads "mm"); or stepKind: drop the FILE_TEST and "/" test from inertWords (the last kind reads "inert": a file test outside the repository is dropped).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -1373,6 +1374,19 @@ while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"
 grep -q '^OK ' <<< "$out" || { bad "lean-fix unit script produced no results"; printf '%s\n' "$out" | tail -8 | sed 's/^/    | /'; }
+
+# STAGE-A (not yet run): expected string derived by reading the code on 2026-11-22.
+# INERT-CHECK (proof_rerun.ts stepKind, ruleStatus): a step whose commands are only shell builtins that read nothing is inert and not counted (a file test, also on a path outside the repository, is not inert);
+# a line with only inert passing checks reads unmet with the reason; a function wrapper or a command substitution is "other" and stays counted.
+IK="$T/inert-kind"; mkdir -p "$IK/docs"; printf 'x\n' > "$IK/docs/a.md"
+IKO="$(cd "$ROOT/loki-ts" && IK="$IK" bun --no-env-file --config=/dev/null -e '
+const { stepKind, ruleStatus } = await import("./src/engine10/proof_rerun.ts");
+const d = process.env.IK, k = (cmd) => stepKind("x | exit 0 | cmd: " + cmd + " | ", d);
+const kinds = [k("test 201 = 201"), k("true"), k("echo ok"), stepKind("x | status 200 | {}", d), k("npm test"), k("plan_uses_gin"), k("bash -c [ \"$(first_title)\" = A ]"), k("grep -q X " + d + "/docs/a.md"), k("test -f " + d + "/docs/a.md"), k("test -s /nonexistent-loki-dir/export.csv")];
+const run = { exit: 0, seconds: 1, proved: 3, failed: 0, tail: "", script_chars: 1, stopped: 0, left: 0, lines: { "1": { proved: 1, failed: 0, inert: 1, first_proved: "register returned 201 | exit 0 | cmd: test 201 = 201 | ", first_inert: "register returned 201 | exit 0 | cmd: test 201 = 201 | " }, "2": { proved: 2, failed: 0, inert: 1, first_proved: "a | exit 0 | cmd: true | ", first_inert: "a | exit 0 | cmd: true | ", first_counted: "search | status 200 | {}" } } };
+const st = ruleStatus(["fresh install works", "search works"], run);
+console.log([kinds.join(" "), st.map((s) => s.status[0]).join(""), String(st[0].reason).split(" (for example")[0], st[1].evidence].join(" | "));' 2>&1)"
+[ "$IKO" = "inert inert inert http runner other other reader reader other | um | its only passing check read nothing of the product or the tree when it ran | Loki's own run: 1 passing check; first: search | status 200 | {}" ] && ok "INERT-CHECK: builtins with fixed inputs are not counted; a line with nothing else reads unmet and says why" || bad "INERT-CHECK gave: $IKO"
 
 # ---------------------------------------------------------------- spec choice evidence (features/spec_ambiguity.ts resolveChoices)
 cat > "$T/spec-choice.ts" <<'TS'
