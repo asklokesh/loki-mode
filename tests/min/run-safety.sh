@@ -143,6 +143,7 @@
 #  P13. load_owner.ts harnessLoad: compute external without ownedOnBase's acceptance (on any load error): the named-changed-file cell gets a candidate (a false VERIFIED path through a load error the change caused).
 #  HR1. util/safe_git.ts withTrackedRestored: drop the tracked.has(path) test (the HARNESS-RESTORE cell reads "mine" in place of "theirs"); or return before the restore loop (it reads the rewritten config).
 #  RR1. proof_rerun.ts cachedRerun: drop the tree comparison (the RERUN-REUSE cell reads a reused result second, "[object Object]").
+#  RB1. e10ext/stop_restore.ts resumeOrigBranch: return cur on the run branch too (the RESUME-BRANCH cell reads "loki/e10-x" first).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -700,6 +701,19 @@ writeFileSync(d + "/app.txt", "a\n"); writeFileSync(rd + "/loki-proof.sh", "#!/b
 saveRerun(d, rd, { ...green, exit: 1, failed: 1 }); const e = cachedRerun(d, rd);
 console.log([a, String(b), String(c), String(e), sealStepLines({ seal_steps: [{ step: "proof script on the change", seconds: 0, reused: true }, { step: "copies", seconds: 346.2 }, { step: "small", seconds: 2 }] })[0]].join(" | "));' 2>&1)"
 [ "$RRO" = "true | null | null | null | - Seal reran: proof script on the change (reused, tree and script unchanged); copies 346 s" ] && ok "RERUN-REUSE: only a green result on the same tree and script is reused, and the PR names what seal reran" || bad "RERUN-REUSE gave: $RRO"
+# STAGE-A (not yet run): expected string derived by reading the code on 2026-11-22.
+# RESUME-BRANCH (e10ext/stop_restore.ts resumeOrigBranch): on the run branch the recorded start branch wins; elsewhere the current branch; a recorded
+# branch that is gone, a missing record, or a record naming the run branch gives null (the run end detaches at the base commit).
+RB="$T/resume-branch"; mkdir -p "$RB"; printf 'a\n' > "$RB/a.txt"
+git -C "$RB" init -q -b main; git -C "$RB" config user.name e2e; git -C "$RB" config user.email e2e@example.invalid; git -C "$RB" add a.txt; git -C "$RB" commit -q -m base
+git -C "$RB" branch feature; git -C "$RB" checkout -q -b loki/e10-x
+RBO="$(cd "$ROOT/loki-ts" && RB="$RB" bun --no-env-file --config=/dev/null -e '
+const { resumeOrigBranch: f } = await import("./src/e10ext/stop_restore.ts"); const { spawnSync } = await import("node:child_process");
+const d = process.env.RB, ev = (b) => [{ type: "stage.completed", stage: "intake", data: { pr_base: { start_branch: b } } }], run = "loki/e10-x";
+const onRun = [f(d, run, ev("main")), f(d, run, ev("gone")), f(d, run, []), f(d, run, ev(run))];
+spawnSync("git", ["-C", d, "checkout", "-q", "feature"]);
+console.log([onRun[0], f(d, run, ev("main")), onRun[1], onRun[2], onRun[3]].map(String).join(" "));' 2>&1)"
+[ "$RBO" = "main feature null null null" ] && ok "RESUME-BRANCH: a resume returns to the branch the run started on" || bad "RESUME-BRANCH gave: $RBO"
 SG="$T/sd-guard"; mkdir -p "$SG/__snapshots__" "$SG/testdata" && git -C "$SG" init -q -b main && git -C "$SG" config user.name rs && git -C "$SG" config user.email rs@example.invalid
 printf 'exports[`a`] = 1;\n' > "$SG/__snapshots__/a.snap"; printf 'x\n' > "$SG/app.ts"; git -C "$SG" add -A . && git -C "$SG" commit -q -m base; BASE_G="$(git -C "$SG" rev-parse HEAD)"
 sd_guard() { # sd_guard <needs: none|cache>: dirty the snapshot, add a cache file, run the guard; print kept | dropped | snap | cache

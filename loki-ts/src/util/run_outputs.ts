@@ -19,7 +19,7 @@ import { answerMark, answeredTask, blockedCompletion, effectiveEvents } from "./
 import { eventsRelPath, readOriginUrl } from "./engine_origin.ts";
 import { runOwnerAlive } from "./run_pid.ts";
 import { safeGit } from "./safe_git.ts";
-import { currentBranch } from "../e10ext/stop_restore.ts";
+import { currentBranch, resumeOrigBranch } from "../e10ext/stop_restore.ts";
 import { formatPreModelLine, formatSummary, plainLine, type Outcome, type PreModelTiming, type SummaryInput } from "../engine10/output.ts";
 import { applyArbitrations } from "./conflict_resume.ts";
 import { noteOf } from "./base_guard.ts";
@@ -372,12 +372,12 @@ export async function resumeFlag(runId: string | undefined, noPr = false, deps: 
   const baseSha = tl.events.findLast((e) => e.type === "stage.completed" && e.stage === "intake")?.data["base_sha"];
   if (typeof baseSha === "string" && /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(baseSha)) { try { safeGit(repoDir, ["cat-file", "-e", `${baseSha}^{commit}`]); } catch { return cannotResume(out, it.runId, `its base commit ${baseSha.slice(0, 12)} is gone from this repo`); } }
   out(`engine10: resume from stage ${rp.stage} (settled: ${rp.skip.join(", ") || "none"})\n`);
-  const br = `loki/${it.runId}`, origBranch = currentBranch(repoDir), pc = partialCost(it.events, false, join(repoDir, ".loki")), st0 = (it.events.find((e) => e.type === "run.started")?.data ?? {}) as Record<string, unknown>;
+  const br = `loki/${it.runId}`, curBranch = currentBranch(repoDir), origBranch = resumeOrigBranch(repoDir, br, tl.events), pc = partialCost(it.events, false, join(repoDir, ".loki")), st0 = (it.events.find((e) => e.type === "run.started")?.data ?? {}) as Record<string, unknown>;
   if (it.events.some((e) => e.type === "cap.hit")) { out(`engine10: --resume refused: run ${it.runId} already hit its cost or time cap\n`); return 2; }
   let activeS = 0; for (let i = 1; i < it.events.length; i++) { const g = (Date.parse(it.events[i]!.ts) - Date.parse(it.events[i - 1]!.ts)) / 1000; if (g <= 0) continue; const ev = it.events[i]!; if (g <= 120 || ev.type !== "run.resumed") activeS += g; else { const alive = Date.parse(String(ev.data["last_alive_ts"] ?? "")), since = (alive - Date.parse(it.events[i - 1]!.ts)) / 1000; if (since > 0) activeS += Math.min(since, g); } } // P12-07l: a long gap is downtime only when it ends in run.resumed; a long verify (or any quiet running stage) that ends in its own event counts in full; P12-07n: a gap ending in run.resumed counts up to the supervisor's last heartbeat (last_alive_ts) as active, only the rest as downtime
   const capS = Number(st0["cap_s"]) > 0 ? Number(st0["cap_s"]) - activeS : undefined, ceilS = Number(st0["cap_ceiling_s"]) > 0 ? Number(st0["cap_ceiling_s"]) - activeS : undefined;
   if (capS !== undefined && capS < 60) { out(`engine10: --resume refused: run ${it.runId} has under 60s of its time cap left\n`); return 2; }
-  if (rp.skip.includes("intake") && origBranch !== br) {
+  if (rp.skip.includes("intake") && curBranch !== br) {
     const dirty = safeGit(repoDir, ["status", "--porcelain", "--", ".", ":(exclude).loki"]).split("\n").filter(Boolean);
     if (dirty.length) { out(`engine10: --resume refused: ${dirty.length} uncommitted or untracked file(s) in your working tree would ride onto ${br}; commit or stash them first\n`); return 2; }
     try { safeGit(repoDir, ["rev-parse", "--verify", "-q", `refs/heads/${br}`]); } catch { // a BLOCKED run that changed nothing drops its empty run branch; the answer recreates it at the base the run recorded

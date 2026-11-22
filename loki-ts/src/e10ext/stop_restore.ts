@@ -6,6 +6,17 @@ export function currentBranch(repoDir: string): string | null {
     return b || null;
   } catch { return null; }
 }
+/** D7: the branch a resumed run returns to. The current branch when it is not the run branch (that is where the user is now). On the run branch (a killed
+ *  process left the checkout there) it is the branch intake recorded (stage.completed intake, pr_base.start_branch) when that branch still exists; else
+ *  null, and the run end returns to the recorded base commit, detached (util/base_guard.ts returnCheckout). The failure: a resume took the run branch as
+ *  the branch to return to and left the checkout on it (FireLater#24 on 11.176.0). */
+export function resumeOrigBranch(repoDir: string, runBranch: string, events: readonly { type: string; stage?: string | null; data: Record<string, unknown> }[]): string | null {
+  const cur = currentBranch(repoDir);
+  if (cur !== runBranch) return cur;
+  const pb = events.findLast((e) => e.type === "stage.completed" && e.stage === "intake")?.data["pr_base"] as { start_branch?: unknown } | undefined, rec = typeof pb?.start_branch === "string" ? pb.start_branch : "";
+  if (!rec || rec === runBranch) return null;
+  try { safeGit(repoDir, ["rev-parse", "--verify", "-q", `refs/heads/${rec}`]); return rec; } catch { return null; }
+}
 
 /** Never resets or discards: a plain `git checkout`, which refuses when it would overwrite edits. The run branch and its commits stay. */
 export function restoreBranch(repoDir: string, orig: string | null): boolean {
