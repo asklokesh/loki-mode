@@ -42,9 +42,9 @@ export function renderProofCard(i: {
 /** AWE knobs (LOKI_AWE_DIFF_EARLY, LOKI_AWE_PROOF_CARD, LOKI_AWE_LIVE_COST): presentation only, on by default, "0" turns one off. */
 export const aweOn = (name: "LOKI_AWE_DIFF_EARLY" | "LOKI_AWE_PROOF_CARD" | "LOKI_AWE_LIVE_COST", env: NodeJS.ProcessEnv = process.env): boolean => (env[name] ?? "").trim() !== "0";
 
-/** AWE-2: what the proof card says, read from receipt.json alone. `green` is true only for a "yes" fail-then-pass proof whose every proving file also passed in verify;
- *  a "no", an inconclusive proof or a receipt with no proof line ("not run") is never green. */
-export interface ProofCard { green: boolean; state: "shown" | "not shown" | "not run"; why: string; before: { file: string; lines: string[]; after: string }[]; notProven: string[]; notProvenMore: number }
+/** AWE-2: what the proof card says, read from receipt.json alone. `green` is true for a "yes" fail-then-pass proof whose every proving file passed in verify, or for an
+ *  own proof (a proof-script step that fails in a copy without the change); a "no", an inconclusive proof with no own proof, or a receipt with no proof line ("not run") is never green. */
+export interface ProofCard { green: boolean; state: "shown" | "not shown" | "not run"; why: string; before: { file: string; lines: string[]; after: string; step?: true }[]; notProven: string[]; notProvenMore: number }
 const MAX_CARD_NOT_PROVEN = 8;
 export function proofCardOf(receipt: Record<string, unknown> | null | undefined): ProofCard {
   const r = receipt ?? {}, outcome = r["mutation_outcome"], line = typeof r["mutation_proof"] === "string" ? (r["mutation_proof"] as string) : "";
@@ -55,6 +55,8 @@ export function proofCardOf(receipt: Record<string, unknown> | null | undefined)
   const rows = (Array.isArray(r["mutation_before"]) ? (r["mutation_before"] as { file?: unknown; lines?: unknown }[]) : []).filter((b) => typeof b.file === "string").map((b) => ({ file: b.file as string, lines: (Array.isArray(b.lines) ? b.lines : []).filter((l): l is string => typeof l === "string"), after: afterOf(b.file as string) }));
   const reason = /\(([^()]*)\)\s*$/.exec(line)?.[1];
   if (outcome === "yes" && rows.length > 0 && rows.every((b) => b.after === "pass")) return { green: true, state: "shown", why: "", before: rows, notProven, notProvenMore };
+  const own = r["own_proof"] as { ok?: unknown; steps?: unknown; before?: unknown } | undefined, ownSteps = own?.ok === true && Array.isArray(own.steps) ? own.steps.filter((s): s is string => typeof s === "string") : [], ownLines = new Map((Array.isArray(own?.before) ? (own!.before as { step?: unknown; lines?: unknown }[]) : []).filter((b) => typeof b.step === "string").map((b) => [b.step as string, (Array.isArray(b.lines) ? b.lines : []).filter((l): l is string => typeof l === "string")]));
+  if (ownSteps.length > 0) return { green: true, state: "shown", why: "", before: ownSteps.slice(0, 5).map((s) => ({ file: s, lines: ownLines.get(s) ?? [], after: "pass", step: true as const })), notProven, notProvenMore };
   if (outcome === "yes") return { green: false, state: "not run", why: rows.length === 0 ? "the receipt names no test file for the proof" : "a proving test did not pass after the change", before: [], notProven, notProvenMore };
   if (outcome === "no") return { green: false, state: "not shown", why: "the new tests also pass on your old code, so they do not show the fix", before: [], notProven, notProvenMore };
   return { green: false, state: "not run", why: receipt == null ? "no trusted receipt was sealed" : outcome === "inconclusive" ? `inconclusive${reason ? `: ${reason}` : ""}` : "the fail-then-pass proof runs only on a VERIFIED run", before: [], notProven, notProvenMore };
@@ -64,16 +66,19 @@ export function readReceiptAt(path: unknown): Record<string, unknown> | null {
   if (typeof path !== "string" || !path) return null;
   try { const r: unknown = JSON.parse(readFileSync(path, "utf8")); return typeof r === "object" && r !== null && !Array.isArray(r) ? (r as Record<string, unknown>) : null; } catch { return null; }
 }
+/** One Before line: a proof-script step that fails in a copy without the change, or a test file that fails on the base code. */
+export const proofRowLead = (b: { file: string; lines: string[]; step?: true }, base: string): string => (b.step ? `proof step ${b.file} fails in a copy of the checkout without the change` : `${b.file} fails on ${base}`) + (b.lines.length ? (b.step ? ", with:" : " with:") : " (output line not recorded)");
 /** D48 default output: the proof card as one line (yes/no plus the proving test files); the full card prints under --verbose. */
 export function renderAweProofLine(c: ProofCard): string {
   const files = c.before.map((b) => b.file), named = files.slice(0, 2).join(", ") + (files.length > 2 ? ` +${files.length - 2} more` : "");
+  if (c.green && c.before.every((b) => b.step)) return `Proof: yes, proof step ${named} fails without the change and passes with it`;
   return c.green ? `Proof: yes, ${named} fails on your code and passes after the change` : c.state === "not shown" ? `Proof: no (${c.why})` : `Proof: not run (${c.why})`;
 }
 /** Terminal proof card, printed after the summary. Green (when color is on) only for a shown proof. */
 export function renderAweProofCard(c: ProofCard, color = false): string {
   const g = (s: string): string => (color && c.green ? `\x1b[32m${s}\x1b[0m` : s);
   const L = [c.green ? `Proof: ${g("fail-then-pass shown")}` : `Proof: ${c.state} (${c.why})`];
-  for (const b of c.before) { L.push(b.lines.length ? `  Before: ${b.file} fails on your code with:` : `  Before: ${b.file} fails on your code (output line not recorded)`, ...b.lines.map((l) => `    ${l}`), `  After: passes`); }
+  for (const b of c.before) { L.push(`  Before: ${proofRowLead(b, "your code")}`, ...b.lines.map((l) => `    ${l}`), b.step ? "  After: passes on the change" : "  After: passes"); }
   L.push(c.notProven.length ? "Not proven:" : "Not proven: none listed on the receipt", ...c.notProven.map((n) => `  - ${n}`), ...(c.notProvenMore ? [`  - (+${c.notProvenMore} more in receipt.json)`] : []));
   return L.join("\n");
 }

@@ -54,7 +54,7 @@ const fence = (l: string): string => l.replace(/`{3,}/g, "'''");
 export function proofSection(receipt: Record<string, unknown>): string[] {
   const c = proofCardOf(receipt), L = ["## The proof"];
   if (!c.green) L.push(`- Fail-then-pass proof: ${c.state} (${c.why})`);
-  else for (const b of c.before) L.push(b.lines.length ? `- Before: \`${clip(b.file)}\` fails on the base code with:` : `- Before: \`${clip(b.file)}\` fails on the base code (output line not recorded)`, ...(b.lines.length ? ["  ```text", ...b.lines.map((l) => `  ${fence(l)}`), "  ```"] : []), "- After: passes");
+  else for (const b of c.before) L.push(b.step ? `- Before: proof step \`${clip(b.file)}\` fails in a copy of the checkout without the change${b.lines.length ? ", with:" : " (output line not recorded)"}` : (b.lines.length ? `- Before: \`${clip(b.file)}\` fails on the base code with:` : `- Before: \`${clip(b.file)}\` fails on the base code (output line not recorded)`), ...(b.lines.length ? ["  ```text", ...b.lines.map((l) => `  ${fence(l)}`), "  ```"] : []), b.step ? "- After: passes on the change" : "- After: passes");
   return [...L, ""];
 }
 /** AWE-3: the repo conventions the run followed, from receipt.json. */

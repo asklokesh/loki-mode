@@ -118,6 +118,7 @@
 #   37. loki-ts/src/engine10/supervisor.ts: drop failedPr from the push condition (rebuild dist); the FAILED-run legs read no PR, no pushed branch and no failing-checks body.
 #   38. loki-ts/src/engine10/supervisor.ts: drop !refusal from the push condition (rebuild dist); the secret-match legs read a PR and a pushed branch.
 #   39. loki-ts/src/engine10/stages/deep.ts runSecretScan: skip locate() (rebuild dist); every match reads "file name looks like a secret file", never calc.ts:5.
+#   40. loki-ts/src/util/receipt_surface.ts proofCardOf: drop the ownSteps return (the ONE-PROOF-LINE cell reads "false not run" first).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -300,6 +301,16 @@ awe() { python3 -I -c 'import json,sys; print(json.loads(sys.argv[1]).get(sys.ar
 [ "$(awe card_never_green)" = "false,false,false,false" ] && ok "awe honesty: a no, inconclusive, absent or unsealed proof never renders green or says After: passes" || bad "awe proof card never green: got $(awe card_never_green)"
 [ "$(awe card_states)" = "not shown,not run,not run,not run" ] && ok "awe proof card: no reads 'not shown', inconclusive and absent read 'not run'" || bad "awe proof card states: got $(awe card_states)"
 [ "$(awe card_after_red)" = "False" ] && ok "awe honesty: a yes proof whose proving test did not pass after the change is not green" || bad "awe proof card after red: got $(awe card_after_red)"
+# STAGE-A (not yet run): expected string derived by reading the code on 2026-11-22.
+# ONE-PROOF-LINE (receipt_surface.ts proofCardOf, reviewer_body.ts proofSection): an own proof is a green card naming the step; a failed own proof is not;
+# a fail-then-pass test still wins when both exist.
+OPL="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const { proofCardOf, renderAweProofLine } = await import("./src/util/receipt_surface.ts"); const { proofSection } = await import("./src/e10ext/reviewer_body.ts");
+const own = { mutation_outcome: "inconclusive", mutation_proof: "test fails without the fix: inconclusive (x)", own_proof: { ok: true, steps: ["search unit tests"], before: [{ step: "search unit tests", lines: ["1 failed"] }] } };
+const a = proofCardOf(own), s = proofSection(own), b = proofCardOf({ ...own, own_proof: { ok: false, steps: [] } });
+const c = proofCardOf({ mutation_outcome: "yes", mutation_proof: "test fails without the fix: yes (calc.test.ts)", mutation_before: [{ file: "calc.test.ts", lines: ["AssertionError"] }], checks: [{ name: "vitest:calc.test.ts", result: "pass" }], own_proof: { ok: true, steps: ["s"] } });
+console.log([a.green + " " + a.state + " " + a.before[0].file + " " + (a.before[0].step === true), renderAweProofLine(a), s[1], s[5], b.green + " " + b.state, c.before[0].file + " " + (c.before[0].step === true)].join(" | "));' 2>&1)"
+[ "$OPL" = 'true shown search unit tests true | Proof: yes, proof step search unit tests fails without the change and passes with it | - Before: proof step `search unit tests` fails in a copy of the checkout without the change, with: | - After: passes on the change | false not run | calc.test.ts false' ] && ok "ONE-PROOF-LINE: the own proof is the proof line when no test proved the change" || bad "ONE-PROOF-LINE gave: $OPL"
 [ "$(awe pr_yes)" = "true,true,true,false" ] && ok "awe PR body from the receipt: the proof, conventions followed and Loki's own total cost, with no model comparison" || bad "awe PR body: got $(awe pr_yes)"
 [ "$(awe pr_never_green)" = "false,false,false" ] && ok "awe honesty: a no, inconclusive or absent proof never writes Before/After into the PR body" || bad "awe PR body never green: got $(awe pr_never_green)"
 [ "$(awe pr_cost)" = "true,true,true,false" ] && ok "awe PR cost: partial, unmetered and null read as such, never \$0.00" || bad "awe PR cost: got $(awe pr_cost)"

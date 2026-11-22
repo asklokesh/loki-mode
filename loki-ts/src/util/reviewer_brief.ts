@@ -8,6 +8,7 @@ import { listRepoFiles } from "../engine10/repomap.ts";
 import { buildTestMap, impactedRefs } from "../engine10/testmap.ts";
 import { safeGit } from "./safe_git.ts";
 import { ALREADY_FAILING_ON_BASE } from "./check_result.ts";
+import { proofCardOf, renderAweProofLine } from "./receipt_surface.ts";
 
 export const reviewerBriefEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => env["LOKI_REVIEWER_BRIEF"] !== "0";
 
@@ -31,7 +32,7 @@ export interface BriefFacts {
   verdict?: string;
   receiptSha256?: string | null;
   /** Parsed receipt.json subset; undefined when the receipt could not be read. */
-  receipt?: { checks?: { name?: string; result?: string; pre_red?: boolean }[]; mutation_proof?: string; not_proven?: string[] };
+  receipt?: { checks?: { name?: string; result?: string; pre_red?: boolean }[]; mutation_proof?: string; mutation_outcome?: string; mutation_before?: unknown; own_proof?: unknown; not_proven?: string[] };
   /** The plan's intent card lines; null/undefined when none was recorded. */
   intentCard?: string[] | null;
   /** Files the plan declared (plan-scope.json "files"); null/undefined when none was recorded. */
@@ -95,7 +96,7 @@ export function leadBlock(repoDir: string, baseSha: string, f: BriefFacts): stri
     const red = checks.filter((c) => c.result === "fail" && c.pre_red === true).length;
     out.push(checks.length === 0 ? "- checks run: 0" : `- checks run: ${checks.length} (${n("pass")} pass, ${n("fail")} fail, ${n("not_run")} not_run${red > 0 ? `; ${red} fail ${ALREADY_FAILING_ON_BASE}` : ""})`);
   }
-  out.push(`- mutation proof: ${rc?.mutation_proof ? oneLine(rc.mutation_proof) : NR}`);
+  out.push(`- proof: ${rc ? oneLine(renderAweProofLine(proofCardOf(rc as Record<string, unknown>)).replace(/^Proof: /, "")) : NR}`);
   const card = f.intentCard;
   if (!Array.isArray(card)) out.push(`- intent card: ${NR}`);
   else { const a = card.filter((l) => /^\s*acceptance/i.test(l)).length; out.push(`- intent card: recorded (${a} acceptance line${a === 1 ? "" : "s"})`); }
