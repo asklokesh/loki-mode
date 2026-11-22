@@ -79,7 +79,7 @@ export async function codeSymbols(ctx: RunContext, rawDiff: string[], head: stri
   const own = new Map<string, string | null>(); for (const f of code) { const r = await safeGitRun(ctx.repoDir, ["diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames", ctx.baseSha, head, "--", f], { timeoutMs: 20000 }); own.set(f, r.exitCode === 0 ? r.stdout : null); } // PROOF-TEST-SIDE: one diff per file, so a quoted or tab-ended `+++` path never decides
   return { all: d.exitCode === 0 ? changedSymbols(d.stdout, rd) : [], onBase, inert: inertCodeFiles(own, rd) };
 }
-/** PROOF-TEST-SIDE: what the fail-then-pass base worktree gets beside the files that ran, so base and head differ only in the change's code.
+/** PROOF-TEST-SIDE (off by default, LOKI_E10_PROOF_TEST_SIDE=1 opts in): what the fail-then-pass base worktree gets beside the files that ran, so base and head differ only in the change's code.
  *  The test side is isTestSidePath or TEST_SUPPORT_PATH (conftest.py, fixtures/, mocks/, testing/ ...: a case module there is test data, so it never stays at base while
  *  its result line in tests/ is applied). Once the test side is non-empty the change's other non-code files go too (fixtures/cases.txt beside tests/results.txt). A changed
  *  code file in which the diff declares or modifies no symbol (`inert`: a new case in data/cases.py) goes always and never widens: such an edit may be data. It may

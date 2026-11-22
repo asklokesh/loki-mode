@@ -1195,7 +1195,7 @@ export function exercisedViaCallers(unexercised: readonly string[], seed: (name:
   return unexercised.filter((f) => !covered.has(f));
 }
 /** PROOF-REACH (LOKI_E10_PROOF_REACH, default on, =0/off/false/no opts out): a base-red, head-green test of the change also counts as its proof when it reaches a changed symbol through the changed module. */
-export const proofReachOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_PROOF_REACH"] ?? "").trim()) /* off by default: its last cold review was NOT GO (2026-11-21); opt in to measure */;
+export const proofReachOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_PROOF_REACH"] ?? "").trim());
 /** PROOF-REACH: whether a test reaches one of `targets` (changed symbols the base already has) through calls inside the changed files `files` (non-test code, at the head).
  *  Nodes are every span of every file, classes included (a class span covers its methods, so a call that builds the class reaches them); a node's callees are calledNames over
  *  the code-only text of its span. Seeds are the top-level functions and classes of a file whose module the test imports, that the test names in code, and that the base

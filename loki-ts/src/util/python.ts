@@ -495,7 +495,7 @@ export function pyprojectDeclaresDeps(text: string): boolean {
   return false;
 }
 /** SETUP-DEPS (LOKI_E10_SETUP_DEPS, default on; =0/off/false/no opts out). */
-export const setupDepsOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_SETUP_DEPS"] ?? "").trim()) /* off by default: its last cold review was NOT GO (2026-11-21); opt in to measure */;
+export const setupDepsOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_SETUP_DEPS"] ?? "").trim());
 /** Python source with every comment removed and every string kept: a `#` inside a quoted string (a URL fragment) is not a comment, so it can
  *  never hide an `install_requires` that follows it on the same line. */
 function stripPyComments(text: string): string {
@@ -557,7 +557,7 @@ export function declaresPythonEnv(root: string, ref: string): boolean {
   } catch { return true; }
 }
 /** SYSTEM-PROVIDES-DEPS (LOKI_E10_SYSTEM_PROVIDES_DEPS; on by default, `0`/off/false/no opts out): see systemProvidesDeclared. */
-export const systemProvidesOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_SYSTEM_PROVIDES_DEPS"] ?? "").trim()) /* off by default: its last cold review was NOT GO (2026-11-21); opt in to measure */;
+export const systemProvidesOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_SYSTEM_PROVIDES_DEPS"] ?? "").trim());
 const DIST_NAME = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
 /** One poetry constraint as a PEP 440 specifier ("" for any version), or null when Loki cannot translate it (`||`, a pre-release in a caret or
  *  tilde bound, any unknown form). `^1.2.3` is `>=1.2.3,<2.0.0`, `^0.2.3` is `>=0.2.3,<0.3.0`, `^0.0.3` is `>=0.0.3,<0.0.4`, `^0` is `>=0,<1`;

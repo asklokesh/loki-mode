@@ -26,7 +26,7 @@ export interface MutationInput {
   baseMustPass?: string[];
   /** A file counts in `failed` only when its base failure was an assertion (runner reports assertFail), never an import, collection or attribute error. */
   requireAssertion?: boolean;
-  /** PROOF-TEST-SIDE (headSha mode only): test-side paths the change added, modified or deleted that are not themselves run (data files, fixtures), and, when there is any, the
+  /** PROOF-TEST-SIDE (off by default, LOKI_E10_PROOF_TEST_SIDE=1 opts in; headSha mode only): test-side paths the change added, modified or deleted that are not themselves run (data files, fixtures), and, when there is any, the
    *  change's other non-code files, and its code files in which the diff declares or modifies no symbol (seal.ts proofSupport). Each is written byte-exact from headSha, or removed when `deleted`, after the test overlay, so the base run differs from
    *  the head run only in the change's code (testSideSupport builds the list). */
   supportFiles?: SupportFile[];
@@ -37,8 +37,8 @@ export interface SupportFile {
   deleted: boolean;
   mode?: string;
 }
-/** PROOF-TEST-SIDE (LOKI_E10_PROOF_TEST_SIDE, default on, =0/off/false/no opts out): the fail-then-pass base worktree gets the change's whole test side, not only the test files that ran. */
-export const proofTestSideOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_PROOF_TEST_SIDE"] ?? "").trim()) /* off by default: its last cold review was NOT GO (2026-11-21); opt in to measure */;
+/** PROOF-TEST-SIDE (LOKI_E10_PROOF_TEST_SIDE, off by default, =1/on/true/yes opts in): the fail-then-pass base worktree gets the change's whole test side, not only the test files that ran. */
+export const proofTestSideOn = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|on|true|yes)$/i.test((env["LOKI_E10_PROOF_TEST_SIDE"] ?? "").trim()) /* stays opt-in: with it on, a data file that git credits to a symbol stays at base while its result line is applied, and a test then fails on base for a reason that is not the change's code (review 2026-11-21, shapes G2, DFd, DFd2, O, C); no per-file rule closes the class */;
 /** PROOF-TEST-SIDE: the support files of a fail-then-pass proof from a `git diff-tree -r -z --raw --no-renames` listing (status line, path, status line, path, ...): every path with
  *  status A, M, T or D that `isSide` calls test side and that is not one of the `run` test files, with its head mode (the second field of the status line). [] with the knob off
  *  (only the run test files are copied, as before). */
