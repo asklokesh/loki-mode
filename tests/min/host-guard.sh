@@ -55,6 +55,8 @@
 #  22. drop comment handling; `cat a # <<'EOF'` masks real lines and is allowed.
 #  23. drop the delimiter lookahead; `<<'EOF'x` ends the body at EOF instead of EOFx and is allowed.
 #  24. mask unquoted bodies too; `cat > a.txt <<EOF\n$(docker ps)` is allowed.
+# FENCE-IN-COMMIT planted defect (reverted afterwards):
+#  29. util/config_fence.ts fenceNotes: drop "|| inCommit.length > 0" from capped (the FENCE-IN-COMMIT cell reads false and VERIFIED).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -468,6 +470,19 @@ fchk "docs pass" "pass:Write:README.md none"
 fchk "path outside the workspace is not this fence's concern" "pass:Edit:/elsewhere/vitest.config.ts none"
 fchk "Bash tool is not this hook's concern" "pass:Bash:vitest.config.ts none"
 fchk "task naming tsconfig strict allows tsconfig.json" "task-names-tsconfig none"
+# STAGE-A (not yet run): expected string derived by reading the code on 2026-11-22.
+# FENCE-IN-COMMIT (util/config_fence.ts fencedInCommit, fenceNotes): a config the fence restored that is in the final commit holds the label, unless the
+# task names it, a spec conflict allowlisted it, or it is a lockfile whose manifest the commit changes; a restored path that is not in the commit only discloses.
+FIC="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const { fencedInCommit, fenceNotes, capFenceVerdict } = await import("./src/util/config_fence.ts");
+const rec = (paths, allow = []) => ({ restored: paths.map((path) => ({ path, stage: "implement", session: "s" })), allowlisted: allow.map((path) => ({ path, session: "s" })), denied: [], failures: [] });
+const a = fencedInCommit(rec(["frontend/tsconfig.json", "package-lock.json", "jest.config.js"]), ["src/a.ts", "frontend/tsconfig.json", "package-lock.json", "package.json"], "Fix ranking");
+const b = fencedInCommit(rec(["frontend/tsconfig.json"]), ["src/a.ts"], "Fix ranking");
+const c = fencedInCommit(rec(["frontend/tsconfig.json"]), ["frontend/tsconfig.json"], "Set strict in frontend/tsconfig.json");
+const d = fencedInCommit(rec(["frontend/tsconfig.json"], ["frontend/tsconfig.json"]), ["frontend/tsconfig.json"], "Fix ranking");
+const n = fenceNotes(rec(["frontend/tsconfig.json", "jest.config.js"]), true, a);
+console.log([a.join(","), b.length, c.length, d.length, n.capped, capFenceVerdict("VERIFIED", n), n.notProven.length, n.notProven[0], n.notProven[1], fenceNotes(rec(["jest.config.js"]), true, []).capped].join(" | "));' 2>&1)"
+[ "$FIC" = 'frontend/tsconfig.json | 0 | 0 | 0 | true | PARTIAL | 2 | Config fence restored changes to test, build, lint or type config or a lockfile the task did not ask for: jest.config.js | Config fence did not keep a config or lockfile edit the task did not ask for out of the commit: frontend/tsconfig.json; the run is not VERIFIED | false' ] && ok "FENCE-IN-COMMIT: a restored config that is in the commit holds the label; named, allowlisted, lockfile-with-manifest and not-committed paths do not" || bad "FENCE-IN-COMMIT gave: $FIC"
 fchk "that task does not allow vitest.config.ts" "task-names-tsconfig-not-vitest deny"
 fchk "dependency task allows the lockfile" "task-names-lock none"
 fchk "allowlisted path passes" "allowlisted none"

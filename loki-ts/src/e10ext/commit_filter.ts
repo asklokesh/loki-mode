@@ -89,7 +89,8 @@ export function runOutputs(repoDir: string, added: string[], baseSha?: string, t
  *  every verify run; a path a verify run changed joins <runDir>/regenerated.json, and a path a model stage (wall, implement, fix) later writes leaves it again. At
  *  commit, a staged path still in that set is left out unless the task names it or one of its changed lines carries a task keyword (a backticked span, or an
  *  identifier of 5 or more characters the task uses), so a doc a test run regenerated in step with the change stays. The failure: a test run regenerated an
- *  unrelated doc page with a machine-specific path, the commit shipped it, and review failed the diff as an unrelated edit on a run that read VERIFIED. */
+ *  unrelated doc page with a machine-specific path, the commit shipped it, and review failed the diff as an unrelated edit on a run that read VERIFIED.
+ *  A command Loki runs outside verify (the setup check, its run of the proof script) is handled earlier: util/safe_git.ts withTrackedRestored puts its tracked-file changes back when it ends. */
 export const regenDropOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_REGEN_DROP"] ?? "").trim()) /* on by default since 11.141.3 (dev2 2-seed A3.2), =0 opts out */;
 const REGEN_FILE = "regenerated.json";
 export function noteRegenerated(runDir: string, stage: string, paths: string[]): void {

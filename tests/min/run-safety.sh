@@ -141,6 +141,7 @@
 #  P11. repo_profile.ts couldNotRun: keep every candidate in a touched package (the non-external cell is listed: the founder rule is gone).
 #  P12. verify.ts couldNotNotes: drop the externalCouldNotNotes entry, or externalCouldNotNotes returns [] (the external seal leg reads PARTIAL>PARTIAL although the check was listed).
 #  P13. load_owner.ts harnessLoad: compute external without ownedOnBase's acceptance (on any load error): the named-changed-file cell gets a candidate (a false VERIFIED path through a load error the change caused).
+#  HR1. util/safe_git.ts withTrackedRestored: drop the tracked.has(path) test (the HARNESS-RESTORE cell reads "mine" in place of "theirs"); or return before the restore loop (it reads the rewritten config).
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun
@@ -667,6 +668,21 @@ out.push([seal.targetedBreak(ctx(checks), run(1, 0, seen)), seal.targetedBreak(c
 console.log(out.join(" | "));
 ' 2>&1)"
 [ "$SDR" = "testdata/api_components__load | testdata/api_components__load | - | false,true,true,false | vitest:test/a.test.ts" ] && ok "SD drop: a new file only a check run wrote leaves the diff even when a plain task word (components) is in it, a file the task names by path stays, on by default, =0 drops nothing; targetedBreak runs only the passing targeted test, reads a fail as breaks, reads nothing-ran as breaks (fail safe) and no targeted test as no break" || bad "SD drop/targetedBreak: $SDR"
+# STAGE-A (not yet run): expected string derived by reading the code on 2026-11-22.
+# HARNESS-RESTORE (util/safe_git.ts withTrackedRestored): a command Loki runs in the checkout leaves tracked files as it found them (content, deletion,
+# exec bit); a file it creates stays; an untracked file it changes stays changed; LOKI_E10_REGEN_DROP=0 restores nothing.
+HR="$T/harness-restore"; mkdir -p "$HR/sub"; printf '{"a":1}\n' > "$HR/config.json"; printf 'keep\n' > "$HR/sub/gone.txt"; printf 'x\n' > "$HR/tool.sh"; chmod +x "$HR/tool.sh"
+git -C "$HR" init -q -b main; git -C "$HR" config user.name e2e; git -C "$HR" config user.email e2e@example.invalid; git -C "$HR" add -A .; git -C "$HR" commit -q -m base
+printf 'mine\n' > "$HR/session-new.txt"
+HRO="$(cd "$ROOT/loki-ts" && HR="$HR" bun --no-env-file --config=/dev/null -e '
+const { withTrackedRestored } = await import("./src/util/safe_git.ts");
+const { writeFileSync, rmSync, readFileSync, existsSync, statSync, chmodSync } = await import("node:fs");
+const d = process.env.HR, got = [], rd = (p) => readFileSync(d + "/" + p, "utf8").trim();
+const r = await withTrackedRestored(d, async () => { writeFileSync(d + "/config.json", "{\n  \"a\": 1,\n  \"b\": 2\n}\n"); rmSync(d + "/sub/gone.txt"); writeFileSync(d + "/tool.sh", "y\n"); chmodSync(d + "/tool.sh", 0o644); writeFileSync(d + "/made-by-command.txt", "out\n"); writeFileSync(d + "/session-new.txt", "theirs\n"); return 7; }, (p) => got.push(...p));
+const first = [r, got.slice().sort().join(","), rd("config.json"), rd("sub/gone.txt"), rd("tool.sh"), (statSync(d + "/tool.sh").mode & 0o111) ? "x" : "-", existsSync(d + "/made-by-command.txt"), rd("session-new.txt")];
+const n = got.length, off = await withTrackedRestored(d, async () => { writeFileSync(d + "/config.json", "off\n"); return 1; }, (p) => got.push(...p), { ...process.env, LOKI_E10_REGEN_DROP: "0" });
+console.log([...first, off, rd("config.json"), got.length - n].join(" | "));' 2>&1)"
+[ "$HRO" = '7 | config.json,sub/gone.txt,tool.sh | {"a":1} | keep | x | x | true | theirs | 1 | off | 0' ] && ok "HARNESS-RESTORE: a Loki-run command leaves tracked files as it found them; created and untracked files are not touched; =0 restores nothing" || bad "HARNESS-RESTORE gave: $HRO"
 SG="$T/sd-guard"; mkdir -p "$SG/__snapshots__" "$SG/testdata" && git -C "$SG" init -q -b main && git -C "$SG" config user.name rs && git -C "$SG" config user.email rs@example.invalid
 printf 'exports[`a`] = 1;\n' > "$SG/__snapshots__/a.snap"; printf 'x\n' > "$SG/app.ts"; git -C "$SG" add -A . && git -C "$SG" commit -q -m base; BASE_G="$(git -C "$SG" rev-parse HEAD)"
 sd_guard() { # sd_guard <needs: none|cache>: dirty the snapshot, add a cache file, run the guard; print kept | dropped | snap | cache

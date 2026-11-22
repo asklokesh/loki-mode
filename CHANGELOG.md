@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### The run does what its receipt says
+
+- A tracked file that one of Loki's own commands rewrites is no longer committed. The stored setup check and Loki's own runs of the proof script now put back every tracked file they changed (seen on FireLater#24 with 11.176.0: the proof script booted the dev server, which rewrote `frontend/tsconfig.json`; the config fence took the rewritten file as its baseline, "restored" it into the tree, and the commit shipped it). The receipt lists the files put back. If a config or lockfile the fence restored is in the final commit all the same, the receipt says so and the run is not VERIFIED. `LOKI_E10_REGEN_DROP=0` turns the put-back off.
+
 ## v11.176.0 (2026-11-21)
 
 

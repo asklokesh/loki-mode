@@ -63,7 +63,7 @@ export const planStage: Stage = {
 
   async run(ctx: RunContext, signal: AbortSignal): Promise<StageResult> {
     const prior = ctx.outputs();
-    if (issueRunBrief(ctx.provider, prior.intake?.source)) startSetupCheck(ctx.repoDir, ctx.runDir, (s) => runSetupScript(ctx.repoDir, s)); // SETUP CHECK (e10ext/repomemory.ts): Loki's own run of the stored setup starts beside this session and only reads the tree; implement waits for it
+    if (issueRunBrief(ctx.provider, prior.intake?.source)) startSetupCheck(ctx.repoDir, ctx.runDir, (s) => runSetupScript(ctx.repoDir, s, undefined, process.env, ctx.runDir)); // SETUP CHECK (e10ext/repomemory.ts): Loki's own run of the stored setup starts beside this session and puts back any tracked file it changes (withTrackedRestored); implement waits for it
     const task = loadTaskText(ctx, prior.intake?.task as string | undefined);
     const repomapRef = prior.intake?.repomap_ref as string | undefined;
     const loaded = loadRepoMap(repomapRef);

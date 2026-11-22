@@ -115,6 +115,12 @@ export function readFenceRecord(runDir: string): FenceRecord {
   }
   return r;
 }
+/** D1: the paths the fence restored during the run that are in the final commit all the same and that the fence would still restore now: fenced, not named by
+ *  the task, not allowlisted by a spec conflict, and not a lockfile whose manifest the commit changes too. `committed`: the paths the commit adds or modifies. */
+export function fencedInCommit(r: FenceRecord, committed: readonly string[], task: string): string[] {
+  const allow = allowFor(task, r.allowlisted.map((x) => x.path)), set = new Set(committed), staged = committed.map((f) => ({ st: "M", f }));
+  return [...new Set(r.restored.map((x) => x.path))].filter((p) => set.has(p) && isFencedPath(p) && !allow(p) && !(LOCKFILE.test(p) && manifestChanged(staged, p)));
+}
 /** Records facts in the ledger and appends them to the run file. Never throws. */
 export function appendFence(runDir: string, ...lines: Record<string, string>[]): void {
   linesOf(runDir).push(...lines);
@@ -144,17 +150,18 @@ export const conflictNamed = (reason: string, known: Iterable<string>, allow: Fe
   return [...known].filter((rel) => !allow(rel) && (r.includes(rel.toLowerCase()) || r.includes(rel.slice(rel.lastIndexOf("/") + 1).toLowerCase())));
 };
 
-/** Receipt lines. A spec-conflict allowlist (an unreviewed edit) always caps below VERIFIED (capFenceVerdict); a hook denial caps only when the final tree has no passing executed check (`provenPass`). A restore or a fence failure is disclosed only. */
-export function fenceNotes(r: FenceRecord, provenPass = false): { notProven: string[]; capped: boolean } {
-  const files = (l: { path: string }[]): string => [...new Set(l.map((x) => x.path))].join(", ");
+/** Receipt lines. A spec-conflict allowlist (an unreviewed edit) always caps below VERIFIED (capFenceVerdict); a hook denial caps only when the final tree has no passing executed check (`provenPass`). A restore or a fence failure is disclosed only. A restored path that is in the final commit all the same caps too (the fence line is computed from the commit, never from the ledger alone). */
+export function fenceNotes(r: FenceRecord, provenPass = false, inCommit: readonly string[] = []): { notProven: string[]; capped: boolean } {
+  const files = (l: { path: string }[]): string => [...new Set(l.map((x) => x.path))].join(", "), kept = new Set(inCommit), gone = r.restored.filter((x) => !kept.has(x.path));
   return {
     notProven: [
-      ...(r.restored.length ? [`Config fence restored changes to test, build, lint or type config or a lockfile the task did not ask for: ${files(r.restored)}`] : []),
+      ...(gone.length ? [`Config fence restored changes to test, build, lint or type config or a lockfile the task did not ask for: ${files(gone)}`] : []),
+      ...(inCommit.length ? [`Config fence did not keep a config or lockfile edit the task did not ask for out of the commit: ${[...new Set(inCommit)].join(", ")}; the run is not VERIFIED`] : []),
       ...(r.denied.length ? [`Config fence denied an edit to ${files(r.denied)}: a fenced config edit was denied${provenPass ? "; the run has a passing executed check without it (disclosed only)" : " and the run has no passing executed check, so it is not VERIFIED"}`] : []),
       ...(r.allowlisted.length ? [`Config fence allowlisted after the session declared a spec conflict naming it: ${files(r.allowlisted)}; the edit is unreviewed, so the run is not VERIFIED`] : []),
       ...[...new Set(r.failures)].map((f) => `Config fence off or partial: ${f}`),
     ],
-    capped: r.allowlisted.length > 0 || (r.denied.length > 0 && !provenPass),
+    capped: r.allowlisted.length > 0 || (r.denied.length > 0 && !provenPass) || inCommit.length > 0,
   };
 }
 /** A fence denial or allowlist caps VERIFIED and ALREADY_SATISFIED at PARTIAL. */

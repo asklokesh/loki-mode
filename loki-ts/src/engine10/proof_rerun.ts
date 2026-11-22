@@ -10,7 +10,7 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSy
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { cleanupSessionScratch, createSessionScratch, scratchSessionEnv, TASK_MEMORY_SUBDIR } from "../runner/worker_proc.ts";
 import { run } from "../util/shell.ts";
-import { safeGit } from "../util/safe_git.ts";
+import { noteHarnessRestored, safeGit, treeSnapshot, withTrackedRestored } from "../util/safe_git.ts";
 import { CONNECTION_ENV } from "./session.ts";
 import { acceptanceLines, FRESH_INSTALL_ASK, issueAcceptanceCapOn, issueAcceptanceOf, optionalAsk } from "../util/intent_card.ts";
 import { neededServices } from "../util/stack_tools.ts";
@@ -304,7 +304,7 @@ export function proofScriptRefusal(text: string): string | null {
   if (/(^|[\s;&|({])(function\s+)?(loki_http|loki_cmd|_lp)\s*\(\s*\)/.test(code)) return "the proof script redefines loki_http, loki_cmd or _lp; source loki-check.sh and use its functions unchanged";
   return null;
 }
-export interface ProofRerun { refused?: string; exit: number | null; seconds: number; proved: number; failed: number; tail: string; script_chars: number; stopped: number; left: number; lines: Record<string, { proved: number; failed: number; real?: number; http?: number; first_proved?: string; first_failed?: string }>; checks?: ProofCheck[] }
+export interface ProofRerun { refused?: string; exit: number | null; seconds: number; proved: number; failed: number; tail: string; script_chars: number; stopped: number; left: number; lines: Record<string, { proved: number; failed: number; real?: number; http?: number; first_proved?: string; first_failed?: string }>; checks?: ProofCheck[]; restored?: string[] }
 /** One run of a proof script by Loki: a new scratch directory, the helper with a token that exists only in this run, an empty directory as the argument,
  *  the user's own database settings blanked, and the ownership cleanup afterwards. `plan` gets the scratch directory and names the script and where it runs
  *  (null: nothing is run). Null when no scratch directory could be made. Never throws. */
@@ -338,10 +338,10 @@ export async function rerunProof(repoDir: string, runDir: string, signal?: Abort
   let scriptChars = 0, refusal: string | null = null; try { const t = readFileSync(script, "utf8"); scriptChars = t.length; refusal = proofScriptRefusal(t); } catch { return null; }
   if (refusal) return { refused: refusal, exit: null, seconds: 0, proved: 0, failed: 0, tail: `Loki did not run this proof script: ${refusal}.`, script_chars: scriptChars, stopped: 0, left: 0, lines: {} };
   writeProofKit(runDir, null); // also beside the kept script: one stored script in fourteen sourced the helper from its own directory
-  const r = await runProofScript(env, signal, runDir, async () => ({ script, cwd: repoDir }));
+  let restored: string[] = []; const r = await withTrackedRestored(repoDir, () => runProofScript(env, signal, runDir, async () => ({ script, cwd: repoDir })), (p) => { restored = p; noteHarnessRestored(runDir, p); }, env);
   if (!r) return { exit: null, seconds: 0, proved: 0, failed: 0, tail: "Loki could not create a scratch directory for its own re-run", script_chars: scriptChars, stopped: 0, left: 0, lines: {} };
   const lines = tallyProof(r.results, r.token, repoDir), vals = Object.values(lines); // from the result file when it has lines, else from the output
-  return { exit: r.exit, seconds: r.seconds, proved: vals.reduce((a, v) => a + v.proved, 0), failed: vals.reduce((a, v) => a + v.failed, 0), tail: r.text.replace(new RegExp(`LOKI-PROOF ${r.token} `, "g"), "").slice(-TAIL_CHARS), script_chars: scriptChars, stopped: r.stopped, left: r.left, lines, checks: proofChecks(r.results, r.token, repoDir) };
+  return { exit: r.exit, seconds: r.seconds, proved: vals.reduce((a, v) => a + v.proved, 0), failed: vals.reduce((a, v) => a + v.failed, 0), tail: r.text.replace(new RegExp(`LOKI-PROOF ${r.token} `, "g"), "").slice(-TAIL_CHARS), script_chars: scriptChars, stopped: r.stopped, left: r.left, lines, checks: proofChecks(r.results, r.token, repoDir), ...(restored.length ? { restored } : {}) };
 }
 
 // ---- PROVES THE CHANGE: the same proof script, run against the base commit ----
@@ -558,9 +558,9 @@ const SETUP_CHECK_S = 120, SETUP_TAIL_CHARS = 1000;
 /** SETUP CHECK (e10ext/repomemory.ts): runs a stored setup, the part of an earlier proof script before its first check, by itself on this checkout. A cut
  *  script has no meaningful exit status, so Loki appends one line that prints a token made for this run: the setup reached its end only when that line printed.
  *  The tail names the run's directory as $DIR and the repository root as `.`, so the same failure reads the same on every run and in every clone. */
-export async function runSetupScript(repoDir: string, setup: string, signal?: AbortSignal, env: NodeJS.ProcessEnv = process.env): Promise<{ reached: boolean; exit: number | null; seconds: number; tail: string }> {
+export async function runSetupScript(repoDir: string, setup: string, signal?: AbortSignal, env: NodeJS.ProcessEnv = process.env, runDir?: string): Promise<{ reached: boolean; exit: number | null; seconds: number; tail: string }> {
   const token = randomBytes(8).toString("hex"), end = `LOKI-SETUP-END ${token}`;
-  const r = await runOwned(repoDir, (dir) => { const p = join(dir, "loki-setup-check.sh"); writeFileSync(p, `${setup}\nprintf '\\n%s\\n' '${end}'\n`, { mode: 0o700 }); return p; }, SETUP_CHECK_S, signal, env, {});
+  const r = await withTrackedRestored(repoDir, () => runOwned(repoDir, (dir) => { const p = join(dir, "loki-setup-check.sh"); writeFileSync(p, `${setup}\nprintf '\\n%s\\n' '${end}'\n`, { mode: 0o700 }); return p; }, SETUP_CHECK_S, signal, env, {}), (p) => { if (runDir) noteHarnessRestored(runDir, p); }, env);
   if (!r) return { reached: false, exit: null, seconds: 0, tail: "" };
   const names = (d: string, as: string): [string, string][] => { const real = (() => { try { return realpathSync(d); } catch { return d; } })(); return [...new Set([real, d, real.replace(/^\/private\//, "/")])].filter((x) => x.length > 5).map((x): [string, string] => [x, as]); };
   let text = r.out.split(end).join("").replace(/\[\d{1,3}(;\d{1,3})*m/g, ""); for (const [d, as] of [...names(r.dir, "$DIR"), ...names(repoDir, ".")].sort((a, b) => b[0].length - a[0].length)) text = text.split(d).join(as);

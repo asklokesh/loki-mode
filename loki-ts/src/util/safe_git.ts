@@ -8,8 +8,8 @@
 // and credential helpers are neutralised too (FC-25c a); the user's global and system values are re-added so they keep working.
 // Always returns stdout as a utf8 string.
 import { hardenCredentialEnv } from "./credential_env.ts";
-import { lstatSync, mkdtempSync, readdirSync, rmSync } from "node:fs"; import { tmpdir } from "node:os";
-import { join, relative, sep } from "node:path";
+import { chmodSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"; import { tmpdir } from "node:os";
+import { dirname, join, relative, sep } from "node:path";
 import { execFileSync, spawnSync, type ExecFileSyncOptions, type SpawnSyncOptions, type SpawnSyncReturns } from "node:child_process";
 
 export const SAFE_GIT_CONFIG: readonly string[] = ["-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", "-c", "core.sshCommand=", "-c", "protocol.ext.allow=never", "-c", "credential.helper=", "-c", "core.trustctime=true", "-c", "core.checkStat=default"];
@@ -365,6 +365,43 @@ export function treeDiffStat(repoDir: string, a: string | null, b: string | null
     return paths.length === 0 ? null : { files: paths.length, added: paths.reduce((n, p) => n + p.added, 0), removed: paths.reduce((n, p) => n + p.removed, 0), paths };
   } catch { return null; }
 }
+
+/** RD (e10ext/commit_filter.ts), same concern: a command Loki itself runs in the checkout outside a model session (the stored setup check, its own run of the
+ *  proof script) leaves every tracked file as it found it. Snapshot before, snapshot after; each path in the index that the command modified, deleted or
+ *  type-changed is written back byte for byte from the first snapshot, with its mode. A file the command created is left alone (the build-artifact, run-output
+ *  and regenerated-file rules own those), and so is an untracked file it changed. The failure: the stored setup and the proof script boot the repository's
+ *  dev server, which rewrote a tracked config; the config fence then took the rewritten file as its baseline and the commit shipped it (FireLater#24 on
+ *  11.176.0). Returns what `fn` returns. Never throws on its own account. LOKI_E10_REGEN_DROP=0, or an unreadable snapshot, restores nothing. */
+export async function withTrackedRestored<T>(repoDir: string, fn: () => Promise<T>, onRestored?: (paths: string[]) => void, env: NodeJS.ProcessEnv = process.env): Promise<T> {
+  if (/^(0|off|false|no)$/i.test((env["LOKI_E10_REGEN_DROP"] ?? "").trim())) return fn();
+  const before = treeSnapshot(repoDir);
+  try { return await fn(); } finally {
+    try {
+      const after = before ? treeSnapshot(repoDir) : null;
+      if (before && after && before !== after) {
+        const tracked = new Set(safeGit(repoDir, ["ls-files", "-z"]).split("\0").filter(Boolean)), raw = safeGit(repoDir, ["diff-tree", "-r", "-z", "--raw", "--no-renames", "--no-abbrev", before, after]).split("\0").filter(Boolean), restored: string[] = [];
+        for (let i = 0; i + 1 < raw.length; i += 2) {
+          const f = raw[i]!.trim().split(" "), st = f[4] ?? "", mode = (f[0] ?? "").replace(/^:/, ""), path = raw[i + 1]!;
+          if ((st !== "M" && st !== "D" && st !== "T") || !tracked.has(path) || path.startsWith(".loki/") || mode === "160000") continue;
+          try {
+            const bytes = execFileSync("git", ["-C", repoDir, "cat-file", "blob", `${before}:${path}`], { maxBuffer: 64 << 20, timeout: 20_000 }), dst = join(repoDir, path);
+            mkdirSync(dirname(dst), { recursive: true }); rmSync(dst, { force: true });
+            if (mode === "120000") symlinkSync(bytes.toString("utf8"), dst); else { writeFileSync(dst, bytes); if (mode === "100755") chmodSync(dst, 0o755); }
+            restored.push(path);
+          } catch { /* left as the command wrote it: the commit filter and the fence still judge it */ }
+        }
+        if (restored.length) onRestored?.(restored);
+      }
+    } catch { /* a snapshot or listing failed: nothing is restored */ }
+  }
+}
+const HARNESS_RESTORED = "harness-restored.json";
+/** The tracked paths withTrackedRestored put back in this run, for the receipt. Best effort. */
+export function noteHarnessRestored(runDir: string, paths: string[]): void {
+  if (!paths.length) return;
+  try { const all = new Set([...harnessRestoredPaths(runDir), ...paths]); mkdirSync(runDir, { recursive: true }); writeFileSync(join(runDir, HARNESS_RESTORED), JSON.stringify({ paths: [...all].sort() })); } catch { /* the restore already happened */ }
+}
+export const harnessRestoredPaths = (runDir: string): string[] => { try { return ((JSON.parse(readFileSync(join(runDir, HARNESS_RESTORED), "utf8")) as { paths?: string[] }).paths ?? []).filter((p) => typeof p === "string"); } catch { return []; } };
 
 /** EMPTY-PUSH (FireLater#24 on 11.162.0: an already-done run pushed loki/<id> at the base commit to GitHub and only `gh pr create` failed): does `ref` change
  *  anything against `base` outside .loki? true / false, or null when it cannot be told. A commit-to-commit `diff --quiet` reads no work tree, so the fallback
