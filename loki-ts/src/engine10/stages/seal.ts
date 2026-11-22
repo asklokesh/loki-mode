@@ -9,7 +9,7 @@ import { acceptanceLines, FRESH_INSTALL_ASK, issueAcceptanceCapOn, issueAcceptan
 import { createHash } from "node:crypto"; import { execFileSync } from "node:child_process"; import { unitSpecReceiptBlock } from "../../features/speed/unit_mode.ts";
 import { chmodSync, existsSync, readdirSync, linkSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative } from "node:path"; import { aiTrailers } from "../pr_body.ts";
-import { mutationEnabled, mutationProof, mutationStrict, testSideSupport, type MutationProof, type ProofBefore, type SupportFile } from "../../util/mutation_proof.ts";
+import { mutationEnabled, mutationProof, mutationStrict, PROOF_RUN_ENV, testSideSupport, type MutationProof, type ProofBefore, type SupportFile } from "../../util/mutation_proof.ts";
 import { isTestSidePath } from "../../util/test_file_text.ts";
 import { RealBaseTestRunner, loadTaskText } from "./wall.ts"; import { defectPinEdits, defectPinNote, pinDroppedNotes, pinnedUpdateNotes, weakenExcuse, type PinnedTestUpdate } from "../../util/test_guard.ts";
 import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { runnerConfigNotes } from "../../features/runner_config.ts";
@@ -107,7 +107,7 @@ export async function supportProof(run: (supportFiles: SupportFile[]) => Promise
  *  otherwise reads the model from the temporary base worktree, which has no .loki/, so in a multi-package repo a frontend vitest file ran from the repo root
  *  (no vitest there) and the proof read "inconclusive (the Wall command did not execute to a result)". Package roots are repo-relative, so they hold in the worktree. */
 export const proofProjectApiOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_PROOF_PROJECT_API"] ?? "").trim());
-export const baseProofRunner = (ms: number, reported: ReportedErrors = { observed: [], wanted: [] }, repoDir?: string): RealBaseTestRunner => new RealBaseTestRunner(repoDir && proofProjectApiOn() ? loadProjectApi(repoDir) : undefined, ms, {}, true, reported); // PROOF-PROJECT-API: the Project Model of the real repo (the base worktree has no .loki/), so a package's test runs in its package dir; // reported: the errors the issue quotes (reportedErrors), a base failure raising exactly one counts like an assertion
+export const baseProofRunner = (ms: number, reported: ReportedErrors = { observed: [], wanted: [] }, repoDir?: string): RealBaseTestRunner => new RealBaseTestRunner(repoDir && proofProjectApiOn() ? loadProjectApi(repoDir) : undefined, ms, PROOF_RUN_ENV, true, reported); // PROOF-PROJECT-API: the Project Model of the real repo (the base worktree has no .loki/), so a package's test runs in its package dir; // reported: the errors the issue quotes (reportedErrors), a base failure raising exactly one counts like an assertion
 async function failThenPass(ctx: RunContext, vraw: Obj[], pctx: ProvenanceCtx, head: string, cs: { all: string[]; onBase: Set<string>; inert: ReadonlySet<string> }, task: string, rewritten: ReadonlySet<string> = new Set(), rawDiff: readonly string[] = []): Promise<{ ok: boolean; line: string; files: string[]; before?: ProofBefore[] }> {
   const files = [...new Set(vraw.filter((c) => isExecutedProof(c as { result?: unknown; n?: unknown }) && checkProvenance(String(c.name ?? ""), pctx) === "agent_authored").map((c) => String(c.name).slice(String(c.name).indexOf(":") + 1)))];
   if (files.length === 0) return { ok: false, line: "", files: [] };

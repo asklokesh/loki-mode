@@ -19,7 +19,7 @@ import { safeGitSpawn, tokenFreeEnv } from "./safe_git.ts";
 import { sealedWallCopy, sealedWallDir, WALL_FAILURE_TAIL_FILE } from "./check_result.ts";
 import { killedTailIndexes } from "./seal_drift.ts";
 import { vacuousCheck } from "../project_model/conventions.ts";
-import { RealBaseTestRunner } from "../engine10/stages/wall.ts";
+import { RealBaseTestRunner } from "../engine10/stages/wall.ts"; import { PROOF_RUN_ENV } from "./mutation_proof.ts";
 import { editShapeBrief, editShapeSites, precedenceBrief, precedenceCheckEnabled } from "./edit_shape.ts";
 import { isTestFile } from "./test_file_text.ts";
 import { extractSpecAtoms, resolveSites } from "../features/exec_spec.ts";
@@ -475,7 +475,7 @@ export function applyArbitrations(wall: Record<string, unknown>, events: readonl
 
 /** LOKI_E10_WALL_REFEREE: default on. =0/off/false restores the single unvalidated re-author of a conflicting Wall file (the legacy path), which never drops a check. */
 const wallRefereeEnabled = (env = process.env): boolean => !["0", "off", "false"].includes((env.LOKI_E10_WALL_REFEREE ?? "").toLowerCase());
-export const defaultRunCheck = (dir: string, ref: TestRef): "pass" | "fail" | "not_run" => { const r = new RealBaseTestRunner(undefined, undefined, { PYTHONDONTWRITEBYTECODE: "1" }).run(dir, [ref]); return r.fail > 0 ? "fail" : r.pass > 0 && (r.not_run ?? 0) === 0 ? "pass" : "not_run"; };
+export const defaultRunCheck = (dir: string, ref: TestRef): "pass" | "fail" | "not_run" => { const r = new RealBaseTestRunner(undefined, undefined, PROOF_RUN_ENV).run(dir, [ref]); return r.fail > 0 ? "fail" : r.pass > 0 && (r.not_run ?? 0) === 0 ? "pass" : "not_run"; };
 export function defaultBaseTree(ctx: RunContext): string | null {
   const dir = mkdtempSync(join(tmpdir(), "loki-e15-base-"));
   try { const g = safeGitSpawn(ctx.repoDir, ["archive", ctx.baseSha], { maxBuffer: 512 * 1024 * 1024 }); if (g.status !== 0) throw new Error("git archive failed"); execFileSync("tar", ["-x", "-C", dir], { input: g.stdout, stdio: ["pipe", "ignore", "ignore"], env: tokenFreeEnv() });

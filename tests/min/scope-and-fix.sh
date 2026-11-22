@@ -429,6 +429,7 @@
 # 305. verify.ts runCheck: spread unmeasuredTail into the check itself (the event-only leg finds the tail on the check).
 # INERT1. proof_rerun.ts ruleStatus: drop the `counted === 0` branch (the INERT-CHECK cell reads "mm"); or stepKind: drop the FILE_TEST and "/" test from inertWords (the last kind reads "inert": a file test outside the repository is dropped).
 # BTC1. pr.ts acceptanceHead: count ch as met (the BY-THIS-CHANGE headline reads "3 of 4"); or proof_rerun.ts itemSplit: drop the own.has test (item 1 reads change 0, before 1 and a FAILED step is lost).
+# BC1. seal.ts baseProofRunner: PROOF_RUN_ENV back to {} (the PROOF-NO-BYTECODE cell counts 1 or more .pyc files).
 
 ORIG_HOME="$HOME" # cargo's rustup proxy finds its toolchain under the real home; lib.sh swaps HOME for a throwaway one
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -2268,6 +2269,14 @@ side_leg() {
     MAKE_REPO="$mk" run_engine "$task" E2E_WALL= E2E_STUB_MODE=stack LOKI_E10_PLAN=auto LOKI_E10_SMALL_MAX_CHARS=10 "$@"; notes="$(wo_receipt np)"; mp="$(wo_receipt mp)"
 }
 if python3 -I -c 'import pytest' >/dev/null 2>&1; then
+    # STAGE-A (not yet run): expected string derived by reading the code on 2026-11-22.
+    # PROOF-NO-BYTECODE (seal.ts baseProofRunner, mutation_proof.ts PROOF_RUN_ENV): the proof runner leaves no .pyc behind (a detector that does not depend on the clock).
+    BC="$T/proof-bytecode"; mkdir -p "$BC"; printf 'CASES = [1, 2, 3]\n' > "$BC/cases.py"; printf 'from cases import CASES\n\n\ndef test_sum():\n    assert sum(CASES) == 6\n' > "$BC/test_cases.py"
+    BCO="$(cd "$ROOT/loki-ts" && env -u PYTHONDONTWRITEBYTECODE BC="$BC" bun --no-env-file --config=/dev/null -e '
+const { baseProofRunner } = await import("./src/engine10/stages/seal.ts"); const { PROOF_RUN_ENV } = await import("./src/util/mutation_proof.ts");
+const r = baseProofRunner(60000).run(process.env.BC, [{ runner: "pytest", path: "test_cases.py" }]);
+console.log(r.pass + " " + r.fail + " " + JSON.stringify(PROOF_RUN_ENV));' 2>&1)"
+    [ "$BCO $(find "$BC" -name '*.pyc' | wc -l | tr -d ' ')" = '1 0 {"PYTHONDONTWRITEBYTECODE":"1"} 0' ] && ok "PROOF-NO-BYTECODE: the proof runner passes the test and leaves no .pyc" || bad "PROOF-NO-BYTECODE gave: $BCO, .pyc files: $(find "$BC" -name '*.pyc' | wc -l | tr -d ' ')"
     # Unit: testSideSupport and isTestSidePath on a listing with every status, then mutationProof itself on a two-commit repo (real pytest): with the data files the head test fails
     # on base by assertion; LOKI_MUTATION_PROOF_JOBS=2 confirms the concurrent failure by a serial re-run that gets the data files again. tests/test_two.py needs the head's
     # executable tests/bin/ok and symlink tests/cases-link.txt as they are (mode kept): with them it passes on base; the old overlay leaves both out, so test_cases.py passes there

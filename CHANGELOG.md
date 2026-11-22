@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A resumed run puts the checkout back on the branch the run started from. After a killed run the checkout was still on the run branch; the resume took that as the branch to return to and left the checkout there, printing "the run did not record the branch it started from", although intake had recorded it. If that branch no longer exists the checkout returns to the run's base commit, detached.
 - The issue-to-PR workflow, its example and the guide pin the current release in place of 11.142.0, and `scripts/release.sh` now moves that pin with every release. The guide names `loki start owner/repo --label <label>` as the current command for many issues and says what it lacks: the triage step. The nightly job in the guide stays on `loki backlog`, which triages each issue and never runs one that touches secrets, production or a destructive operation. The `loki backlog` migration hint no longer names a `--parallel` flag that `loki start` refuses.
 
+### VERIFIED and its proof
+
+- The fail-then-pass run on the base code no longer writes compiled bytecode. An edited test's old version runs first; when the new version was the same length and written in the same second, the interpreter could run the old compiled copy, so a real fix read "the test also passes on the old code" on most tries.
+
 ## v11.176.0 (2026-11-21)
 
 

@@ -61,6 +61,8 @@ function insideWorktree(wt: string, rel: string): boolean {
 /** CTO ruling: the downgrade to PARTIAL is off unless LOKI_MUTATION_STRICT=1 (and then only for a model-declared behavior change). */
 export const mutationStrict = (env: NodeJS.ProcessEnv = process.env): boolean => (env["LOKI_MUTATION_STRICT"] ?? "").trim() === "1";
 export const mutationEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => (env["LOKI_MUTATION_PROOF"] ?? "").trim() !== "0";
+/** The extra environment of every proof run in a base worktree. The base version of an edited test runs first and would leave a compiled cache; the head bytes written next can be the same length in the same second, and the interpreter then runs the stale cache in place of the new source. */
+export const PROOF_RUN_ENV: Record<string, string> = { PYTHONDONTWRITEBYTECODE: "1" };
 const LABEL = "test fails without the fix: ";
 const np = (reason: string): MutationProof => ({ outcome: "inconclusive", line: `${LABEL}inconclusive (${reason})` });
 const MAX_TOTAL_S = 40; // B2: seal stage limit is 60s; the whole proof (worktree add, every test, removal) must fit well inside it
