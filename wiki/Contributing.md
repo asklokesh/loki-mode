@@ -24,9 +24,6 @@ cd loki-mode
 ### Install Dependencies
 
 ```bash
-# Install web app dependencies
-cd web-app && npm install && cd ..
-
 # Install dashboard backend dependencies (optional, for API development)
 pip install -r dashboard/requirements.txt
 ```

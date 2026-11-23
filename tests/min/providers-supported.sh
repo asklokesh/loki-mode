@@ -4,7 +4,7 @@
 # aider and gemini were removed. Asserts:
 #   removed:  each removed name exits 2 with the one migration line, through
 #             --provider X, --provider=X, LOKI_PROVIDER=X, `loki provider show|info|models X`
-#             and `loki estimate --provider X`; api/ and web-app/ restate the same lists and message; the bash and Bun messages are
+#             and `loki estimate --provider X`; api/ restates the same lists and message; the bash and Bun messages are
 #             byte-identical; an unknown name still gets the supported list.
 #   saved:    a removed name saved in .loki/state/provider gets the same line plus how to clear it
 #             (`loki provider set claude`) from `loki start`, `loki quick`, `--engine engine10`, `loki route`
@@ -131,7 +131,7 @@ sh="$(bash -c '. "$1/providers/loader.sh"; for p in codex cline aider gemini; do
 ts_list="$(cd "$ROOT/loki-ts" && bun -e 'const t = await import("./src/runner/types.ts"); console.log([...t.VALID_PROVIDERS].join(" ") + "|" + [...t.REMOVED_PROVIDERS].join(" "))' 2>&1)"
 sh_list="$(bash -c '. "$1/providers/loader.sh"; echo "${SUPPORTED_PROVIDERS[*]}|${REMOVED_PROVIDERS[*]}"' _ "$ROOT")"
 [ "$ts_list" = "$sh_list" ] && [ "$sh_list" = "claude opencode|codex cline aider gemini" ] && ok "one provider list on both sides: $sh_list" || bad "lists differ: ts=$ts_list sh=$sh_list"
-# Restatements in files that ship without loki-ts/src or providers/ (api/, web-app/): same lists, same bytes.
+# Restatements in files that ship without loki-ts/src or providers/ (api/): same lists, same bytes.
 # Read from source without importing (the servers start on import): the TS/JS template and the Python function via ast.
 rest="$(python3 -I - "$ROOT" "$sh_list" "$sh" <<'PY'
 import ast, re, sys
@@ -147,19 +147,10 @@ for f in ("api/routes/sessions.ts", "api/server.js"):
     msg = "".join(re.sub(r"\$\{\w+\}", n, m.group(1)) + "\n" for n in names) if m else "?"
     lst = arr(src, "SUPPORTED_PROVIDERS" if f.endswith(".ts") else "VALID_PROVIDERS") + "|" + arr(src, "REMOVED_PROVIDERS")
     out.append(f"{f}: list={'ok' if lst == want_list else lst} msg={'ok' if msg.rstrip(chr(10)) == want_msg.rstrip(chr(10)) else 'DIFF'}")
-tree = ast.parse(open(f"{root}/web-app/server.py").read())
-keep = [n for n in tree.body if (isinstance(n, ast.Assign) and any(getattr(t, "id", "") in ("_SUPPORTED_PROVIDERS", "_REMOVED_PROVIDERS") for t in n.targets)) or (isinstance(n, ast.FunctionDef) and n.name == "_check_provider")]
-ns = {}; exec(compile(ast.Module(body=keep, type_ignores=[]), "web-app/server.py", "exec"), ns)
-msg = ""
-for n in names:
-    try: ns["_check_provider"](n)
-    except ValueError as e: msg += str(e) + "\n"
-lst = " ".join(ns.get("_SUPPORTED_PROVIDERS", ())) + "|" + " ".join(ns.get("_REMOVED_PROVIDERS", ()))
-out.append(f"web-app/server.py: list={'ok' if lst == want_list else lst} msg={'ok' if msg.rstrip(chr(10)) == want_msg.rstrip(chr(10)) else 'DIFF'}")
 print("\n".join(out))
 PY
 )"
-[ "$(printf '%s\n' "$rest" | grep -c 'list=ok msg=ok')" -eq 3 ] && ok "api/ and web-app/ restate the same lists and byte-identical message" || { bad "restated provider lists or message drifted:"; printf '%s\n' "$rest" | sed 's/^/    | /'; }
+[ "$(printf '%s\n' "$rest" | grep -c 'list=ok msg=ok')" -eq 2 ] && ok "api/ restates the same lists and byte-identical message" || { bad "restated provider lists or message drifted:"; printf '%s\n' "$rest" | sed 's/^/    | /'; }
 out="$(cd "$T/empty" && bash "$ROOT/bin/loki" estimate --provider foo </dev/null 2>&1)"; rc=$?
 [ "$rc" -eq 1 ] && grep -q "use one of: claude, opencode" <<< "$out" && ok "unknown provider: the supported list (estimate exit 1)" || bad "unknown provider: rc=$rc out=$out"
 
@@ -441,7 +432,7 @@ grep -q 'export const REMEDY_MAX_TOKENS = 256;' "$ROOT/loki-ts/src/util/conflict
 # Allowed: the removed lists and message, GEMINI.md (an agent-rules file name), and model-family price/key rows
 # that opencode reaches through OpenRouter (gemini models, GEMINI_API_KEY).
 # Plain grep -w (BSD and GNU agree on it; git grep -E has no \b on macOS), plus the LOKI_<NAME>_ env vars -w cannot see.
-SHIPPED=(action.yml bin providers autonomy loki-ts/src loki-ts/data/child-env.json mcp dashboard packages web-app/src web-app/server.py
+SHIPPED=(action.yml bin providers autonomy loki-ts/src loki-ts/data/child-env.json mcp dashboard packages
          scripts tools api magic src completions docker deploy integrations sdk schemas learning agents)
 hits="$( { grep -rnIiwE 'codex|cline|aider|gemini' "${SHIPPED[@]}"; grep -rnIE 'LOKI_(CODEX|CLINE|AIDER|GEMINI)_' "${SHIPPED[@]}"; } 2>/dev/null \
     | grep -vE '^[^:]*(/dist/|/node_modules/|\.md:|dashboard/static/|__pycache__)' \

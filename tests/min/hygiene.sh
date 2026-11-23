@@ -62,7 +62,6 @@ import re, subprocess, sys
 # (kind, pattern): paths that are generated or must hold the character.
 EXCLUDES = [
     ("suffix", ".min.js"), ("suffix", ".map"), ("suffix", ".lock"),
-    ("prefix", "web-app/dist/"),
     ("contains", "/assets/"), ("contains", "/fixtures/"),
     ("exact", "tests/min/hygiene.sh"),
 ]
@@ -159,7 +158,7 @@ import os, re, subprocess
 tracked = [f for f in subprocess.check_output(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"]).decode().split("\0") if f]
 tset = set(tracked)
 dirs = {"/".join(t.split("/")[:i]) for t in tracked for i in range(1, len(t.split("/")))}
-SKIP = re.compile(r"^(CHANGELOG\.md|web-app/dist/|benchmarks/h2h/results/)|node_modules/|package-lock\.json$|\.lock$")
+SKIP = re.compile(r"^(CHANGELOG\.md|benchmarks/h2h/results/)|node_modules/|package-lock\.json$|\.lock$")
 rx = re.compile(r"(?<![A-Za-z0-9_.~$/-])(loki-ts/src/[A-Za-z0-9_./-]*[A-Za-z0-9_])")
 bad, n_files = [], 0
 for f in tracked:

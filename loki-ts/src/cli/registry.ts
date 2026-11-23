@@ -13,7 +13,7 @@
 //   REMOVED  no dependent found; `migrate` is the replacement sentence for the
 //            removal message. bin/loki exits 2 with it (table _loki_removed_suffix,
 //            compared to this class by tests/min/cli-entrypoints.sh). A command with a live
-//            caller (web-app, chat slash commands, doctor hints, tests) stays FOLD until
+//            caller (chat slash commands, doctor hints, tests) stays FOLD until
 //            that caller moves.
 // `migrate` holds a command for FOLD ("loki status") and a sentence for REMOVED
 // ("Use: loki status").

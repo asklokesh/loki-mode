@@ -18,7 +18,6 @@ gates. It runs on Claude Code (CLI or Anthropic Agent SDK) and opencode (any mod
 | `providers/` | Bash + Python | Multi-provider config and model registry |
 | `dashboard/` | Python (FastAPI) | Web dashboard API and control plane |
 | `packages/control-plane/` | TypeScript | Control Plane (browser UI and service) |
-| `web-app/` | Python + JS | Purple Lab web app (deprecated v7.44.0) |
 | `mcp/` | Python | MCP server (tools, resources, prompts) |
 | `api/` | TypeScript (Deno) | REST API surface and services |
 | `events/` | Python + TS + Bash | Unified event bus |
@@ -213,24 +212,6 @@ runs, plus auth, tenancy, telemetry, and migration tooling.
 ## Removed: legacy dashboard UI
 
 The legacy browser UI source and its bundle were deleted in CPE-24. The browser UI is the Control Plane (`packages/control-plane`); `dashboard/server.py` serves the `/api/*` routes only.
-
----
-
-## web-app/
-
-The Purple Lab web app (deprecated v7.44.0; source kept, still in the tarball
-during phased removal). Provided a multi-project lab surface with browser-based
-PRD input.
-
-**Purpose:** Legacy lab UI (superseded by the single dashboard web surface).
-
-**Key files:**
-- `auth.py`, `crypto.py`, `models.py`, `migrations/`, `alembic.ini` - Backend.
-- `index.html`, `package.json`, `playwright.config.ts` - Frontend.
-- `Dockerfile`, `docker-compose.purple-lab.yml`, `deploy/` - Deployment.
-
-**Dependencies:**
-- Historically consumed `autonomy/` runs; being retired.
 
 ---
 

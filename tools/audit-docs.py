@@ -98,7 +98,7 @@ _ROOT = os.path.dirname(_HERE)
 SOURCE_DIRS = ("autonomy", "loki-ts/src", "loki-ts/test", "loki-ts/tests",
                "src", "tools", "dashboard", "mcp",
                "memory", "events", "bin", "providers", "scripts", "deploy",
-               "tests", "benchmarks", "web-app/src", ".github")
+               "tests", "benchmarks", ".github")
 
 SOURCE_EXTS = (".sh", ".py", ".ts", ".js", ".mjs", ".cjs", ".tsx", ".jsx",
                ".json", ".yml", ".yaml", ".toml", ".env", ".example",

@@ -135,7 +135,7 @@ All files under `.loki/magic/generated/` carry a `LOKI-MAGIC-HASH: <sha>` header
 
 ## Design Tokens
 
-All generated components use design tokens (colors, spacing, typography, motion) so they match Loki Mode's design language. Defaults come from observing existing components in `web-app/src/` and `legacy-ui/`. Override with:
+All generated components use design tokens (colors, spacing, typography, motion) so they match Loki Mode's design language. Defaults come from observing existing components in `src/`. Override with:
 
 - `loki magic tokens extract` -- scan the codebase, update `.loki/magic/tokens.json`
 - Manual edit of `.loki/magic/tokens.json` -- takes precedence over extraction
@@ -153,7 +153,7 @@ Tokens resolve in the following order:
 | Target | Stack | Test Framework | Used By |
 |--------|-------|---------------|---------|
 | `react` | TypeScript + React 18 + Tailwind | Vitest + Testing Library | Dashboard UI, web app |
-| `webcomponent` | LokiElement base class + Shadow DOM | Playwright | Purple Lab, embeddable widgets |
+| `webcomponent` | LokiElement base class + Shadow DOM | Playwright | embeddable widgets |
 | `both` | Parallel generation of both variants | Both | Components shared across surfaces |
 
 `both` is the recommended default for any component used in more than one Loki surface. The debate runs once on the shared spec and the resulting changes are applied to both outputs.

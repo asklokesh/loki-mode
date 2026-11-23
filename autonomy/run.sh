@@ -22981,7 +22981,7 @@ build_prompt() {
     # REGARDLESS of whether the PRD mentions it, the agent MUST write USAGE.md
     # at the project root before signaling completion. This becomes the
     # canonical "how do I run and verify this" artifact surfaced to the user
-    # and to the dashboard/Purple Lab UI.
+    # and to the dashboard UI.
     local usage_doc_instruction="USAGE_DOC_REQUIRED: Before invoking loki_complete_task (or touching .loki/signals/COMPLETION_REQUESTED), write USAGE.md at the project root. Detect the stack from package.json/requirements.txt/Cargo.toml/go.mod/etc. and include these sections: (1) Prerequisites (runtimes, ports, env vars), (2) Install (exact command, e.g. 'npm install' or 'pip install -r requirements.txt'), (3) Start (exact command, e.g. 'npm start' or 'python server.py'), (4) Verify -- 2 to 3 copy-paste commands the user can run to confirm it works (curl examples for APIs with expected output, browser URL for web UIs, command invocation for CLIs), (5) Stop (Ctrl+C or 'lsof -ti:PORT | xargs kill -9' for backgrounded servers). Keep it under 100 lines, plain Markdown, no emojis. If USAGE.md already exists and is accurate, leave it; otherwise create or update it."
 
     # A-132: a quick fix does not ask for USAGE.md (persist_user_prd repoints $prd, so key on PRD_PATH).

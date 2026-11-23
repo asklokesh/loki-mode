@@ -70,13 +70,9 @@ context (the v9.22.13 bug: its body says "v9.24.0 is the next version on
 npm") or over-carry on a stale npm read, so auto-detect was removed
 entirely rather than patched again.
 
-### 2. Build Web App
+### 2. Build Control Plane
 
-```bash
-cd web-app && npm ci && npm run build && cd ..
-ls -la web-app/dist/index.html
-```
-`npm publish`'s `prepublishOnly` also triggers this build automatically. The legacy dashboard UI was removed; the browser UI is the Control Plane (`packages/control-plane`).
+`npm publish`'s `prepublishOnly` builds the Control Plane (`packages/control-plane`) automatically. Purple Lab (`web-app/`) was removed in 11.178.0.
 
 ### 3. Run Tests
 
@@ -90,8 +86,7 @@ python3 -c "import json; json.load(open('package.json')); print('JSON OK')"
 ### 3a. Pre-Publish Validation (MANDATORY)
 
 ```bash
-npm pack --dry-run 2>&1 | grep -E "web-app/dist" || echo "FAIL: expected files missing"
-git ls-files web-app/dist/index.html | grep -q . || echo "FAIL: web-app/dist/ not tracked"
+npm pack --dry-run 2>&1 | grep -E "packages/control-plane" > /dev/null || echo "FAIL: expected files missing"
 npm pack && npm install -g ./loki-mode-*.tgz
 loki --version
 loki web --no-open &
@@ -125,7 +120,7 @@ Before pushing the release commit, run `bash scripts/release.sh --check-clean`: 
 ```bash
 gh run list --limit 1 && gh run watch <run-id>
 npm view loki-mode version
-npm pack loki-mode --dry-run 2>&1 | grep web-app/dist
+npm pack loki-mode --dry-run 2>&1 | grep packages/control-plane
 docker pull asklokesh/loki-mode:X.Y.Z && docker run --rm asklokesh/loki-mode:X.Y.Z loki version
 brew update && brew info loki-mode
 gh release view vX.Y.Z
@@ -136,10 +131,10 @@ Wait for the Release workflow publish-npm job to land (seconds after the push). 
 
 ### Distribution Channel Checklist
 
-| Channel | Dashboard API | Web App | Memory System | Skills/References |
+| Channel | Dashboard API | Control Plane | Memory System | Skills/References |
 |---------|--------------------------|------------------------------|---------------|-------------------|
-| npm     | `dashboard/*.py`         | `web-app/dist/index.html` | `memory/`     | `skills/`, `references/` |
-| Docker  | `COPY dashboard/`        | Built in Dockerfile | `memory/` | `skills/`, `references/` |
+| npm     | `dashboard/*.py`         | `packages/control-plane/ui/dist/index.html` | `memory/`     | `skills/`, `references/` |
+| Docker  | `COPY dashboard/`        | `docker/Dockerfile.control-plane` | `memory/` | `skills/`, `references/` |
 | Homebrew| Full tarball             | Full tarball                 | Full tarball  | Full tarball |
 | VSCode  | DEPRECATED v7.2.0 -- no longer published | -- | -- | -- |
 | Release | Skill-only zip           | N/A                          | N/A           | `references/` |

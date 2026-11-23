@@ -55,8 +55,8 @@ observed = tokens.extract_from_codebase(save=True)
 
 The extractor scans (relative to the project root):
 
-- `web-app/src/index.css` and any other `web-app/src/**/*.css`
-- `.tsx` and `.jsx` files under `web-app/src/` for
+- `src/index.css` and any other `src/**/*.css`
+- `.tsx` and `.jsx` files under `src/` for
   Tailwind spacing classes and inline hex colors
 
 ## How generated components use tokens

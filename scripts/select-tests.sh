@@ -464,7 +464,7 @@ done
 # here means the selector genuinely does not know what kind of thing changed.
 is_recognized_shape() {
     case "$1" in
-        tests/* | loki-ts/* | dashboard/* | web-app/* | skills/* | autonomy/* \
+        tests/* | loki-ts/* | dashboard/* | skills/* | autonomy/* \
             | providers/* | memory/* | mcp/* | events/* | docs/* | scripts/* \
             | references/* | templates/* | benchmarks/* | wiki/* | plugins/* \
             | vscode-extension/* | SKILL.md | CLAUDE.md | README.md | CHANGELOG.md)
@@ -818,7 +818,7 @@ for f in "${CHANGED[@]}"; do
             ;;
     esac
 
-    # R5: changed dashboard/ or web-app/ -> their python + node tests.
+    # R5: changed dashboard/ -> its python tests.
     case "$f" in
         dashboard/*)
             if ! already_seen "r5area:dashboard"; then
@@ -826,16 +826,6 @@ for f in "${CHANGED[@]}"; do
                 # dashboard/*.py source files are not themselves pytest-
                 # discoverable; the actual suite lives under tests/dashboard.
                 emit R5 pytest "tests/dashboard"
-            fi
-            ;;
-        web-app/*)
-            if ! already_seen "r5area:web-app"; then
-                mark_seen "r5area:web-app"
-                emit R5 pytest "web-app/tests"
-                # ponytail: web-app/package.json has no "test" script (only
-                # lint/build); lint is the closest node-side check today.
-                # Add a real test script and select it here when one exists.
-                emit R5 node_lint "web-app"
             fi
             ;;
     esac
@@ -874,7 +864,7 @@ for f in "${CHANGED[@]}"; do
             # dotted import, never the path or the ".py" suffix -- see
             # py_module_needles.
             case "$f" in
-                dashboard/*.py | web-app/*.py)
+                dashboard/*.py)
                     while IFS= read -r needle; do
                         grep_and_emit R3 shell_test "$needle" "$(all_test_files)"
                     done < <(route_needles "$f")

@@ -29,7 +29,7 @@ _SPACING_BUCKETS = [
 
 # Files/globs we scan during codebase extraction.
 # Generic patterns so this works for any frontend project layout,
-# not just loki-mode's (web-app/).
+# not just loki-mode's.
 _CSS_GLOBS = [
     "**/*.css",
     "**/*.scss",
@@ -141,7 +141,7 @@ class DesignTokens:
         """Scan existing components and extract observed tokens.
 
         Scans:
-        - web-app/src/index.css for CSS custom properties
+        - src/index.css (and other CSS) for CSS custom properties
         - Tailwind classes in .tsx files for spacing/color patterns
 
         Returns the observed token set. If save=True, writes to

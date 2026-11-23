@@ -222,8 +222,6 @@ dashboard/                 FastAPI control-plane backend
   database.py / audit.py   Persistence and audit logging
 packages/control-plane/    Control Plane: browser UI and service (Bun)
 
-web-app/                   Web surface (FastAPI + built dist) for browser PRD input
-
 api/                       REST API (TypeScript/Deno-style)
   server.ts / mod.ts       Server entry and module map
   routes/                  events, health, learning, memory, sessions, tasks

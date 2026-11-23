@@ -231,7 +231,7 @@ _PUBLIC_API_GET_PATHS = frozenset({
 def _is_state_bearing_get(path: str) -> bool:
     """Classify dashboard reads at the namespace boundary.
 
-    A future GET under /api or the mounted Purple Lab's /lab/api namespace is
+    A future GET under /api or the retired /lab/api namespace is
     private by default. Exact public metadata is admitted above; probes,
     discovery documents and UI/static files live outside these namespaces.
     Normalize one trailing slash so FastAPI's redirect spelling cannot turn a
@@ -1361,17 +1361,13 @@ app.include_router(api_runs_v1_router)
 
 
 
-# Phase Merge-4: Mount Purple Lab FastAPI app under /lab/ so it appears as a
-# sidebar entry in Dashboard. Same `app` is also wrapped by `standalone_app`
-# in web-app/server.py for `loki web` (port 57375). One source of truth, no
-# duplicated UIs. Import is best-effort: if web-app is missing (e.g. partial
-# install) the dashboard still starts; /lab/* returns 404 with a clear hint.
+# Scope-auth helper for ASGI/WebSocket boundaries. Its static token helpers are
+# reused by the WebSocket auth gate further down.
 class _MountAuthGuard:
     """ASGI wrapper that enforces the dashboard's scope auth at a mount boundary.
 
     Starlette does NOT propagate the parent app's route dependencies to a
-    mounted sub-app, so without this wrapper the Purple Lab routes (including
-    file write/delete and a process-spawn endpoint in web-app/server.py) are
+    mounted sub-app, so without this wrapper a mounted sub-app's routes are
     reachable UNAUTHENTICATED when enterprise auth is enabled. This wrapper
     runs the same token validation as the dashboard's own require_scope("read")
     dependency before delegating to the sub-app.
@@ -1427,10 +1423,9 @@ class _MountAuthGuard:
             await self._app(scope, receive, send)
             return
         if scope["type"] == "websocket":
-            # The Purple Lab sub-app exposes WebSocket endpoints (a PTY terminal
-            # and an HMR proxy). Starlette does not run the parent auth on them,
-            # so without this branch /lab/ws/* would be reachable unauthenticated
-            # when enterprise auth is on (a PTY login shell with no auth). Validate
+            # A mounted sub-app may expose WebSocket endpoints. Starlette does
+            # not run the parent auth on them, so without this branch they would
+            # be reachable unauthenticated when enterprise auth is on. Validate
             # the same scoped token as the HTTP path; on failure close the
             # handshake with policy-violation 1008 BEFORE delegating to the sub-app.
             if not auth.is_enterprise_mode() and not auth.is_oidc_mode():
@@ -1469,23 +1464,6 @@ class _MountAuthGuard:
             )(scope, receive, send)
             return
         await self._app(scope, receive, send)
-
-
-_PURPLE_LAB_MOUNTED = False
-try:
-    import sys as _sys
-    from pathlib import Path as _Path
-    _webapp_dir = _Path(__file__).resolve().parent.parent / "web-app"
-    if str(_webapp_dir) not in _sys.path:
-        _sys.path.insert(0, str(_webapp_dir))
-    import server as _purple_lab_server  # type: ignore[import-not-found]
-    # Gate the mount so /lab/* requires the same scoped token as the dashboard's
-    # own endpoints when enterprise auth is on (no-op when auth is off).
-    app.mount("/lab", _MountAuthGuard(_purple_lab_server.app, "read"))
-    _PURPLE_LAB_MOUNTED = True
-    logger.info("Purple Lab mounted at /lab/ (Phase Merge-4)")
-except Exception as _e:  # noqa: BLE001
-    logger.warning("Purple Lab NOT mounted (Phase Merge-4): %s -- /lab/ will 404", _e)
 
 
 # Health endpoint
@@ -5767,7 +5745,7 @@ def _get_loki_dir() -> _Path:
     4. ~/.loki/ as global fallback
     """
     # Check API-set project directory first (runtime override from /api/focus
-    # or from Purple Lab / AI Chat starting a session in a different directory)
+    # or from AI Chat starting a session in a different directory)
     if _active_project_dir:
         project_loki = _Path(_active_project_dir) / ".loki"
         if project_loki.is_dir():

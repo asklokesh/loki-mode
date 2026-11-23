@@ -89,7 +89,7 @@ jobs:
           set -euo pipefail
           want="$(cat VERSION)"
           # `npm pack` skips prepublishOnly and `npm publish <tgz>` runs no
-          # scripts, so build the web-app and control-plane dist here, fail closed.
+          # scripts, so build the control-plane dist here, fail closed.
           npm run prepublishOnly
           # `npm publish <tgz>` records no gitHead; stamp the release
           # commit into the packed manifest, then restore the tracked file.
@@ -106,8 +106,7 @@ jobs:
           tar -tzf "$tgz" > "$RUNNER_TEMP/tgz.list"
           for need in package/packages/control-plane/dist/server.js \
                       package/packages/control-plane/dist/ask-tools-server.js \
-                      package/packages/control-plane/ui/dist/index.html \
-                      package/web-app/dist/index.html; do
+                      package/packages/control-plane/ui/dist/index.html; do
             grep -qxF "$need" "$RUNNER_TEMP/tgz.list" || { echo "FATAL: packed tarball is missing $need"; exit 1; }
           done
           [ "$(node -p "require(process.argv[1]).version" "$RUNNER_TEMP/packed-package.json")" = "$want" ] || {

@@ -32,7 +32,7 @@ done < "$sh_list"
 [ -z "$badlist" ] && ok "bash -n clean" || bad "bash -n failed:$badlist"
 
 py_list="$T/py.list"
-ls dashboard/*.py mcp/*.py memory/*.py autonomy/*.py autonomy/lib/*.py web-app/*.py tools/*.py \
+ls dashboard/*.py mcp/*.py memory/*.py autonomy/*.py autonomy/lib/*.py tools/*.py \
     api/*.py events/*.py learning/*.py magic/*.py state/*.py 2>/dev/null | sort -u > "$py_list"
 py_out="$(python3 -I - "$py_list" <<'PY' 2>&1
 import ast, sys

@@ -402,16 +402,6 @@ bump_all_version_files() {
         "^  \"version\": \"${new}\"" \
         "wiki/API-Reference.md example version"
 
-    update_version_slot "$ROOT_DIR/web-app/src/components/Footer.tsx" \
-        "s/^([[:space:]]*v)${digits}\$/\\1${new}/" \
-        "^[[:space:]]*v${new}\$" \
-        "Footer.tsx version badge"
-
-    update_version_slot "$ROOT_DIR/web-app/src/components/WhatsNew.tsx" \
-        "s/^(const CURRENT_VERSION = ')${digits}(';)\$/\\1${new}\\2/" \
-        "^const CURRENT_VERSION = '${new}';\$" \
-        "WhatsNew.tsx CURRENT_VERSION"
-
     for f in .github/workflows/loki-issue-to-pr.yml docs/examples/loki-issue-to-pr.yml.example docs/v10/GUIDE.md; do
         update_version_slot "$ROOT_DIR/$f" \
             "s#(loki-issue-to-pr\\.yml@v)${digits}#\\1${new}#" \
@@ -445,7 +435,7 @@ bump_all_version_files() {
 # Files staged into the release commit. Kept as its own list, sourced from
 # the same set bump_all_version_files touches, so the commit can never ship
 # a partially-bumped tree (some files updated on disk but left unstaged).
-RELEASE_COMMIT_FILES="VERSION package.json SKILL.md docker/Dockerfile docker/Dockerfile.sandbox plugins/loki-mode/.claude-plugin/plugin.json server.json CLAUDE.md dashboard/__init__.py mcp/__init__.py docs/INSTALLATION.md wiki/Home.md wiki/_Sidebar.md wiki/API-Reference.md web-app/src/components/Footer.tsx web-app/src/components/WhatsNew.tsx README.md helm/loki-mode/Chart.yaml deploy/helm/autonomi/Chart.yaml deploy/helm/control-plane/Chart.yaml docs/CLI-REFERENCE.md docs/CLI-INVENTORY.md CHANGELOG.md .github/workflows/loki-issue-to-pr.yml docs/examples/loki-issue-to-pr.yml.example docs/v10/GUIDE.md"
+RELEASE_COMMIT_FILES="VERSION package.json SKILL.md docker/Dockerfile docker/Dockerfile.sandbox plugins/loki-mode/.claude-plugin/plugin.json server.json CLAUDE.md dashboard/__init__.py mcp/__init__.py docs/INSTALLATION.md wiki/Home.md wiki/_Sidebar.md wiki/API-Reference.md README.md helm/loki-mode/Chart.yaml deploy/helm/autonomi/Chart.yaml deploy/helm/control-plane/Chart.yaml docs/CLI-REFERENCE.md docs/CLI-INVENTORY.md CHANGELOG.md .github/workflows/loki-issue-to-pr.yml docs/examples/loki-issue-to-pr.yml.example docs/v10/GUIDE.md"
 
 # --- Release gate ---------------------------------------------------------
 # Workflow names whose failed run at the cut SHA refuses a release. Empty: the

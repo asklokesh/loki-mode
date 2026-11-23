@@ -22,9 +22,6 @@ cd loki-mode
 # loki-ts (TypeScript runner; Bun)
 cd loki-ts && bun install && cd ..
 
-# Web app frontend (npm)
-cd web-app && npm install && cd ..
-
 # Dashboard backend + memory system (Python; optional unless touching those areas)
 pip install -r dashboard/requirements.txt
 ```

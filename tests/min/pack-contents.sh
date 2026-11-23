@@ -11,6 +11,7 @@
 #   2. remove "tests/detect-mock-problems.sh" from package.json "files": the
 #      required-entry check must fail.
 #   3. create docs/SYNERGY-ROADMAP.md: the internal-doc check must fail.
+#   4. mkdir web-app: the Purple Lab removal check must fail.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need npm
@@ -57,12 +58,18 @@ required = [
     "bin/loki", "bin/loki-mode.js", "SKILL.md", "VERSION", "package.json",
     "loki-ts/dist/loki.js", "loki-ts/dist/cockpit.js", "providers/model_catalog.json", "autonomy/run.sh", "autonomy/loki",
     "skills/fixtures/demo-receipt/receipt.json", "skills/fixtures/demo-receipt/pubkey.jwk",
-    "web-app/dist/index.html", "benchmarks/seeded-defects/manifest.json",
+    "benchmarks/seeded-defects/manifest.json",
     "scripts/verify-pr-sandbox.sh",
     "tests/detect-mock-problems.sh", "tests/detect-test-mutations.sh",
     "tests/detect-semantic-test-problems.sh", "tests/detect-invariant-violations.sh",
     "tests/detect-hallucinated-deps.sh",
 ]
+# Purple Lab (web-app/, `loki web`) was removed in 11.178.0: the folder must stay gone and unlisted.
+webapp_files = [f for f in pkg["files"] if f.startswith("web-app")]
+res("Purple Lab is removed: no web-app/ folder and no web-app entry in package.json files",
+    not os.path.exists("web-app") and not webapp_files and not any(e.startswith("web-app/") for e in entries),
+    " ".join(webapp_files))
+
 have = set(entries)
 absent = [r for r in required if r not in have]
 res("required runtime entries are packed", not absent, " ".join(absent))
