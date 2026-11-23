@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## v11.178.0 (2026-11-23)
+
+- Purple Lab (`loki web`, web-app/) is removed. It was deprecated in v7.44.0 and still shipped in the package; it held 148 of the repo's open code-scanning alerts. `loki web` now prints where to go instead (the Control Plane, `loki dashboard`) and exits 2.
+
+### Release checks
+
+- bash -n, typecheck and a pack check (0 web-app files). No test suite run (founder rule).
+
 ## v11.177.0 (2026-11-22)
 
 ### The run does what its receipt says
