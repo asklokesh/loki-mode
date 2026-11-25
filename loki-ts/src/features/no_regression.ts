@@ -92,7 +92,7 @@ export function editedSymbols(path: string, baseSrc: string, patchedSrc: string)
   const a = body(baseSrc), b = body(patchedSrc);
   return [...new Set([...a.keys(), ...b.keys()])].filter((n) => a.get(n) !== b.get(n)).sort();
 }
-const mentions = (text: string, name: string): boolean => new RegExp(`(?<![\\w])${name.split(".").pop()!.replace(/[$]/g, "\\$")}(?![\\w])`).test(text);
+const mentions = (text: string, name: string): boolean => new RegExp(`(?<![\\w])${escapeRegex(name.split(".").pop()!)}(?![\\w])`).test(text);
 
 // ---------------- the keep list: one required probe case per output site ----------------
 const STD_PKG = new Set(["strings", "fmt", "strconv", "math", "reflect", "errors", "sort", "time", "os", "bytes", "filepath", "json", "regexp", "unicode", "utf8", "io", "bufio", "path", "slices", "maps"]);

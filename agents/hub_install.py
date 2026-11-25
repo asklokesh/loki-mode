@@ -381,9 +381,14 @@ def _looks_like_git(source: str) -> bool:
         return True
     if source.startswith(("git@", "git://", "ssh://")):
         return True
-    if source.startswith(("http://", "https://")) and "github.com" in source:
-        # A github repo URL without an explicit file -> treat as git.
-        return not source.rstrip("/").endswith((".json", ".md"))
+    if source.startswith(("http://", "https://")):
+        try:
+            host = urlparse(source).hostname or ""
+        except ValueError:
+            host = ""
+        if host == "github.com" or host.endswith(".github.com"):
+            # A github repo URL without an explicit file -> treat as git.
+            return not source.rstrip("/").endswith((".json", ".md"))
     return False
 
 

@@ -22,6 +22,7 @@ import { safeGit, safeGitSpawn, tokenFreeEnv } from "./safe_git.ts";
 import { redactSecrets, UNSAFE_TERMINAL_CHARS_RE } from "./redact.ts";
 import { clauseGapOf, extractClauses, weakAssertionNote } from "./spec_file.ts";
 import { langOf, symbolSpans } from "./context_pack.ts";
+import { escapeRegex } from "./regex_escape.ts";
 
 /** FC-69: the ONE child env for every harness-run test or verify command. A user's FORCE_COLOR=3 makes node:test, pytest, jest and
  *  friends emit ANSI that defeats line-anchored result parsers; FORCE_COLOR=0 + NO_COLOR=1 keeps the output plain. CI is left as is.
@@ -834,7 +835,8 @@ export function testCount(raw: string, path?: string, ok?: boolean): number | nu
 export const EXIT_CODED_COUNT = "n/a (exit-coded check, not a test runner)";
 /** Any recognized test framework or test-script wrapper anywhere in the command. Conservative: a match means "framework". */
 const FRAMEWORK_RE = /\b(?:pytest|py\.test|unittest|nose2?|tox|nox|jest|vitest|mocha|jasmine|ava|tap|playwright|cypress|karma|rspec|minitest|phpunit|pest|codeception|ctest|busted|prove)\b|\b(?:bun|deno|node|go|cargo|dotnet|swift|mix|dart|flutter|zig)\s+(?:[\w:.=-]+\s+)*test\b|\b(?:npm|pnpm|yarn|bun|npx)\b.*\btest|\b(?:mvn|mvnw|gradle|gradlew|ant|sbt|make|cmake|bazel|rake|composer|lein)\b|test/i;
-const SCRIPT_RE = /^(?:python[\d.]*|node|bash|sh|ruby|perl)\s+(?:--?[\w-]+\s+)*([^\s-][^\s]*\.(?:py|js|mjs|cjs|sh|rb|pl))(?:\s|$)/;
+// `--?[\w-]+` and `-[\w-]+` accept the same strings (a dash, then one or more of [\w-]); the second has one way to match "---", so a long run of dashes cannot backtrack exponentially.
+const SCRIPT_RE = /^(?:python[\d.]*|node|bash|sh|ruby|perl)\s+(?:-[\w-]+\s+)*([^\s-][^\s]*\.(?:py|js|mjs|cjs|sh|rb|pl))(?:\s|$)/;
 /** True only when EVERY segment of the command is a plain interpreter-plus-script run (or a cd) and nothing in it names a test framework.
  *  Anything ambiguous (make, ./script, -m, -c, a path or word containing "test") is a framework, so it stays UNMEASURED when no summary parses. */
 export function isExitCodedScript(cmd: string): boolean {
@@ -1151,7 +1153,7 @@ export function addedPublicFunctions(path: string, head: string, base: string): 
 }
 /** Source text with comments AND string literals blanked, so a name inside a string ("intersects" in a message) is never a reference. */
 const codeOnly = (src: string): string => stripComments(src.replace(/"""[\s\S]*?"""|'''[\s\S]*?'''|`(?:\\[\s\S]|[^`\\])*`|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'/g, '""'));
-const refRe = (sym: string): RegExp => new RegExp(`(?<![\\w$])${sym.replace(/[$]/g, "\\$")}(?![\\w$])`);
+const refRe = (sym: string): RegExp => new RegExp(`(?<![\\w$])${escapeRegex(sym)}(?![\\w$])`);
 const IDENT = /[\w$]+/g, PLAIN_IDENT = /^[\w$]+$/;
 /** Every whole-word identifier in one source (comments and strings stripped; `keepStrings` keeps the strings, so an import path like "./ops" names its module): a symbol is referenced exactly when it is in this set. Built once per source, never per symbol. */
 export const identifierSet = (src: string, keepStrings = false): Set<string> => new Set((keepStrings ? stripComments(src) : codeOnly(src)).match(IDENT) ?? []);
@@ -1880,7 +1882,8 @@ function moduleUnderRepo(repoDir: string, name: string): boolean { const rel = n
 // E-125 r5: exit-1 output is red only from the real final summary, never captured text. The runner appends -rfE, so a repo's `-q` addopts (stacked to -qq, no footer) still lists FAILED lines.
 function pytestExit1IsRed(output: string): boolean {
   if (/^!+ _pytest\.outcomes\.Exit\b/m.test(output)) return false; // pytest.exit(...) can print any text, incl. "1 failed"
-  if (/^=*\s*(\d+ \w+(, )?)*\d+ failed\b.* in [\d.]+s/.test(output.trimEnd().split("\n").pop() ?? "")) return true;
+  // ReDoS: pytest writes ", " after every count, so each earlier count must end in it; with the separator optional, \w+ and the next count's digits could split the same text many ways.
+  if (/^=*\s*(\d+ \w+, )*\d+ failed\b.* in [\d.]+s/.test(output.trimEnd().split("\n").pop() ?? "")) return true;
   const hdr = [...output.matchAll(/^=+ short test summary info =+$/gm)].pop();
   return !!hdr && /^FAILED \S+/m.test(output.slice(hdr.index));
 }

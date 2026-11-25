@@ -407,4 +407,12 @@ raw="$(grep -c '"git", "-C", str(clone)' "$ROOT/autonomy/trigger-server.py")"
 hard="$(grep -c 'core.fsmonitor=' "$ROOT/autonomy/trigger-server.py")"
 [ "$raw" = 0 ] && [ "$hard" -ge 1 ] && ok "review clone: every git call is hardened (fsmonitor, hooks, ssh command off)" || bad "review clone: $raw unhardened git call(s), hardening lines $hard"
 
+# --- CODEQL: the two classes with a generic fix shape stay fixed -------------------------------------------------------------------------------
+TS="$ROOT/autonomy/trigger-server.py"
+grep -q 'str(activity.get("text") or "")\[:20000\]' "$TS" && ! grep -q 'loki merge watch' "$TS" \
+    && ok "trigger server: chat text is cut before the tag substitutions run on it, and a red pull request branch is pointed at loki address" \
+    || bad "trigger server: the text cut or the loki address pointer is missing"
+PARTIAL_ESC="$(grep -rn 'new RegExp(' "$ROOT/loki-ts/src" | grep -F '.replace(/[$]/g, "\\$")' | head -5)"
+[ -z "$PARTIAL_ESC" ] && ok "no string reaches new RegExp after escaping the dollar sign only" || bad "a partial regex escape is back: $PARTIAL_ESC"
+
 finish
