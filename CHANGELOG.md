@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- Security hygiene: the code scanning alerts on main were triaged (#657). Real findings are fixed: regular expressions that could backtrack badly on repository text, test output or chat text are bounded, strings placed into a regular expression or a Markdown table cell are fully escaped, a CORS origin pattern escapes every character but the wildcard, a path passed to a shell command is now an argument instead of part of the script text, and a host check that matched a substring now parses the URL. Findings that are not reachable from a request, or that are the tool's stated function, are dismissed on GitHub with the reason for each, including the dashboard paths that come from the project directory the local operator chose through /api/focus. Fifteen medium findings about error text in dashboard API responses stay open (#677). Not measured: no test ran; the next scan of main closes the fixed ones.
+
 ## v11.179.0 (2026-11-25)
 
 - Security: a Loki run no longer executes Claude Code hooks defined by the repository it works on (#655). Engine sessions turn settings-file, skill and plugin hooks off; Loki's own command guard and write fence are unaffected. On the opt-in CLI invoker (LOKI_E10_INVOKER=cli or LOKI_LEGACY_BASH) the repository's Claude Code settings and CLAUDE.md are no longer loaded, because that route cannot drop hooks alone. Not covered yet: other keys of that settings file (#665). Not measured: no session with a planted hook was run.
