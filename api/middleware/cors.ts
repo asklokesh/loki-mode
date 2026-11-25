@@ -98,7 +98,7 @@ function isOriginAllowed(origin: string | null): string | null {
     // Wildcard pattern (e.g., "http://localhost:*")
     if (allowed.includes("*")) {
       const pattern = allowed
-        .replace(/\./g, "\\.")
+        .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
         .replace(/\*/g, ".*");
       const regex = new RegExp(`^${pattern}$`);
       if (regex.test(origin)) {
