@@ -453,10 +453,6 @@ If your organization uses Claude Ship (Team and Enterprise plans): Loki opens a 
 
 After the pull request is open, Loki answers what happens on it through `loki address <owner/repo#N> --post` (and `loki issues watch` runs that by itself): a review thread, a review summary, a plain comment from a user with write access, a failing check on the head commit, and a conflict with the base branch. Each gets one run on the branch and lands only with its own VERIFIED receipt; the new head then carries `loki/receipt` in the state the old head had. Where PR Steward watches a pull request (label `claude-pr-steward-watching`), `loki issues watch` steps aside.
 
-## Verified mode
-
-`loki start <task> --verified` tells Loki to keep working when a run would stop at PARTIAL. After the first seal reading, each closure round re-checks, or runs one more session on exactly the items that held the label (for example "no test shown to fail on the base commit and pass on the change"), then verifies and reads the label again. A round that closes nothing is undone and ends the loop, so the result is never worse than the PARTIAL it started from. When something only a person can close is open (an open choice in the issue, a missing test runner), no round runs: it is disclosed, and the receipt says that is why. Rounds stop at your bounds when you set them: `LOKI_VERIFIED_ROUNDS`, `LOKI_VERIFIED_MAX_S`, `LOKI_VERIFIED_MAX_USD`, `LOKI_VERIFIED_MAX_TOKENS`. The receipt lists every round under `verified_mode.rounds`.
-
 ## NOT PROVEN
 
 NOT PROVEN lists what a run did not verify, so a passing run is never read
