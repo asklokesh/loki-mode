@@ -22,6 +22,7 @@ import { safeGit, safeGitSpawn, tokenFreeEnv } from "./safe_git.ts";
 import { redactSecrets, UNSAFE_TERMINAL_CHARS_RE } from "./redact.ts";
 import { clauseGapOf, extractClauses, weakAssertionNote } from "./spec_file.ts";
 import { langOf, symbolSpans } from "./context_pack.ts";
+import { escapeRegex } from "./regex_escape.ts";
 
 /** FC-69: the ONE child env for every harness-run test or verify command. A user's FORCE_COLOR=3 makes node:test, pytest, jest and
  *  friends emit ANSI that defeats line-anchored result parsers; FORCE_COLOR=0 + NO_COLOR=1 keeps the output plain. CI is left as is.
@@ -1151,7 +1152,7 @@ export function addedPublicFunctions(path: string, head: string, base: string): 
 }
 /** Source text with comments AND string literals blanked, so a name inside a string ("intersects" in a message) is never a reference. */
 const codeOnly = (src: string): string => stripComments(src.replace(/"""[\s\S]*?"""|'''[\s\S]*?'''|`(?:\\[\s\S]|[^`\\])*`|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'/g, '""'));
-const refRe = (sym: string): RegExp => new RegExp(`(?<![\\w$])${sym.replace(/[$]/g, "\\$")}(?![\\w$])`);
+const refRe = (sym: string): RegExp => new RegExp(`(?<![\\w$])${escapeRegex(sym)}(?![\\w$])`);
 const IDENT = /[\w$]+/g, PLAIN_IDENT = /^[\w$]+$/;
 /** Every whole-word identifier in one source (comments and strings stripped; `keepStrings` keeps the strings, so an import path like "./ops" names its module): a symbol is referenced exactly when it is in this set. Built once per source, never per symbol. */
 export const identifierSet = (src: string, keepStrings = false): Set<string> => new Set((keepStrings ? stripComments(src) : codeOnly(src)).match(IDENT) ?? []);

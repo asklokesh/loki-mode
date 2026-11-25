@@ -97,7 +97,7 @@ function sourceFiles(dir: string, root = dir, out: string[] = []): string[] {
 
 /** A definition of the symbol's last segment, in any of the common declaration shapes. */
 export function defRe(name: string): RegExp {
-  const n = name.replace(/[$]/g, "\\$");
+  const n = escapeRegex(name);
   return new RegExp(`^\\s*(?:func\\s+(?:\\([^)]*\\)\\s*)?${n}\\s*[(\\[]|type\\s+${n}\\b|(?:var|const)\\s+${n}\\b|(?:export\\s+)?(?:default\\s+)?(?:async\\s+)?function\\s*\\*?\\s*${n}\\b|(?:export\\s+)?(?:const|let|class|interface)\\s+${n}\\b|(?:async\\s+)?def\\s+${n}\\b|class\\s+${n}\\b|(?:pub\\s+)?fn\\s+${n}\\b)`);
 }
 
@@ -188,7 +188,7 @@ export function parityAtoms(atoms: SpecAtom[], sites: ResolvedSite[]): SpecAtom[
 export function pairAtoms(atoms: SpecAtom[], sites: ResolvedSite[]): SpecAtom[] {
   const named = atoms.filter((a) => a.kind === "site").map((a) => a.text), out: SpecAtom[] = [];
   const last = (s: string): string => s.split(".").pop()!;
-  const mentions = (body: string, n: string): boolean => new RegExp(`(?<![\\w$])${last(n).replace(/[$]/g, "\\$")}(?![\\w$])`).test(body);
+  const mentions = (body: string, n: string): boolean => new RegExp(`(?<![\\w$])${escapeRegex(last(n))}(?![\\w$])`).test(body);
   for (let i = 0; i < named.length; i++) for (let j = i + 1; j < named.length; j++) {
     if (out.length >= MAX_PAIRS) return out;
     const a = named[i]!, b = named[j]!;

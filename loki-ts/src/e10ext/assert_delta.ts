@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { basename } from "node:path";
 import { safeGit } from "../util/safe_git.ts";
+import { escapeRegex } from "../util/regex_escape.ts";
 export interface AssertDeltaInput {
   path: string;
   base: string;
@@ -271,7 +272,7 @@ export function pinnedLines(testText: string, task: string): PinnedLine[] {
       if (!(k === lits.length - 1 || (k === 0 && EQUAL_CALL.test(text)))) return;
       const hit = rv.find((r) => r.value === l.v);
       if (!hit || out.some((p) => p.line === i + 1)) return;
-      if (isGenericValue(hit.value)) { const near = lines.slice(Math.max(0, i - 8), i + 1).join("\n"); if (!hit.idents.some((id) => new RegExp(`(?<![\\w$])${id.split(".").pop()!.replace(/[$]/g, "\\$")}(?![\\w$])`).test(near))) return; }
+      if (isGenericValue(hit.value)) { const near = lines.slice(Math.max(0, i - 8), i + 1).join("\n"); if (!hit.idents.some((id) => new RegExp(`(?<![\\w$])${escapeRegex(id.split(".").pop()!)}(?![\\w$])`).test(near))) return; }
       out.push({ line: i + 1, text, value: hit.value });
     });
   });

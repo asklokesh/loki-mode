@@ -500,7 +500,7 @@ function changedSymbolsFirst(ctx: RunContext, tests: TestRef[], changed: string[
   if (tests.length < 2) return tests;
   const names = diffSymbols(ctx, changed);
   if (names.length === 0) return tests;
-  const re = new RegExp(`\\b(?:${names.map((n) => n.replace(/[$]/g, "\\$")).join("|")})\\b`);
+  const re = new RegExp(`\\b(?:${names.map((n) => escapeRegex(n)).join("|")})\\b`);
   const hits = tests.filter((t) => { try { return re.test(readFileSync(join(ctx.repoDir, t.path), "utf8")); } catch { return false; } });
   return [...hits, ...tests.filter((t) => !hits.includes(t))];
 }
