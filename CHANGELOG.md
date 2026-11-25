@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- Deploy: deploy/docker-compose/loki-watch.yml starts the always-on watch service for one repository in two steps (write a .env with LOKI_WATCH_REPO, GH_TOKEN and ANTHROPIC_API_KEY, then docker compose up -d). The Docker guide, the main guide and the README now describe follow-ups, the PR Steward rule, verified mode and the three GitHub views that are the board; the guide's nightly example uses loki start --label. The Control Plane board planned in R6 is not built: GitHub's label, the two Loki pull request labels and the loki/receipt status are the board (#646). Not measured: no container was started.
+
 ## v11.179.0 (2026-11-25)
 
 - Security: a Loki run no longer executes Claude Code hooks defined by the repository it works on (#655). Engine sessions turn settings-file, skill and plugin hooks off; Loki's own command guard and write fence are unaffected. On the opt-in CLI invoker (LOKI_E10_INVOKER=cli or LOKI_LEGACY_BASH) the repository's Claude Code settings and CLAUDE.md are no longer loaded, because that route cannot drop hooks alone. Not covered yet: other keys of that settings file (#665). Not measured: no session with a planted hook was run.
