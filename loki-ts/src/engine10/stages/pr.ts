@@ -259,6 +259,11 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   } else {
     notProvenOut.push("commit status loki/deep-verify not set (HEAD sha not resolvable)");
   }
+  if (!localOk && !isGitlabOrigin(pinnedOrigin) && SHA_RE.test(headSha)) { // RECEIPT-STATUS: the sealed verdict as a commit status on this head, so a branch rule can require it; a later push by anyone has none
+    const green = verdict === "VERIFIED" && !draft, sha12 = (seal.receipt_sha256 ?? "").slice(0, 12);
+    const rs = spawnBounded([scriptPath, ...pushArgv({ cmd: "status", sha: headSha, state: green ? "success" : "failure", description: `Loki run ${verdict}${sha12 ? `, receipt sha256:${sha12}` : ""}`.slice(0, 140), context: "loki/receipt" })], env);
+    if (rs.status !== 0) notProvenOut.push("commit status loki/receipt not set"); // non-fatal, as the deep-verify status above
+  }
   const receiptComment = renderReceiptComment({
     verdict, draft, draftReason: draftReason(verdict, capHit), notProven: [...notProven, ...notProvenOut],
     receiptSha256: seal.receipt_sha256 ?? null, runId: ctx.runId, mutationProof: seal.mutation_line ?? null,

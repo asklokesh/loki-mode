@@ -445,6 +445,12 @@ Before anything runs, `loki backlog` triages every issue into one of three class
 
 The rules are deterministic (issue text, labels, the repo test map and the ambiguity score); no model call decides a class. A run records its class and reason in the run events, the receipt (`triage`) and a `Triage:` line in the PR body. Overrides: the label `loki:implement`, `loki:spec` or `loki:human` forces that class for one issue; `LOKI_TRIAGE=0` turns the router off and runs every issue. Routing happens only in `loki backlog`. A direct `loki "<goal>"` or `loki start owner/repo#N` never stops or refuses because of triage: when the ambiguity gate fires it records the class and reason in the run events and the receipt, then runs exactly as before.
 
+## Branch rules and Claude Ship
+
+`loki start` sets the commit status `loki/receipt` on the head of the pull request it opens: green only when the run sealed VERIFIED, red otherwise. (Not yet on the combined pull request of a split issue or on the pull request the label-to-PR workflow opens; there, `/loki reseal` sets it.) To make "verified" a merge condition, require the status check `loki/receipt` in a branch rule. The status belongs to one commit: when a person or an agent pushes to the pull request later, the new head has no `loki/receipt` until it is verified again (`/loki reseal` in the workflow). Loki never approves and never merges.
+
+If your organization uses Claude Ship (Team and Enterprise plans): Loki opens a VERIFIED pull request ready for review under your own login and anything else as a draft. Code Review and PR Steward follow their own rules for which pull requests they pick up; both skip drafts by default. Commits another agent pushes to the pull request are not covered by Loki's receipt, and the status shows that. A Claude Approvals condition cannot read other checks, so require `loki/receipt` and `Claude Approvals` side by side in GitHub.
+
 ## NOT PROVEN
 
 NOT PROVEN lists what a run did not verify, so a passing run is never read

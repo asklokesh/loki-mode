@@ -6,7 +6,7 @@
 #   engine10-push.sh check-origin  (exit 0 when the pinned origin is acceptable to push-pr, else the refusal; no network)
 #   engine10-push.sh comment <pr-number> <body-file>
 #   engine10-push.sh issue-comment [--update] <issue-ref> <body-file>
-#   engine10-push.sh status  <sha> <pending|success|failure|error> <description>
+#   engine10-push.sh status  <sha> <pending|success|failure|error> <description> [loki/deep-verify|loki/receipt]
 #
 # Fork mode: when gh reports the authenticated user cannot push to the pinned
 # repo (permissions.push false), push-pr pushes to that user's fork (created
@@ -328,11 +328,13 @@ case "$mode" in
         _e10_gh issue comment "$num" --repo "$_e10_repo" --body-file "$2" || die "gh issue comment failed"
         ;;
     status)
-        [ "$#" -eq 3 ] || die "usage: status <sha> <state> <description>"
+        [ "$#" -eq 3 ] || [ "$#" -eq 4 ] || die "usage: status <sha> <state> <description> [context]"
         [[ "$1" =~ ^[0-9a-f]{40}$ ]] || die "sha must be 40 lowercase hex characters"
         case "$2" in pending | success | failure | error) ;; *) die "bad state: $2" ;; esac
+        _e10_ctx="${4:-loki/deep-verify}"
+        case "$_e10_ctx" in loki/deep-verify | loki/receipt) ;; *) die "bad context: $_e10_ctx" ;; esac
         [ -z "$_e10_local" ] || { log_info "local origin: no commit status to set (no-op)"; exit 0; }
-        _e10_gh api "repos/$_e10_repo/statuses/$1" -f "state=$2" -f context=loki/deep-verify \
+        _e10_gh api "repos/$_e10_repo/statuses/$1" -f "state=$2" -f "context=$_e10_ctx" \
             -f "description=$3" >/dev/null || die "gh api status failed"
         ;;
     *) die "usage: engine10-push.sh push-pr|pr-ready|comment|issue-comment|status ..." ;;

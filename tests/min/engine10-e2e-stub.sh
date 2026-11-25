@@ -2042,6 +2042,19 @@ while IFS= read -r line; do
     case "$line" in "OK "*) ok "${line#OK }" ;; "NO "*) bad "${line#NO }" ;; esac
 done <<< "$out"
 
+# --- RECEIPT-STATUS: the sealed verdict is the commit status loki/receipt on the pull request head (no network: argument shapes and wiring) ---
+# Planted defects: pushArgv drops the context (2nd field false); runPr sets it green for a draft (3rd false); the push script accepts any context (4th false).
+RS="$(cd "$ROOT/loki-ts" && bun -e '
+import { pushArgv } from "./src/engine10/types.ts";
+const fs = await import("node:fs"), pr = fs.readFileSync("./src/engine10/stages/pr.ts", "utf8"), sh = fs.readFileSync("../autonomy/lib/engine10-push.sh", "utf8"), S = "a".repeat(40);
+console.log([pushArgv({ cmd: "status", sha: S, state: "pending", description: "d" }).length,
+  pushArgv({ cmd: "status", sha: S, state: "success", description: "d", context: "loki/receipt" }).join("|") === `status|${S}|success|d|loki/receipt`,
+  pr.includes(`context: "loki/receipt"`) && pr.includes(`const green = verdict === "VERIFIED" && !draft`),
+  sh.includes("loki/deep-verify | loki/receipt) ;;") && sh.includes(`-f "context=$_e10_ctx"`) && !sh.includes("-f context=loki/deep-verify")].join(","));' 2>&1)"
+[ "$RS" = "4,true,true,true" ] \
+    && ok "receipt status: deep verify keeps the three-argument status call, loki/receipt rides as a fourth, the pull request stage sets it green only for a VERIFIED non-draft, and the push script accepts only the two contexts" \
+    || bad "receipt status gave: $RS"
+
 # ---------------------------------------------------------------- RUN-DEADLINE (dev4 cap kills): an outer deadline becomes the fixed run cap, and the run seals before it
 cat > "$T/deadline.ts" <<'TS'
 import { mkdtempSync, rmSync } from "node:fs";
