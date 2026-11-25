@@ -284,7 +284,7 @@ finishing run can be overwritten. State lives in `.loki/triggers/health.json`;
 `enabled_events` field (never enforced) is gone.
 
 Not covered yet: `loki slack serve` mentions (a separate server that does not
-report to this registry), red CI on pull request branches (use `loki merge watch`),
+report to this registry), red CI on pull request branches (use `loki address`, or `loki issues watch`, which runs it by itself),
 and follow-up replies inside a thread Loki already answered (`loki address` takes unresolved
 thread roots and review summaries; a new inline comment starts a new item). The CI repair starts from the checkout the trigger server runs in and does not
 fetch first, so keep that checkout on the default branch and up to date.
