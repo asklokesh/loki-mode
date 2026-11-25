@@ -261,7 +261,7 @@ export const PATCH_MAX_TOKENS = 8000;
 export function patchCallFor(model: string, lokiDir: string, timeoutMs = 180_000, env: NodeJS.ProcessEnv = process.env): PatchCall {
   if (env.LOKI_E10_INVOKER === "cli") return async ({ system, messages, signal }) => { // the CLI invoker (tests/min e2e stub, legacy installs): `claude -p` with no tools, priced by withChildLedger
     try {
-      const r = await withChildLedger(run, lokiDir, "implement-patch", model)([env.LOKI_CLAUDE_CLI || "claude", "-p", flattenMessages(messages), "--output-format", "json", "--tools", "", "--model", model, "--system-prompt", system, "--strict-mcp-config", "--setting-sources", "project", "--settings", '{"disableAllHooks":true}'], { timeoutMs, group: true, signal });
+      const r = await withChildLedger(run, lokiDir, "implement-patch", model)([env.LOKI_CLAUDE_CLI || "claude", "-p", flattenMessages(messages), "--output-format", "json", "--tools", "", "--model", model, "--system-prompt", system, "--strict-mcp-config", "--setting-sources", "", "--settings", '{"disableAllHooks":true}'], { timeoutMs, group: true, signal });
       const j = JSON.parse(r.stdout) as { result?: unknown; is_error?: boolean; total_cost_usd?: number };
       return { text: r.exitCode === 0 && !j.is_error && typeof j.result === "string" ? j.result : null, usd: typeof j.total_cost_usd === "number" ? j.total_cost_usd : null };
     } catch { return { text: null, usd: null }; }
