@@ -1061,7 +1061,7 @@ def build_ci_brief(wf, repo):
 def handle_workflow_run_event(payload, dry_run=False):
     """Handle workflow_run: red default-branch CI -> loki start --brief <CI brief> --pr.
 
-    Only the default branch: a red PR branch is `loki merge watch`'s job, and Loki's
+    Only the default branch: a red PR branch is `loki address`'s job, and Loki's
     own loki/* branches must never retrigger themselves.
     """
     action = payload.get("action", "")
@@ -1081,7 +1081,7 @@ def handle_workflow_run_event(payload, dry_run=False):
     branch = str(wf.get("head_branch") or "")
     if branch != default or branch.startswith("loki/"):
         return None, ("skipped (failure on branch %s, not the default branch; "
-                      "use loki merge watch for PR branches)" % _clip(branch))
+                      "use loki address for PR branches)" % _clip(branch))
     brief = build_ci_brief(wf, repo_full_name)
     if not brief or not valid_spec(brief):
         return None, "rejected (invalid brief)"
@@ -1362,7 +1362,8 @@ def build_jira_brief(issue):
 
 
 def build_teams_brief(activity):
-    text = re.sub(r"<at>.*?</at>", " ", str(activity.get("text") or ""), flags=re.S)
+    text = str(activity.get("text") or "")[:20000]
+    text = re.sub(r"<at>.*?</at>", " ", text, flags=re.S)
     return _one_line(HTML_TAG_RE.sub(" ", text))
 
 
