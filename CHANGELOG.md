@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- Verified mode now does what it says: with --verified, a run that would stop at PARTIAL keeps working (#647). Between commit and seal, each closure round reads the label, and while something closable holds it and nothing only a person can close does, runs one more session on exactly those items (for example "no test shown to fail on the base commit and pass on the change"), a complete verify and a commit, then reads the label again. A round that closes nothing is reverted and ends the loop, so the result is never worse than the PARTIAL it started from; holds only a person can close are disclosed and never retried. Rounds stop at your LOKI_VERIFIED_ROUNDS, LOKI_VERIFIED_MAX_S, LOKI_VERIFIED_MAX_USD and LOKI_VERIFIED_MAX_TOKENS when set. The receipt lists each round under verified_mode.rounds. A run without --verified is unchanged. Not measured: no run; how many PARTIAL runs this moves to VERIFIED is unknown (#674).
+
 ## v11.179.0 (2026-11-25)
 
 - Security: a Loki run no longer executes Claude Code hooks defined by the repository it works on (#655). Engine sessions turn settings-file, skill and plugin hooks off; Loki's own command guard and write fence are unaffected. On the opt-in CLI invoker (LOKI_E10_INVOKER=cli or LOKI_LEGACY_BASH) the repository's Claude Code settings and CLAUDE.md are no longer loaded, because that route cannot drop hooks alone. Not covered yet: other keys of that settings file (#665). Not measured: no session with a planted hook was run.
