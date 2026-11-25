@@ -9,6 +9,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { SAFE_BUN_FLAGS } from "../runner/worker_proc.ts";
 
 const USAGE = "usage: loki issues watch owner/repo [--label L] [--interval SECONDS] [--parallel K] [--limit N] [--dir DIR] [--draft] [--once]\n";
 const SLUG_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/, MARK = ".loki-watch-owned";
@@ -91,7 +92,7 @@ export async function runIssuesWatch(args: readonly string[]): Promise<number> {
       const trying = open.filter((n) => !heldNow.includes(String(n)));
       if (heldNow.length) say(`holding back ${heldNow.map((n) => `#${n}`).join(", ")} (tried ${cap} time${cap === 1 ? "" : "s"}; delete ${ledgerFile(a)} to try again)`);
       const code = await new Promise<number>((done) => {
-        child = spawn(process.argv[0]!, [process.argv[1]!, ...passArgv(a)], { cwd: co.dir, stdio: ["ignore", "inherit", "inherit"], env: { ...process.env, LOKI_NONINTERACTIVE: "1", LOKI_ISSUES_SKIP: heldNow.join(",") } });
+        child = spawn(process.argv[0]!, [...SAFE_BUN_FLAGS, process.argv[1]!, ...passArgv(a)], { cwd: co.dir, stdio: ["ignore", "inherit", "inherit"], env: { ...process.env, LOKI_NONINTERACTIVE: "1", LOKI_ISSUES_SKIP: heldNow.join(",") } });
         child.on("error", () => done(1)); child.on("exit", (c) => done(c ?? 1));
       });
       child = null; say(`pass ${pass} ended with exit ${code}`);

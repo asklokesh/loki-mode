@@ -54,3 +54,18 @@ export function landNext(reason: LocalReason | null, branch: string | null, orig
   if (!reason || !branch) return "";
   return reason === "gh_unauthenticated" ? `gh auth login && git push -u origin ${branch} && gh pr create --fill` : `git checkout ${orig ?? "main"} && git merge --no-ff ${branch}`;
 }
+/** ANYWHERE: the one GitHub repository a start names (owner/repo#N, a github.com issue URL, several refs of one repository, or owner/repo with --label), else null. Tracker refs, other hosts and plain text are null. */
+export function startSlug(task: string, label: string | null): string | null {
+  const SLUG = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/, words = task.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return null;
+  if (label !== null) return words.length === 1 && SLUG.test(words[0]!) ? words[0]! : null;
+  const one = (w: string): string | null => w.match(/^([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)#\d+$/)?.[1] ?? w.match(/^https?:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/issues\/\d+(?:[\/?#]\S*)?$/i)?.[1] ?? null;
+  const slugs = new Set(words.map(one));
+  return slugs.size === 1 && !slugs.has(null) ? [...slugs][0]! : null;
+}
+/** Where that start runs. remotes: every remote URL of the current checkout, or null when the folder is not a git checkout. */
+export function startPlace(slug: string, remotes: readonly string[] | null): "here" | "clone" {
+  if (remotes === null) return "clone";
+  const gh = remotes.map((u) => githubRepoFromUrl(u)).filter((r): r is string => r !== null);
+  return gh.length > 0 && !gh.some((r) => r.toLowerCase() === slug.toLowerCase()) ? "clone" : "here";
+}

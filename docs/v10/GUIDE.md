@@ -148,6 +148,8 @@ loki "<issue URL as copied, with ?query or #comment>"
 loki https://github.com/o/r/pull/5       # verify-pr
 ```
 
+A GitHub issue ref works from any folder. When the folder is not a checkout of that repository, Loki clones it under `~/.loki/checkouts` and says so; your own folders are not touched.
+
 A pasted goal that names one issue is read as that issue: a copied URL loses a
 trailing slash, ?query or #fragment, and "#123", "fix #123" or "fix issue 123"
 becomes owner/repo#123 from the checkout's origin ("#N" needs a GitHub origin;

@@ -220,4 +220,25 @@ console.log([road.join(","), gate.join(","), cap.join(","), words.join(",")].joi
     && ok "RW-02 road, gate and cap: a description of work with its own acceptance list takes the work road and the issue time cap rule; prose stays plain (=all opts it in); a short goal, a spec, --spec, --seal-existing, a group unit, another provider, the prove-by-running opt-out and the road opt-out keep theirs ($rw)" || bad "RW-02 road, gate and cap gave: $rw"
 # ---- end RW-02 ----
 
+# --- ANYWHERE: a GitHub issue ref started outside a checkout of that repository runs in Loki's own clone ---------------------------------
+# Planted defects: startPlace returns "here" for null remotes (9th field), ignores every remote but the first (14th), or treats a checkout with no
+# GitHub remote as foreign (10th, 11th); startSlug accepts two repositories (5th field non-empty).
+AW="$(cd "$ROOT/loki-ts" && bun -e '
+import { startSlug, startPlace } from "./src/util/one_line_goal.ts";
+const G = "https://github.com/acme/calc.git";
+console.log([
+  startSlug("acme/calc#7", null), startSlug("https://github.com/acme/calc/issues/7", null), startSlug("acme/calc#7 acme/calc#9", null), startSlug("acme/calc", "loki"),
+  startSlug("acme/calc#7 other/x#1", null), startSlug("fix the login bug", null), startSlug("https://gitlab.com/a/b/-/issues/3", null), startSlug("jira:ABC-1", null),
+  startPlace("acme/calc", null), startPlace("acme/calc", []), startPlace("acme/calc", ["/tmp/o.git"]), startPlace("acme/calc", [G]), startPlace("Acme/Calc", ["git@github.com:acme/calc.git"]),
+  startPlace("acme/calc", ["https://github.com/me/calc.git", G]), startPlace("acme/calc", ["https://github.com/other/thing.git"]),
+].join(","));' 2>&1)"
+[ "$AW" = "acme/calc,acme/calc,acme/calc,acme/calc,,,,,clone,here,here,here,here,here,clone" ] \
+    && ok "anywhere: one repository is read from an issue ref, an issue URL, several refs or owner/repo --label; a folder that is not a checkout, or a checkout whose GitHub remotes are all another repository, runs in Loki's clone; a matching remote, a fork that also has the upstream remote, and a checkout with no GitHub remote stay where they are" \
+    || bad "anywhere gave: $AW"
+SUP="$ROOT/loki-ts/src/engine10/supervisor.ts"
+grep -qF 'startPlace(slug, remotes) === "clone"' "$SUP" && grep -qF 'runOwnerAlive(join(runs, r))' "$SUP" && grep -qF 'findInterrupted(dir, undefined, true) !== null' "$SUP" \
+    && grep -qF '[...SAFE_BUN_FLAGS, process.argv[1]!, "engine10", ...args]' "$SUP" && grep -qF '[...SAFE_BUN_FLAGS, process.argv[1]!, ...passArgv(a)]' "$ROOT/loki-ts/src/commands/issues_watch.ts" \
+    && ok "anywhere wiring: the start path asks startPlace, refuses a clone that holds a live run, never resets one that holds an interrupted run, and both respawns into a checkout carry the Bun safety flags" \
+    || bad "anywhere wiring is missing in supervisor.ts or issues_watch.ts"
+
 finish

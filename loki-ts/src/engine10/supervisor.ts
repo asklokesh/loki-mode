@@ -8,9 +8,9 @@ import { terminalWidth } from "../util/term_width.ts"; import { ROLE_FLAG_ENV } 
 import { diffStat, runHead, formatRunSummary, handoffSection, readRiskSummary, writeHandoff, withNextLine, withFoldLine, withRiskLine, nextOf, resultOf, summaryObject, useColor } from "../util/run_summary.ts"; // OC-OUTPUT, RISKTIER
 import { commitUnsealedWork, deepAfterPr, deliverAsDraft, guardedBackstop, validBase } from "../e10ext/commit_filter.ts";
 import { kidOf, loadSigningKey, secretPushLine, secretPushRefusal } from "./stages/seal.ts";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs"; import { homedir } from "node:os";
 import { deliverables, ISSUE_LABELS_ENV, issueWholeFirst } from "../features/decompose.ts"; import { smallMaxChars } from "./sizing.ts";
-import { dirname, join, relative, resolve } from "node:path"; import { writeRunState } from "../util/seal_drift.ts";
+import { dirname, join, relative, resolve, sep } from "node:path"; import { writeRunState } from "../util/seal_drift.ts";
 import { loadSpecFile, type LoadedSpec } from "../util/spec_file.ts";
 import { eventsRelPath, githubRepoFromUrl, readOriginUrl, writeEngineMarker } from "../util/engine_origin.ts";
 export { eventsRelPath, githubRepoFromUrl, readOriginUrl, writeEngineMarker }; // re-exported: callers and tests import these from here
@@ -381,6 +381,27 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   if (!task && !fresh) { const rr = (await import("../util/run_outputs.ts")).startRecovery; try { const rd = safeGit(process.cwd(), ["rev-parse", "--show-toplevel"]).trim(), rec = await rr(rd, "", noPr); if (rec !== null) return rec; } catch { /* not a repo: the no-task error below */ } } // SB-12: a bare `loki start` offers or resumes an interrupted run
   if (!task) { process.stderr.write('loki: no goal given.\nusage: loki "<goal>"   (or: loki start <prd.md | owner/repo#N>)\n'); noteRefusal("prd_missing"); return 64; } // L009: a bare `loki start` or `loki quick` ends here (after the interrupted-run offer), never in the legacy loop
   if (spec === null) { const r = (await import("../util/one_line_goal.ts")).refuseCommandGoal(task); if (r !== null) return r; } // run safety: "status --help" passed as one argument is a command typed in quotes, never a run
+  if (spec === null && sealPatch === null && !process.env.LOKI_UNIT_ID) { // ANYWHERE: a GitHub issue started outside a checkout of its repository runs in Loki's own clone (util/one_line_goal.ts startPlace)
+    const g = await import("../util/one_line_goal.ts"), slug = g.startSlug(task, label), root = join(homedir(), ".loki", "checkouts");
+    const inOwn = ((): boolean => { try { return realpathSync(process.cwd()).startsWith(realpathSync(root) + sep); } catch { return false; } })(); // already inside one of Loki's clones: never clone again (a renamed repository would otherwise loop)
+    if (slug && !inOwn) {
+      let remotes: string[] | null = null;
+      try { const top = safeGit(process.cwd(), ["rev-parse", "--show-toplevel"]).trim(); remotes = safeGit(top, ["remote"]).split("\n").map((r) => r.trim()).filter(Boolean).map((r) => { try { return safeGit(top, ["remote", "get-url", r]).trim(); } catch { return ""; } }).filter(Boolean); } catch { /* not a git checkout */ }
+      if (g.startPlace(slug, remotes) === "clone") {
+        const { prepareCheckout } = await import("../commands/issues_watch.ts"), { runOwnerAlive } = await import("../util/run_pid.ts"), { findInterrupted } = await import("../util/run_outputs.ts"), { spawn } = await import("node:child_process");
+        const dir = join(root, slug.replace("/", "__")), runs = join(dir, ".loki", "runs");
+        const live = existsSync(runs) ? readdirSync(runs).find((r) => runOwnerAlive(join(runs, r))) : undefined;
+        if (live) { process.stderr.write(`loki: a Loki run (${live}) is live in ${dir}; wait for it, or start from your own checkout of ${slug}\n`); noteRefusal("other"); return 2; }
+        const unfinished = existsSync(join(dir, ".git")) && findInterrupted(dir, undefined, true) !== null; // an interrupted run's work is never reset away: the start below offers or resumes it
+        if (!unfinished) { const co = prepareCheckout({ slug, dir: root }); if (!co.ok) { process.stderr.write(`loki: this folder is not a checkout of ${slug} and Loki could not make its own: ${co.error}. Fix: gh auth login, or cd into a checkout of ${slug}\n`); noteRefusal("other"); return 2; } }
+        process.stderr.write(`loki: this folder is not a checkout of ${slug}; working in Loki's own clone at ${dir} (run loki status, loki verify and loki address from that folder)\n`);
+        const child = spawn(process.argv[0]!, [...SAFE_BUN_FLAGS, process.argv[1]!, "engine10", ...args], { cwd: dir, stdio: "inherit", env: envWithPwd(process.env, dir) });
+        process.on("SIGTERM", () => { try { child.kill("SIGTERM"); } catch { /* gone */ } }); process.on("SIGHUP", () => { try { child.kill("SIGHUP"); } catch { /* gone */ } });
+        process.on("SIGINT", () => { if (!process.stdin.isTTY) try { child.kill("SIGINT"); } catch { /* gone */ } }); // on a terminal Ctrl-C reaches the child by itself; sending it again would count as a second interrupt
+        return await new Promise<number>((done) => { child.on("error", () => done(1)); child.on("exit", (c) => done(c ?? 1)); });
+      }
+    }
+  }
   let repoDir: string;
   try {
     repoDir = safeGit(process.cwd(), ["rev-parse", "--show-toplevel"]).trim();
