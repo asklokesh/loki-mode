@@ -2055,6 +2055,24 @@ console.log([pushArgv({ cmd: "status", sha: S, state: "pending", description: "d
     && ok "receipt status: deep verify keeps the three-argument status call, loki/receipt rides as a fourth, the pull request stage sets it green only for a VERIFIED non-draft, and the push script accepts only the two contexts" \
     || bad "receipt status gave: $RS"
 
+# --- MANY: the digest counts merge-ready work, and the combined pull request head carries loki/receipt ------------------------------------------
+# Planted defects: digestSummary counts a VERIFIED row with no pull request (1st field false); counts an unreported or partial cost as exact (2nd field false);
+# combineSlices sets green with a slice left out (4th field false); runReceiptStatus sets a status on a GitLab origin (3rd field true).
+MD="$(cd "$ROOT/loki-ts" && bun -e '
+import { digestSummary, renderIssuesDigest } from "./src/commands/issues_run.ts";
+import { runReceiptStatus } from "./src/engine10/stages/pr.ts";
+const fs = await import("node:fs"), cs = fs.readFileSync("./src/commands/issues_combine.ts", "utf8");
+const row = (issue, outcome, pr, cost) => ({ issue, title: "t", triage: "not triaged", outcome, pr, cost, time: "1m" });
+const rows = [row(1, "VERIFIED", "https://github.com/a/b/pull/1", "$1.00"), row(2, "VERIFIED, no PR: x", "none", "$0.50"), row(3, "PARTIAL", "https://github.com/a/b/pull/3", "NOT RECORDED"), row(4, "PARTIAL", "https://github.com/a/b/pull/4", "partial: $0.2500 for 1 of 2 sessions")];
+const s = digestSummary(rows);
+console.log([/^Merge-ready \(VERIFIED with a pull request\): 1 of 4\./.test(s), s.includes("at least $1.75 in all (1 priced in part, 1 reported no cost), at least $1.75 per merge-ready pull request") && digestSummary(rows.slice(0, 1)).endsWith("Cost: $1.00 in all, $1.00 per merge-ready pull request."),
+  runReceiptStatus({ repoDir: "/nonexistent", sha: "a".repeat(40), state: "success", description: "d", pinnedOrigin: "https://gitlab.com/a/b.git" }) || runReceiptStatus({ repoDir: "/nonexistent", sha: "short", state: "success", description: "d", pinnedOrigin: "https://github.com/a/b.git" }),
+  cs.includes("const all = dropped.size === 0 && o.excluded.length === 0, green = all && res.verdict === \"VERIFIED\"") && cs.includes("status: (a) => pr.runReceiptStatus(a),"),
+  renderIssuesDigest("a/b", new Date(0), new Date(1), rows).trimEnd().endsWith(s), renderIssuesDigest("a/b", new Date(0), new Date(1), []).includes("Merge-ready")].join(","));' 2>&1)"
+[ "$MD" = "true,true,false,true,true,false" ] \
+    && ok "many: the digest ends with the merge-ready count, the dollars in all and per merge-ready pull request, naming an unreported cost; the combined pull request gets loki/receipt, green only with every slice in and a VERIFIED combined receipt; no status on a GitLab origin or a bad sha" \
+    || bad "many gave: $MD"
+
 # ---------------------------------------------------------------- RUN-DEADLINE (dev4 cap kills): an outer deadline becomes the fixed run cap, and the run seals before it
 cat > "$T/deadline.ts" <<'TS'
 import { mkdtempSync, rmSync } from "node:fs";

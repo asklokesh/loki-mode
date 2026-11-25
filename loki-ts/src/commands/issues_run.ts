@@ -207,7 +207,7 @@ function originSlug(repoDir: string): string | null {
   }
 }
 
-interface Row {
+export interface Row {
   issue: number;
   title: string;
   triage: string;
@@ -217,11 +217,24 @@ interface Row {
   time: string;
 }
 
+/** The digest's last line: how many issues ended safe to merge (VERIFIED with a pull request), the dollars in all, and dollars per merge-ready pull
+ *  request. A row's cost is "$1.23", "partial: $0.1234 for 1 of 2 sessions" or "NOT RECORDED" (commands/queue.ts:351): a partial figure counts as
+ *  a lower bound and a missing one is named, never counted as zero. */
+export function digestSummary(rows: readonly Row[]): string {
+  const ready = rows.filter((r) => /^VERIFIED\b/.test(r.outcome) && r.pr !== "none").length;
+  let usd = 0, full = 0, part = 0;
+  for (const r of rows) { const c = r.cost.trim(), f = /^\$(\d+(?:\.\d+)?)$/.exec(c), p = f ? null : /^partial: \$(\d+(?:\.\d+)?) /.exec(c); if (f) { usd += Number(f[1]); full++; } else if (p) { usd += Number(p[1]); part++; } }
+  const none = rows.length - full - part, gaps = [part ? `${part} priced in part` : "", none ? `${none} reported no cost` : ""].filter(Boolean).join(", "), least = gaps ? "at least " : "";
+  const cost = full + part === 0 ? "cost not reported" : `${least}$${usd.toFixed(2)} in all${gaps ? ` (${gaps})` : ""}${ready > 0 ? `, ${least}$${(usd / ready).toFixed(2)} per merge-ready pull request` : ""}`;
+  return `Merge-ready (VERIFIED with a pull request): ${ready} of ${rows.length}. Cost: ${cost}.`;
+}
+
 export function renderIssuesDigest(slug: string, started: Date, finished: Date, rows: readonly Row[]): string {
   const L = [`# Loki issues run: ${slug}`, "", `Started: ${started.toISOString()}  `, `Finished: ${finished.toISOString()}`, ""];
   L.push("| Issue | Triage | Outcome | PR | Cost | Time |", "| --- | --- | --- | --- | --- | --- |");
   for (const r of rows) L.push(`| #${r.issue} ${clip(r.title, 60)} | ${r.triage} | ${r.outcome} | ${r.pr} | ${r.cost} | ${r.time} |`);
   if (rows.length === 0) L.push("| (none) | | | | | |");
+  if (rows.length > 0) L.push("", digestSummary(rows));
   return L.join("\n") + "\n";
 }
 
