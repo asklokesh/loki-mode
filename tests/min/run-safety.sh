@@ -2318,27 +2318,4 @@ for k in 0 1 2 3; do unit_start "help$k" unit_help_chunk "$k" 4; done
 unit_report
 help_bad="$(cat "$T"/help-bad.* 2>/dev/null)"
 [ -z "$help_bad" ] && ok "all $count commands with --help (separate and as one argument) started no run" || bad "--help started a run or moved the checkout:$help_bad"
-# --- RW-03 CLOSURE ROUNDS: what a round works on, when it stops, when it is kept, what the receipt records -------------------------------------
-# Planted defects: closurePlan works a class c hold (1st field 3) or does not report it (2nd field ba|null); closureMoved accepts the same count (3rd field has true first); closureStop ignores
-# the dollar bound (4th field null); CLOSURE_ROUNDS_BUILT false (5th); machine.ts runs the rounds without --verified (6th false); fix.ts keeps the
-# exhausted-rounds skip for a closure session (7th false); the undo uses a reset (8th false).
-CR="$(cd "$ROOT/loki-ts" && bun -e '
-import * as c from "./src/engine10/closure.ts";
-import { buildClosureBrief } from "./src/engine10/stages/fix.ts";
-import { FINISH_LINE } from "./src/e10ext/context.ts";
-const fs = await import("node:fs"), m = fs.readFileSync("./src/engine10/machine.ts", "utf8"), f = fs.readFileSync("./src/engine10/stages/fix.ts", "utf8");
-const reasons = [{ kind: "no fail-then-pass test", detail: "no test shown to fail on the base commit and pass on the change" }, { kind: "verify not proven", detail: "verify stopped at its time limit" },
-  { kind: "open note", detail: "open choice: which port" }, { kind: "verify not proven", detail: "Loki could not finish checking: x" }, { kind: "no fail-then-pass test", detail: "no test shown to fail on the base commit and pass on the change" }];
-const plan = c.closurePlan(reasons), items = plan.items, free = c.closurePlan([reasons[0], { kind: "review note", detail: "cross-review flag (x): y" }]), inf = { rounds: Infinity, wall_s: Infinity, usd: Infinity, tokens: Infinity };
-c.recordClosureRound({ round: 1, open_before: ["a"], session: true, open_after: [], verdict_after: "VERIFIED", kept: true, seconds: 3 });
-const brief = buildClosureBrief("add x", [{ kind: "no fail-then-pass test", why: "w1" }], "diff");
-console.log([items.length, `${items.map((i) => i.class).join("")}|${plan.blocked}|${free.items.length}${free.blocked}`, [c.closureMoved(2, 2, "PARTIAL"), c.closureMoved(2, 1, "PARTIAL"), c.closureMoved(2, 0, "VERIFIED"), c.closureMoved(2, 0, "FAILED")].join("/"),
-  `${c.closureStop(inf, { rounds: 99, elapsedS: 9e9, usd: 9e9, tokens: 9e9 })}|${c.closureStop({ ...inf, usd: 5 }, { rounds: 0, elapsedS: 0, usd: 5, tokens: 0 })}|${c.closureStop({ ...inf, usd: 5 }, { rounds: 0, elapsedS: 0, usd: null, tokens: 0 })}|${c.closureStop({ ...inf, rounds: 2 }, { rounds: 2, elapsedS: 0, usd: 0, tokens: 0 })}`,
-  c.CLOSURE_ROUNDS_BUILT && c.verifiedReceiptBlock({ LOKI_VERIFIED: "1" }).verified_mode.rounds.length === 1 && c.verifiedReceiptBlock({}).verified_mode === undefined,
-  m.includes("if (todo[0] === \"seal\" && CLOSURE_ROUNDS_BUILT && verifiedOn() && !jumped && !capHit && !fatal && stopped === null") && m.includes("if (\"failed\" in ev || ev.verdict !== \"PARTIAL\") return;"),
-  f.includes("if (!replan && !closure && priorRound >= MAX_FIX_ROUNDS") && f.includes("round >= 2 && !closure && !signal.aborted") && m.includes("if (plan.blocked !== null)") && brief.includes("1. no fail-then-pass test\n   w1") && brief.trimEnd().endsWith(FINISH_LINE.trimEnd()),
-  m.includes("\"revert\", \"--no-edit\", head1]") && !m.slice(m.indexOf("const closeOpenItems"), m.indexOf("if (!moved || !read) return;")).includes("\"reset\"")].join(","));' 2>&1)"
-[ "$CR" = '2,ba|open choice the issue does not decide|1null,false/true/true/false,null|dollar limit ($5.00)|null|round limit (2),true,true,true,true' ] \
-    && ok "closure rounds: a round works on class a and b holds only, once each, and not at all while a hold only a person can close is open; a reviewer note is not a hold; it is kept only when the label reaches VERIFIED or fewer holds stay open; bounds stop it only when set, dollars only when priced; the receipt records the rounds; nothing runs without --verified; a closure session is not cut by the fix-round limit; the undo is a revert" \
-    || bad "closure rounds gave: $CR"
 finish

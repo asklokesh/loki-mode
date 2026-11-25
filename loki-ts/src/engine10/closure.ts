@@ -25,31 +25,15 @@ export interface VerifiedBounds { rounds: number; wall_s: number; usd: number; t
 // NO-DEFAULT-BUDGET: a bound is the user's value (never clamped by Loki), else its old default only with LOKI_E10_DEFAULT_BUDGETS=1, else none (Infinity; null in the receipt).
 const boundOf = (raw: string | undefined, dflt: number, env: NodeJS.ProcessEnv): number => { const n = Number((raw ?? "").trim()); return (raw ?? "").trim() !== "" && Number.isFinite(n) && n > 0 ? n : defaultBudgetsOn(env) ? dflt : Infinity; };
 export const verifiedBounds = (env: NodeJS.ProcessEnv = process.env): VerifiedBounds => ({ rounds: Math.floor(boundOf(env["LOKI_VERIFIED_ROUNDS"], 3, env)), wall_s: Math.floor(boundOf(env["LOKI_VERIFIED_MAX_S"], 7200, env)), usd: boundOf(env["LOKI_VERIFIED_MAX_USD"], 5, env), tokens: Math.floor(boundOf(env["LOKI_VERIFIED_MAX_TOKENS"], 3_000_000, env)) });
-/** Whether this build runs closure rounds (machine.ts closeOpenItems). One line turns them off. */
-export const CLOSURE_ROUNDS_BUILT = true;
+/** Whether this build runs closure rounds. False until the round itself lands, so the header and the receipt never promise work that does not happen. */
+export const CLOSURE_ROUNDS_BUILT = false;
 /** The start-line text for a verified-mode run: the bounds that apply, said plainly. */
 export function verifiedHeader(env: NodeJS.ProcessEnv = process.env): string {
   const b = verifiedBounds(env), lim = (v: number, f: (x: number) => string): string => (Number.isFinite(v) ? f(v) : "no limit"), hours = lim(b.wall_s, (w) => (w % 3600 === 0 ? `${w / 3600} h` : `${Math.round(w / 60)} min`));
   return CLOSURE_ROUNDS_BUILT ? `verified mode: up to ${lim(b.rounds, String)} closure rounds, ${hours}, ${lim(b.usd, (u) => `$${u.toFixed(2)}`)} when every session is priced, ${lim(b.tokens, (t) => `${(t / 1e6).toFixed(1)}M`)} new tokens` : "verified mode: on (recorded in the receipt; closure rounds are not in this build, so the run itself is unchanged)";
 }
 /** The receipt block of a verified-mode run. */
-export const verifiedReceiptBlock = (env: NodeJS.ProcessEnv = process.env): { verified_mode?: { bounds: VerifiedBounds; closure_rounds_built: boolean; rounds: unknown[] } } => (verifiedOn(env) ? { verified_mode: { bounds: verifiedBounds(env), closure_rounds_built: CLOSURE_ROUNDS_BUILT, rounds: closureRounds() } } : {});
-
-/** One closure round as the receipt records it. `kept` false: the round closed nothing (or made the label worse) and its commit was reverted. */
-export interface ClosureRound { round: number; open_before: string[]; session: boolean; open_after: string[]; verdict_after: string; kept: boolean; seconds: number; stop?: string }
-const closureLog: ClosureRound[] = []; // one worker process is one run, so the rounds of this run live here until seal writes them
-export const recordClosureRound = (r: ClosureRound): void => { closureLog.push(r); };
-export const closureRounds = (): ClosureRound[] => closureLog.map((r) => ({ ...r }));
-/** What a round has to stop at: the user's bound that is reached, in words, or null. Dollars count only when every session was priced (usd not null). */
-export function closureStop(b: VerifiedBounds, s: { rounds: number; elapsedS: number; usd: number | null; tokens: number }): string | null {
-  if (s.rounds >= b.rounds) return `round limit (${b.rounds})`;
-  if (s.elapsedS >= b.wall_s) return `time limit (${b.wall_s} s)`;
-  if (s.usd !== null && s.usd >= b.usd) return `dollar limit ($${b.usd.toFixed(2)})`;
-  if (s.tokens >= b.tokens) return `token limit (${b.tokens})`;
-  return null;
-}
-/** A round moved the run when the next reading is VERIFIED, or still PARTIAL with fewer closable items than before. Anything else is undone. */
-export const closureMoved = (before: number, after: number, verdictAfter: string): boolean => verdictAfter === "VERIFIED" || (verdictAfter === "PARTIAL" && after < before);
+export const verifiedReceiptBlock = (env: NodeJS.ProcessEnv = process.env): { verified_mode?: { bounds: VerifiedBounds; closure_rounds_built: boolean; rounds: unknown[] } } => (verifiedOn(env) ? { verified_mode: { bounds: verifiedBounds(env), closure_rounds_built: CLOSURE_ROUNDS_BUILT, rounds: [] } } : {});
 /** The independent reviewer's findings on a receipt's NOT PROVEN list (flags and blocks), in receipt order. The label rule does not read this. */
 export const reviewerFlags = (notProven: readonly unknown[]): string[] => notProven.filter((n): n is string => typeof n === "string" && /^cross-review (flag|block) \(/.test(n));
 /** Beside the label: ", 5 reviewer flags open", or "" when there are none. */
@@ -233,25 +217,4 @@ export function openItems(r: ReceiptView): OpenItem[] {
     add(kind === "other" ? `other: ${raw.slice(0, 60)}` : kind, cls, tried, raw);
   }
   return out;
-}
-
-/** The class of a hold kind whose detail is not one of the receipt lines RULES knows (seal.ts evaluateSeal names the kinds). */
-const KIND_CLASS: Readonly<Record<string, ItemClass>> = {
-  "check fails": "b", "check not run": "c", "verify not proven": "a", "weakened test": "b", "runner config": "c", "no agent-independent proof": "b", "no fail-then-pass test": "b",
-  "Wall green on base": "b", "config in commit": "b", "changed symbol not referenced": "b", "public function not exercised": "b", "spec site uncovered": "b", "Wall copy or clause": "c",
-  "review block": "b", "open note": "c", "Wall test fails at its committed path": "c",
-};
-/** What a closure round may work on, from evaluateSeal's structured reasons: `items` are the class a (more checking) and class b (one more session)
- *  holds, one per kind and detail; `blocked` names the first class c hold (a person, the environment, a fault of Loki's own), which no round can close.
- *  A reviewer note that is not a block is not a hold and is left out of both. */
-export function closurePlan(reasons: readonly CapReason[]): { items: OpenItem[]; blocked: string | null } {
-  const items: OpenItem[] = [], seen = new Set<string>(); let blocked: string | null = null;
-  for (const r of reasons) {
-    if (r.kind === "review note") continue;
-    const rule = RULES.find(([, , rx]) => rx.test(r.detail)), cls: ItemClass = rule ? rule[1] : KIND_CLASS[r.kind] ?? "c", kind = rule ? rule[0] : r.kind, id = `${kind}\n${r.detail}`;
-    if (cls === "c") { blocked ??= kind; continue; }
-    if (seen.has(id)) continue;
-    seen.add(id); items.push({ kind, class: cls, tried: null, why: r.detail });
-  }
-  return { items, blocked };
 }
