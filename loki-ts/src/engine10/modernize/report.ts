@@ -89,7 +89,7 @@ export function verifyReport(r: SealedReport, key: KeyObject | null = loadSignin
   return { ok: true, signed: true, reason: null };
 }
 
-const cell = (v: string): string => clean(String(v)).replace(/\|/g, "\\|");
+const cell = (v: string): string => clean(String(v)).replace(/\\/g, "\\\\").replace(/\|/g, "\\|");
 const num = (v: number | null, f: (n: number) => string): string => (typeof v === "number" && Number.isFinite(v) ? f(v) : "n/a");
 
 export function renderReportMd(r: SealedReport): string {

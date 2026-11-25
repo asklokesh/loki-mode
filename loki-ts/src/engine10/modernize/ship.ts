@@ -48,7 +48,7 @@ export function waveIsDraft(verdict: WaveVerdict | null, units: ShipUnit[]): boo
 }
 
 /** One table cell: single line, bounded, pipes escaped, so a value can never forge a row or header. */
-const cell = (v: string): string => cleanMarked(String(v)).replace(/\|/g, "\\|");
+const cell = (v: string): string => cleanMarked(String(v)).replace(/\\/g, "\\\\").replace(/\|/g, "\\|");
 const num = (v: number | null, f: (n: number) => string): string => (typeof v === "number" && Number.isFinite(v) ? f(v) : "n/a");
 
 export function renderWaveBody(wave: number, verdict: WaveVerdict | null, units: ShipUnit[]): string {

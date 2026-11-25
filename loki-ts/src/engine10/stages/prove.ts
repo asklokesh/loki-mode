@@ -398,6 +398,6 @@ export function proveReceiptBlock(o: Partial<Record<string, Obj>>): { prove?: Re
 export function proveTable(prove: unknown): string[] {
   const p = prove as { asks?: { id?: unknown; text?: unknown; command?: unknown; cmd_line?: unknown; result?: unknown; reason?: unknown }[] } | null | undefined;
   if (!p || !Array.isArray(p.asks) || p.asks.length === 0) return [];
-  const cell = (x: unknown, n: number): string => clean(String(x ?? ""), n).replace(/\|/g, "\\|");
+  const cell = (x: unknown, n: number): string => clean(String(x ?? ""), n).replace(/\\/g, "\\\\").replace(/\|/g, "\\|");
   return ["| Ask | Command | Result |", "|---|---|---|", ...p.asks.map((a) => `| ${cell(a.text, 160)} | \`${cell(a.cmd_line || a.command, 100)}\` | ${cell(a.result, 20)}${a.result === "proved" ? "" : `: ${cell(a.reason, 120)}`} |`), ""];
 }
