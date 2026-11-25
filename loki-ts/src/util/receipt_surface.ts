@@ -183,11 +183,14 @@ export function postReceiptComment(a: {
 const PR_NUMBER_RE = /\/pull\/(\d+)$/;
 type CommentCheck = { name: string; result: string; reason?: string };
 
+/** The first line and the marker of the deep verify comment. The marker lets Loki's own comment (posted under the user's login) never be read as a request (pr_lessons.ts also leaves out comments earlier releases posted without it, by DEEP_COMMENT_LEAD). */
+export const DEEP_COMMENT_LEAD = "## Loki deep verify: ", DEEP_COMMENT_MARK = "<!-- loki-deep-verify -->";
+
 export function buildDeepCommentBody(checks: CommentCheck[], notProven: string[], statusState: "success" | "failure" | "error"): string {
-  const lines = [`## Loki deep verify: ${statusState}`, "", "### Checks"];
+  const lines = [`${DEEP_COMMENT_LEAD}${statusState}`, "", "### Checks"];
   lines.push(...(checks.length ? checks.map((c) => `- ${c.result}: ${c.name}${c.reason ? ` (${c.reason})` : ""}`) : ["- none"]));
   lines.push("", "### NOT PROVEN", ...(notProven.length ? notProven.map((n) => `- ${n}`) : ["- none"]));
-  return `${lines.join("\n")}\n`;
+  return `${lines.join("\n")}\n${DEEP_COMMENT_MARK}\n`;
 }
 
 /** Post the deep-verify comment and commit status through engine10-push.sh. headSha is "" when HEAD did not resolve to a full sha. Returns NOT PROVEN lines for each failed post. */
