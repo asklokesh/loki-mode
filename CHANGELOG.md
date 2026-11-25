@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- loki issues watch now answers follow-ups by itself. After each pickup pass it runs loki address --post for every open Loki pull request whose head, conversation, checks or mergeable state changed, each in a fresh clone at the pull request head, one at a time; --no-follow-up turns this off. A pull request carrying the label claude-pr-steward-watching is left to PR Steward and named in the log. Replies, run receipts and a bundle of each run branch are kept under <watch dir>/<owner>__<repo>.address/kept before a clone is removed; a clone with a failed run or uncommitted work is kept whole, one per pull request at most, and a pull request whose answer fails is tried twice and then left until something on it changes. At start the loop prints three GitHub links (issues waiting, pull requests safe to merge, pull requests that need you): those views are the board. Not measured: no pass was run.
+
 ## v11.179.0 (2026-11-25)
 
 - Security: a Loki run no longer executes Claude Code hooks defined by the repository it works on (#655). Engine sessions turn settings-file, skill and plugin hooks off; Loki's own command guard and write fence are unaffected. On the opt-in CLI invoker (LOKI_E10_INVOKER=cli or LOKI_LEGACY_BASH) the repository's Claude Code settings and CLAUDE.md are no longer loaded, because that route cannot drop hooks alone. Not covered yet: other keys of that settings file (#665). Not measured: no session with a planted hook was run.
