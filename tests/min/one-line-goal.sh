@@ -241,4 +241,22 @@ grep -qF 'startPlace(slug, remotes) === "clone"' "$SUP" && grep -qF 'runOwnerAli
     && ok "anywhere wiring: the start path asks startPlace, refuses a clone that holds a live run, never resets one that holds an interrupted run, and both respawns into a checkout carry the Bun safety flags" \
     || bad "anywhere wiring is missing in supervisor.ts or issues_watch.ts"
 
+# --- FOLLOW-UP: the watch loop answers open Loki pull requests, steps aside for PR Steward, and looks again only when something changed ------------
+# Planted defects: followUpTargets keeps a fork's pull request (3rd field 2); drops the STEWARD_LABEL test (4th field empty); leaves the check states
+# out of the print (6th field true); parseWatchArgs ignores --no-follow-up (2nd field true); addressArgv drops --post (7th field differs); the loop records the
+# print only on exit 0 or keeps every failed clone (8th field false).
+FU="$(cd "$ROOT/loki-ts" && bun -e '
+import { parseWatchArgs, followUpTargets, addressArgv, STEWARD_LABEL, ADDRESS_AGAIN } from "./src/commands/issues_watch.ts";
+const fs = await import("node:fs"), ws = fs.readFileSync("./src/commands/issues_watch.ts", "utf8");
+const O = "a".repeat(40), row = (n, o = {}) => ({ number: n, headRefName: "loki/e10-abc", headRefOid: O, labels: [], isCrossRepository: false, updatedAt: "t1", mergeable: "MERGEABLE", statusCheckRollup: [{ name: "ci", conclusion: "SUCCESS" }], ...o });
+const list = (rows) => followUpTargets({ slug: "acme/calc" }, () => ({ code: 0, out: JSON.stringify(rows) }));
+const t = list([row(1), row(2, { isCrossRepository: true }), row(3, { headRefName: "feature/x" }), row(4, { labels: [{ name: STEWARD_LABEL }] }), row(5, { headRefOid: "short" })]);
+const p1 = list([row(1)]).work[0].print, p2 = list([row(1, { statusCheckRollup: [{ name: "ci", conclusion: "FAILURE" }] })]).work[0].print, p3 = list([row(1, { mergeable: "CONFLICTING" })]).work[0].print;
+const on = parseWatchArgs(["acme/calc"]), off = parseWatchArgs(["acme/calc", "--no-follow-up"]);
+console.log([on.followUp, off.followUp, t.work.map((w) => w.number).join("+"), t.steward.join("+"), String(followUpTargets({ slug: "acme/calc" }, () => ({ code: 1, out: "" }))), p1 === p2 || p1 === p3, addressArgv({ slug: "acme/calc" }, 7, "/w/s.json").join(" "),
+  ADDRESS_AGAIN === 75 && ws.includes("if (n === 0 || n >= maxAttempts()) { lastPrint.set(p.number, p.print); tries.delete(p.number); }") && ws.includes("if (new RegExp(`^pr-${p.number}-[0-9a-f]{8}$`).test(d)) rmSync(join(root, d)")].join(","));' 2>&1)"
+[ "$FU" = "true,false,1,4,null,false,address acme/calc#7 --post --seen /w/s.json,true" ] \
+    && ok "follow-up: on by default and off with --no-follow-up; only a same-repository pull request on a loki/<run> head is answered; one carrying PR Steward's label is set aside; a changed check or mergeable state changes the print; the command is loki address --post with the seen file; a failing answer is tried a bounded number of times and never leaves more than one clone" \
+    || bad "follow-up gave: $FU"
+
 finish
