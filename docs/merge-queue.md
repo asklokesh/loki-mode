@@ -27,12 +27,11 @@ push after the gate cannot land unjudged.
 
     loki merge watch <pr|branch> [--require-verified] [--delete-branch]
 
-CI repair loop. Waits for checks; when they are red it passes the failed-run log
-tail to a bounded repair session on the PR branch (LOKI_PR_REPAIR_CMD, default a
-`loki start` of a generated brief; it gets the evidence file path as its last
-argument), pushes, and re-checks, up to LOKI_PR_REPAIR_MAX attempts (default 2).
-Green goes through the same merge gate as `loki merge pr`. When attempts run out
-the PR is returned to draft, nothing merges, and the last failure log is printed.
+It waits for the pull request's checks and merges it through the same gate
+when they are green. It no longer repairs a failing check. A failing check on a Loki pull request is
+answered by `loki address <owner/repo#N> --post`, where each fix lands only with
+its own VERIFIED receipt; `loki issues watch` runs that by itself.
+`LOKI_PR_REPAIR_CMD` and `LOKI_PR_REPAIR_MAX` are gone.
 `loki start --ship --engine legacy` calls this after it opens the PR; `/merge watch <pr>` runs it
 from `loki chat`.
 

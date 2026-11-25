@@ -27495,55 +27495,22 @@ _pr_checks_wait() {
     return "$rc"
 }
 
-# CI repair loop. Waits for checks; on red, hands the failed-run log tail to one
-# bounded repair session on the PR branch (LOKI_PR_REPAIR_CMD, default: a
-# `loki start` of a generated brief; it receives the evidence file path as its last argument), pushes,
-# and re-checks, up to LOKI_PR_REPAIR_MAX attempts (default 2). Green goes through
-# _merge_pr_gated (extra args pass through). Exhausted: the PR is returned to
-# draft, nothing merges, and the last failure evidence is printed.
+# Waits for the checks of a pull request and merges it through _merge_pr_gated when they are green (extra args pass through). A failing check is
+# never repaired here: Loki answers it through `loki address`, where a fix lands only with its own VERIFIED receipt (and `loki issues watch` runs
+# that by itself). Red: nothing merges, nothing is pushed, the pull request is left as it is, and the command to run is printed.
 # Usage: _merge_pr_watch <pr> [--require-verified] [--delete-branch]
 _merge_pr_watch() {
-    local pr="$1" max="${LOKI_PR_REPAIR_MAX:-2}" attempt=0 rc branch cur rid evid tmp
+    local pr="$1" rc
     shift
-    case "$max" in ''|*[!0-9]*) max=2 ;; esac
     command -v gh >/dev/null 2>&1 || { echo "$pr: not merged, gate: gh (gh CLI is required)" >&2; return 1; }
-    branch="$(gh pr view "$pr" --json headRefName -q .headRefName 2>/dev/null)" || branch=""
-    tmp="$(mktemp -d)" || return 1
-    evid="$tmp/ci-failure.md"
-    while true; do
-        rc=0; _pr_checks_wait "$pr" || rc=$?
-        if [ "$rc" = "0" ]; then
-            rm -rf "$tmp"
-            _merge_pr_gated "$pr" "$@"
-            return $?
-        fi
-        rid="$(gh run list --branch "$branch" --status failure --limit 1 --json databaseId -q '.[0].databaseId' 2>/dev/null)" || rid=""
-        {
-            echo "# CI failed for PR $pr (branch ${branch:-unknown}); fix the failing checks, keep the change minimal"
-            [ -n "$rid" ] && gh run view "$rid" --log-failed 2>/dev/null | tail -n 120
-        } > "$evid"
-        if [ "$attempt" -ge "$max" ]; then
-            gh pr ready "$pr" --undo >/dev/null 2>&1 || true
-            echo "$pr: not merged, gate: checks (gh pr checks rc=$rc after $attempt repair attempts); PR left as draft" >&2
-            _pr_record_merge "$pr" "blocked:checks" "checks" "failing after $attempt repair attempts"
-            echo "Last failure evidence:" >&2; sed 's/^/    /' "$evid" >&2
-            rm -rf "$tmp"
-            return 1
-        fi
-        attempt=$((attempt+1))
-        cur="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
-        if [ -z "$branch" ] || [ "$cur" != "$branch" ]; then
-            echo "$pr: not merged, gate: repair (checkout is '${cur:-none}', repair must run on PR branch '${branch:-unknown}'); PR left open" >&2
-            rm -rf "$tmp"; return 1
-        fi
-        echo "$pr: checks red, repair attempt $attempt of $max"
-        if [ -n "${LOKI_PR_REPAIR_CMD:-}" ]; then
-            bash -c "$LOKI_PR_REPAIR_CMD \"\$1\"" _ "$evid" || { echo "$pr: repair attempt $attempt failed, not pushing"; continue; }
-        else
-            "$(command -v loki || echo "$0")" start "$evid" || { echo "$pr: repair attempt $attempt failed, not pushing"; continue; }
-        fi
-        git push origin "HEAD:refs/heads/$branch" >/dev/null 2>&1 || echo "$pr: push of repair failed" >&2
-    done
+    rc=0; _pr_checks_wait "$pr" || rc=$?
+    if [ "$rc" = "0" ]; then
+        _merge_pr_gated "$pr" "$@"
+        return $?
+    fi
+    echo "$pr: not merged, gate: checks (gh pr checks rc=$rc). Loki no longer repairs a failing check here: run 'loki address <owner/repo#N> --post' on the pull request branch, or leave it to 'loki issues watch'" >&2
+    _pr_record_merge "$pr" "blocked:checks" "checks" "failing"
+    return 1
 }
 
 # Record the merge gate's own result in .loki/state/pr.json (merged,
@@ -27859,8 +27826,8 @@ cmd_merge() {
             ;;
         help|--help|-h|*)
             echo "Usage: loki merge <add|list|run|pr|watch|clear>"
-            echo "  watch <pr>         Wait for checks; on red run up to LOKI_PR_REPAIR_MAX (2) bounded"
-            echo "                     repair sessions on the PR branch, push, re-check, merge when green."
+            echo "  watch <pr>         Wait for checks and merge when green. A failing check is not repaired here:"
+            echo "                     'loki address <owner/repo#N> --post' fixes it, each fix with its own VERIFIED receipt."
             echo "  pr <pr|branch>     Merge one PR through the same gate (not draft, checks green;"
             echo "                     --require-verified also needs a VERIFIED run: a legacy proof, or a Loki 10 receipt in .loki/runs, for the PR head)."
             echo "  add <pr>...        Queue pull requests"
