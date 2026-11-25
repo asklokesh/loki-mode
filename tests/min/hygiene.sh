@@ -317,4 +317,11 @@ esac
 [ ! -e "$ROOT/action.yml" ] && ! grep -rqE --exclude-dir=archive 'uses: asklokesh/loki-mode@' "$ROOT/docs" "$ROOT/README.md" \
     && ok "no review Action ships: no root action.yml and no doc teaches uses: asklokesh/loki-mode@<tag>" || bad "the removed review Action is still present or still documented"
 
+CW="$ROOT/deploy/docker-compose/loki-watch.yml"
+grep -q '^name: loki-watch' "$CW" && grep -q '"issues", "watch", "\${LOKI_WATCH_REPO:?' "$CW" && grep -q 'LOKI_WATCH_SETUP_GIT: "1"' "$CW" && grep -q 'GH_TOKEN: "\${GH_TOKEN:?' "$CW" && ! grep -qE '^[[:space:]]+ports:' "$CW" \
+    && grep -q 'loki-watch.yml' "$ROOT/docs/DOCKER.md" && grep -q 'no-follow-up' "$ROOT/docs/DOCKER.md" && grep -q '^## Verified mode' "$ROOT/docs/v10/GUIDE.md" \
+    && ! grep -q 'loki backlog "\${GITHUB_REPOSITORY}"' "$ROOT/docs/v10/GUIDE.md" \
+    && ok "watch deploy: the Compose file runs issues watch for the repository named in .env, refuses to start without the two credentials, opens no port, and the guides name it, the follow-up switch and verified mode" \
+    || bad "the watch Compose file or its docs are missing a required line"
+
 finish
