@@ -67,7 +67,7 @@ const ANY_CASE_RE = /^\s*(?:it|test|describe|context)(?:\.\w+)?\s*\(/;
 const HOOK_RE = /\b(?:beforeEach|afterEach|beforeAll|afterAll)\s*\(/;
 const MOCK_RE = /\b(?:vi|jest)\.(?:mock|doMock)\s*\(\s*(['"])([^'"]+)\1/;
 const OBSERVABILITY_RE = /^(?:logger|log|logging|metrics|telemetry|tracing|tracer)$/i;
-const STUB_FACTORY_RE = /^\s*(?:vi|jest)\.(?:mock|doMock)\s*\(\s*['"][^'"]+['"]\s*,\s*\(\)\s*=>\s*\(\{\s*(?:\w+\s*:\s*)?\{\s*(?:\w+\s*:\s*(?:vi|jest)\.fn\(\)\s*,?\s*)+\}\s*,?\s*\}\)\s*,?\s*\)\s*;?\s*$/;
+const STUB_FACTORY_RE = /^\s*(?:vi|jest)\.(?:mock|doMock)\s*\(\s*['"][^'"]+['"]\s*,\s*\(\)\s*=>\s*\(\{\s*(?:\w+\s*:\s*)?\{\s*(?:\w+\s*:\s*(?:vi|jest)\.fn\(\)\s*(?:,\s*)?)+\}\s*,?\s*\}\)\s*,?\s*\)\s*;?\s*$/;
 interface Hunk { b0: number; bn: number; h0: number; hn: number }
 function hunksOf(patch: string): Hunk[] {
   return [...patch.matchAll(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/gm)].map((m) => ({ b0: Number(m[1]), bn: m[2] === undefined ? 1 : Number(m[2]), h0: Number(m[3]), hn: m[4] === undefined ? 1 : Number(m[4]) }));

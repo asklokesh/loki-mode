@@ -140,8 +140,8 @@ function resolveCandidate(dir: string, raw: string, ctx: { test: boolean; setup:
   if (SETUP_NAME.test(base) && ctx.setup && (runnable || viaInterp)) return { kind: "setup", cmd: raw.trim().replace(/^\$\s+/, ""), runners: [], perFile: null, needsPath: false, how: "script" };
   return null;
 }
-/** Setup commands that name no checkout file but are the ecosystem's own install: told to the model as written. */
-const KNOWN_SETUP = /^(?:(?:npm|pnpm|yarn|bun)\s+(?:ci|install)(?:\s+--frozen-lockfile)?|uv\s+sync(?:\s+--[\w-]+(?:[ =][\w.-]+)?)*|poetry\s+install(?:\s+--[\w-]+(?:[ =][\w.,-]+)?)*|python3?\s+-m\s+pip\s+install\s+-(?:e|r)\s+[\w.\[\],/-]+|pip3?\s+install\s+-(?:e|r)\s+[\w.\[\],/-]+|just\s+setup|make\s+(?:setup|install|bootstrap|deps))$/;
+/** Setup commands that name no checkout file but are the ecosystem's own install: told to the model as written. ReDoS: a flag's space-separated value never starts with a token that is itself a whole flag (`--x` ending at a space or the end), because that text already parses as the next flag; the accepted strings are unchanged and each now has one parse. */
+const KNOWN_SETUP = /^(?:(?:npm|pnpm|yarn|bun)\s+(?:ci|install)(?:\s+--frozen-lockfile)?|uv\s+sync(?:\s+--[\w-]+(?:=[\w.-]+|[ ](?!--[\w-]+(?:\s|$))[\w.-]+)?)*|poetry\s+install(?:\s+--[\w-]+(?:=[\w.,-]+|[ ](?!--[\w-]+(?:\s|$))[\w.,-]+)?)*|python3?\s+-m\s+pip\s+install\s+-(?:e|r)\s+[\w.\[\],/-]+|pip3?\s+install\s+-(?:e|r)\s+[\w.\[\],/-]+|just\s+setup|make\s+(?:setup|install|bootstrap|deps))$/;
 
 const BAN_RE = /(?:\b(?:never|do not|don't|must not|avoid|rather than|instead of)|,\s*not)\s+(?:to\s+)?(?:(?:use|run|call|invoke|running|calling|using)\s+)?(?:an?\s+|the\s+)?(?:(?:bare|raw|plain|direct|directly)\s+)?`([^`\n]+)`/gi;
 const GENERIC_RUNNER = /^(?:python3?\s+-m\s+)?(?:pytest|unittest|jest|vitest|mocha|tox|nose2?)\b|^(?:npm|pnpm|yarn|bun|go|cargo)\s+test\b/;

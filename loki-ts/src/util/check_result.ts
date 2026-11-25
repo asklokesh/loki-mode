@@ -835,7 +835,8 @@ export function testCount(raw: string, path?: string, ok?: boolean): number | nu
 export const EXIT_CODED_COUNT = "n/a (exit-coded check, not a test runner)";
 /** Any recognized test framework or test-script wrapper anywhere in the command. Conservative: a match means "framework". */
 const FRAMEWORK_RE = /\b(?:pytest|py\.test|unittest|nose2?|tox|nox|jest|vitest|mocha|jasmine|ava|tap|playwright|cypress|karma|rspec|minitest|phpunit|pest|codeception|ctest|busted|prove)\b|\b(?:bun|deno|node|go|cargo|dotnet|swift|mix|dart|flutter|zig)\s+(?:[\w:.=-]+\s+)*test\b|\b(?:npm|pnpm|yarn|bun|npx)\b.*\btest|\b(?:mvn|mvnw|gradle|gradlew|ant|sbt|make|cmake|bazel|rake|composer|lein)\b|test/i;
-const SCRIPT_RE = /^(?:python[\d.]*|node|bash|sh|ruby|perl)\s+(?:--?[\w-]+\s+)*([^\s-][^\s]*\.(?:py|js|mjs|cjs|sh|rb|pl))(?:\s|$)/;
+// `--?[\w-]+` and `-[\w-]+` accept the same strings (a dash, then one or more of [\w-]); the second has one way to match "---", so a long run of dashes cannot backtrack exponentially.
+const SCRIPT_RE = /^(?:python[\d.]*|node|bash|sh|ruby|perl)\s+(?:-[\w-]+\s+)*([^\s-][^\s]*\.(?:py|js|mjs|cjs|sh|rb|pl))(?:\s|$)/;
 /** True only when EVERY segment of the command is a plain interpreter-plus-script run (or a cd) and nothing in it names a test framework.
  *  Anything ambiguous (make, ./script, -m, -c, a path or word containing "test") is a framework, so it stays UNMEASURED when no summary parses. */
 export function isExitCodedScript(cmd: string): boolean {
@@ -1881,7 +1882,8 @@ function moduleUnderRepo(repoDir: string, name: string): boolean { const rel = n
 // E-125 r5: exit-1 output is red only from the real final summary, never captured text. The runner appends -rfE, so a repo's `-q` addopts (stacked to -qq, no footer) still lists FAILED lines.
 function pytestExit1IsRed(output: string): boolean {
   if (/^!+ _pytest\.outcomes\.Exit\b/m.test(output)) return false; // pytest.exit(...) can print any text, incl. "1 failed"
-  if (/^=*\s*(\d+ \w+(, )?)*\d+ failed\b.* in [\d.]+s/.test(output.trimEnd().split("\n").pop() ?? "")) return true;
+  // ReDoS: pytest writes ", " after every count, so each earlier count must end in it; with the separator optional, \w+ and the next count's digits could split the same text many ways.
+  if (/^=*\s*(\d+ \w+, )*\d+ failed\b.* in [\d.]+s/.test(output.trimEnd().split("\n").pop() ?? "")) return true;
   const hdr = [...output.matchAll(/^=+ short test summary info =+$/gm)].pop();
   return !!hdr && /^FAILED \S+/m.test(output.slice(hdr.index));
 }
