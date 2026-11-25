@@ -117,6 +117,13 @@ for df in ("docker/Dockerfile", "docker/Dockerfile.control-plane"):
             continue
         gaps = sorted(t for t in outside if not any(t == c or t.startswith(c + "/") for c in copied))
         res("%s stage %d: loki-ts files imported from outside src/ are copied (%d)" % (df, i, len(outside)), gaps)
+# --- #658: a repo-root directory the engine loads by path at run time (not by import) must be in the runtime image ---
+flags = open("loki-ts/src/providers/claude_flags.ts", encoding="utf-8").read()
+needs = sorted({"/".join(m.group(1).replace('"', "").split(", ")[:-1]) for m in re.finditer(r'resolvePath\(moduleDir(?:, "\.\.")+, ((?:"[\w.-]+"(?:, )?)+)\)', flags)})
+last = re.split(r"(?m)^FROM\s", open("docker/Dockerfile").read())[-1]
+got = [a.rstrip("/") for l in last.split("\n") if re.match(r"\s*COPY\s", l) and "--from" not in l for a in shlex.split(l)[1:-1] if not a.startswith("--")]
+res("docker/Dockerfile runtime stage copies every directory claude_flags.ts loads by path (%s)" % ", ".join(needs or ["none found"]),
+    ["parse"] if not needs else [d for d in needs if not any(d == c or d.startswith(c + "/") for c in got)])
 PY
 )"
 printf '%s\n' "$out" > "$T/res.txt"

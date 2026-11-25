@@ -161,6 +161,8 @@ COPY --chown=loki:loki scripts/verify-pr-sandbox.sh ./scripts/verify-pr-sandbox.
 COPY --chown=loki:loki tests/detect-*.sh ./tests/
 COPY --chown=loki:loki loki-ts/dist/ ./loki-ts/dist/
 COPY --chown=loki:loki loki-ts/data/ ./loki-ts/data/
+COPY --chown=loki:loki src/policies/ ./src/policies/
+RUN node -e "require('/opt/loki-mode/src/policies/claude_permissions.js')"
 
 # Control Plane (packages/control-plane), built in the cp-build stage above.
 # Only the bundle, the built UI and the migrations ship: no src, tests or bun
