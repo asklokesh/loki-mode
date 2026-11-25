@@ -52,7 +52,7 @@ export function consultCallFor(model: string, lokiDir: string, env: NodeJS.Proce
   if (env.LOKI_E10_INVOKER === "cli") return async (system, prompt, phase) => {
     noteRoleModel(opts.role ?? "advisor", model); // ROLE-MODELS: the receipt's models_by_role
     try {
-      const r = await withChildLedger(run, lokiDir, phase, model)([env.LOKI_CLAUDE_CLI || "claude", "-p", prompt, "--output-format", "json", "--tools", "", "--model", model, "--system-prompt", system, "--strict-mcp-config", "--setting-sources", "project", "--settings", '{"disableAllHooks":true}'], { timeoutMs, group: true });
+      const r = await withChildLedger(run, lokiDir, phase, model)([env.LOKI_CLAUDE_CLI || "claude", "-p", prompt, "--output-format", "json", "--tools", "", "--model", model, "--system-prompt", system, "--strict-mcp-config", "--setting-sources", "", "--settings", '{"disableAllHooks":true}'], { timeoutMs, group: true });
       const j = JSON.parse(r.stdout) as { result?: unknown; is_error?: boolean; total_cost_usd?: number };
       const ok = r.exitCode === 0 && !j.is_error && typeof j.result === "string" && j.result.trim() !== "";
       return { text: ok ? (j.result as string) : null, usd: typeof j.total_cost_usd === "number" ? j.total_cost_usd : null, outcome: ok ? "ok" : "failed" };
