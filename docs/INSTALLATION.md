@@ -40,7 +40,7 @@ Skips the bundled Bun binary (62 to 86 MB per platform), the Claude Agent SDK an
 
 ### Docker and other methods
 
-See [alternative-installations.md](alternative-installations.md) for Docker, the GitHub Action and a git clone install.
+See [alternative-installations.md](alternative-installations.md) for Docker and a git clone install.
 
 ---
 

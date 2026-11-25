@@ -314,4 +314,7 @@ case "$tier_out" in
     *) bad "${tier_out#NO }" ;;
 esac
 
+[ ! -e "$ROOT/action.yml" ] && ! grep -rqE --exclude-dir=archive 'uses: asklokesh/loki-mode@' "$ROOT/docs" "$ROOT/README.md" \
+    && ok "no review Action ships: no root action.yml and no doc teaches uses: asklokesh/loki-mode@<tag>" || bad "the removed review Action is still present or still documented"
+
 finish

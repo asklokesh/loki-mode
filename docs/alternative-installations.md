@@ -44,59 +44,7 @@ See [DOCKER.md](DOCKER.md) for Docker-specific usage instructions.
 
 ## GitHub Action
 
-**Status:** Working. Adds automated AI code review to pull requests.
-
-```yaml
-# .github/workflows/loki-review.yml
-name: Loki Code Review
-on:
-  pull_request:
-    types: [opened, synchronize]
-permissions:
-  contents: read
-  pull-requests: write
-jobs:
-  review:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: asklokesh/loki-mode@vX.Y.Z   # pin a release tag
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          mode: review
-          provider: claude
-          max_iterations: 3
-          budget_limit: '5.00'
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-```
-
-**Prerequisites:**
-- API key for your provider (set as repository secret): `ANTHROPIC_API_KEY` (Claude, recommended) or `OPENROUTER_API_KEY` (opencode with an OpenRouter model).
-- The action auto-installs `loki-mode` and `@anthropic-ai/claude-code`
-
-**Action Inputs:**
-
-| Input | Default | Description |
-|-------|---------|-------------|
-| `mode` | `review` | `review`, `fix`, or `test` |
-| `provider` | `claude` | `claude` (recommended) or `opencode`. codex, cline, aider and gemini were removed and exit 2. |
-| `budget_limit` | `5.00` | Max cost in USD (passed to the Loki 10 engine as `--max-cost`) |
-| `max_iterations` | `3` | Max RARV cycles |
-| `github_token` | (required) | GitHub token for PR comments |
-| `prd_file` | | Path to PRD file (for fix/test modes) |
-
-**Engine:** every mode runs the Loki 10 engine through `loki start "<task>" --no-pr --provider <name> --max-cost <usd>` (the same path as `loki start owner/repo#N`). The PRD file or PR diff is folded into the task text. The action never opens a PR itself (Rule of Two). A run that crosses the cap ends BUDGET_STOP (exit 3).
-
-**Modes:**
-
-| Mode | Description |
-|------|-------------|
-| `review` | Analyze PR diff, post structured review as PR comment |
-| `fix` | Automatically fix issues found in the codebase |
-| `test` | Run autonomous test generation and validation |
-
-**Best for:** Automated PR review and CI/CD integration.
+Loki no longer ships a pull request review action (removed in the release after 11.178.0). For review on pull requests use Claude Code itself: `anthropics/claude-code-action@v1`, `/code-review --comment` from a terminal, or Code Review on Team and Enterprise plans. A workflow pinned to an older tag (`asklokesh/loki-mode@v5` and the like) keeps working. To turn a labelled issue into a verified pull request in GitHub Actions, see [Triggers without a cloud](v10/GUIDE.md#triggers-without-a-cloud).
 
 ---
 

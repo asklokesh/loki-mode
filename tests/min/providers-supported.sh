@@ -432,7 +432,7 @@ grep -q 'export const REMEDY_MAX_TOKENS = 256;' "$ROOT/loki-ts/src/util/conflict
 # Allowed: the removed lists and message, GEMINI.md (an agent-rules file name), and model-family price/key rows
 # that opencode reaches through OpenRouter (gemini models, GEMINI_API_KEY).
 # Plain grep -w (BSD and GNU agree on it; git grep -E has no \b on macOS), plus the LOKI_<NAME>_ env vars -w cannot see.
-SHIPPED=(action.yml bin providers autonomy loki-ts/src loki-ts/data/child-env.json mcp dashboard packages
+SHIPPED=(bin providers autonomy loki-ts/src loki-ts/data/child-env.json mcp dashboard packages
          scripts tools api magic src completions docker deploy integrations sdk schemas learning agents)
 hits="$( { grep -rnIiwE 'codex|cline|aider|gemini' "${SHIPPED[@]}"; grep -rnIE 'LOKI_(CODEX|CLINE|AIDER|GEMINI)_' "${SHIPPED[@]}"; } 2>/dev/null \
     | grep -vE '^[^:]*(/dist/|/node_modules/|\.md:|dashboard/static/|__pycache__)' \

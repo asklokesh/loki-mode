@@ -261,28 +261,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-### Automatic Code Review
+### Code review on pull requests
 
-```yaml
-# .github/workflows/loki-review.yml
-name: Loki Code Review
-on:
-  pull_request:
-    types: [opened, synchronize]
-
-jobs:
-  review:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: asklokesh/loki-mode@v5
-        with:
-          mode: review
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-```
+Loki no longer ships a pull request review action (removed in the release after 11.178.0). For review on pull requests use Claude Code itself: `anthropics/claude-code-action@v1`, `/code-review --comment` from a terminal, or Code Review on Team and Enterprise plans. A workflow pinned to an older tag (`asklokesh/loki-mode@v5` and the like) keeps working. To turn a labelled issue into a verified pull request in GitHub Actions, see [Triggers without a cloud](v10/GUIDE.md#triggers-without-a-cloud).
 
 ## Troubleshooting
 
