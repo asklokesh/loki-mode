@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- The digest of a many-issue run (loki start owner/repo --label L, loki issues run) now ends with one line: how many issues ended safe to merge (VERIFIED with a pull request), the dollars in all, and dollars per merge-ready pull request; a cost that was reported only in part counts as a lower bound, and one that was not reported is named, never counted as zero. The one combined pull request of a split issue now carries the commit status loki/receipt: green only when every slice is in it and the combined receipt is VERIFIED. Not yet on the pull request the label-to-PR workflow opens (#672). Not measured: no run.
+
 ## v11.179.0 (2026-11-25)
 
 - Security: a Loki run no longer executes Claude Code hooks defined by the repository it works on (#655). Engine sessions turn settings-file, skill and plugin hooks off; Loki's own command guard and write fence are unaffected. On the opt-in CLI invoker (LOKI_E10_INVOKER=cli or LOKI_LEGACY_BASH) the repository's Claude Code settings and CLAUDE.md are no longer loaded, because that route cannot drop hooks alone. Not covered yet: other keys of that settings file (#665). Not measured: no session with a planted hook was run.

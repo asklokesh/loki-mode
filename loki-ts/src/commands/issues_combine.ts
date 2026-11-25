@@ -59,6 +59,8 @@ export type PushPr = (a: { repoDir: string; branch: string; title: string; bodyF
 export interface CombineIo {
   resolve: Resolve;
   push: PushPr;
+  /** RECEIPT-STATUS on the combined pull request head (stages/pr.ts runReceiptStatus). False: not set. Absent in a test io: no status is attempted. */
+  status?: (a: { repoDir: string; sha: string; state: "success" | "failure"; description: string; pinnedOrigin: string }) => boolean;
   /** gh with the user's credentials (closing an earlier per-slice PR); rc 0 is success. */
   gh: (args: readonly string[]) => { rc: number; stdout: string; stderr: string };
   /** Runs test files in a tree: one result per file (the Wall runner, RealBaseTestRunner.runEach). */
@@ -371,6 +373,10 @@ export async function combineSlices(o: CombineInput): Promise<CombineResult> {
       res.commits = [];
     } else {
       res.pr = pushed.url;
+      if (io.status && !pushed.url.startsWith("local://")) { // RECEIPT-STATUS: green only when every slice is in this pull request and the combined receipt is VERIFIED; a later push by anyone has none
+        const all = dropped.size === 0 && o.excluded.length === 0, green = all && res.verdict === "VERIFIED" && !o.draft;
+        if (!io.status({ repoDir: o.repoDir, sha: head, state: green ? "success" : "failure", description: `Loki combined ${res.verdict}, ${res.commits.length} of ${o.slices.length + o.excluded.length} slices${receiptSha ? `, receipt sha256:${receiptSha.slice(0, 12)}` : ""}`, pinnedOrigin: o.pinnedOrigin })) res.notProven.push("commit status loki/receipt not set on the combined pull request");
+      }
       for (const c of res.commits) { // per-slice PRs opened earlier in the run are superseded
         const url = byId.get(c.id)!.pr;
         if (url && url !== pushed.url && GH_PR_RE.test(url)) {
@@ -432,6 +438,7 @@ export async function defaultCombineIo(o: { repoDir: string; lokiDir: string; pr
       return { usd };
     },
     push: (a) => pr.runPushPr(a),
+    status: (a) => pr.runReceiptStatus(a),
     gh: o.gh,
     runTests: (dir, refs) => new RealBaseTestRunner().runEach(dir, refs, 4, true),
     impacted: (dir, changed) => impactedRefs(buildTestMap(dir), changed),

@@ -88,6 +88,12 @@ export function runPrReady(a: { repoDir: string; branch: string; bodyFile: strin
   if (r.status !== 0) return { ok: false, reason: failReason("engine10-push.sh", "pr-ready", r) };
   return { ok: true };
 }
+/** RECEIPT-STATUS: the commit status loki/receipt on `sha`, through the push script with the same pinned origin and token scoping as push-pr.
+ *  False when it was not set (a GitLab origin, a sha that is not 40 hex, or a failed call). Never throws. */
+export function runReceiptStatus(a: { repoDir: string; sha: string; state: "success" | "failure"; description: string; pinnedOrigin: string; scriptPath?: string; env?: NodeJS.ProcessEnv }): boolean {
+  if (isGitlabOrigin(a.pinnedOrigin) || !SHA_RE.test(a.sha)) return false;
+  try { return spawnBounded([a.scriptPath ?? DEFAULT_PUSH_SH, ...pushArgv({ cmd: "status", sha: a.sha, state: a.state, description: a.description.slice(0, 140), context: "loki/receipt" })], a.env ?? pushEnv(a.repoDir, a.pinnedOrigin)).status === 0; } catch { return false; }
+}
 function briefSection(ctx: PrContext): string {
   if (!reviewerBriefEnabled()) return "";
   const o = ctx.outputs();
@@ -261,8 +267,7 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   }
   if (!localOk && !isGitlabOrigin(pinnedOrigin) && SHA_RE.test(headSha)) { // RECEIPT-STATUS: the sealed verdict as a commit status on this head, so a branch rule can require it; a later push by anyone has none
     const green = verdict === "VERIFIED" && !draft, sha12 = (seal.receipt_sha256 ?? "").slice(0, 12);
-    const rs = spawnBounded([scriptPath, ...pushArgv({ cmd: "status", sha: headSha, state: green ? "success" : "failure", description: `Loki run ${verdict}${sha12 ? `, receipt sha256:${sha12}` : ""}`.slice(0, 140), context: "loki/receipt" })], env);
-    if (rs.status !== 0) notProvenOut.push("commit status loki/receipt not set"); // non-fatal, as the deep-verify status above
+    if (!runReceiptStatus({ repoDir: ctx.repoDir, sha: headSha, state: green ? "success" : "failure", description: `Loki run ${verdict}${sha12 ? `, receipt sha256:${sha12}` : ""}`, pinnedOrigin, scriptPath, env })) notProvenOut.push("commit status loki/receipt not set"); // non-fatal, as the deep-verify status above
   }
   const receiptComment = renderReceiptComment({
     verdict, draft, draftReason: draftReason(verdict, capHit), notProven: [...notProven, ...notProvenOut],
