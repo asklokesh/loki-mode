@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## v11.179.0 (2026-11-25)
+
+- Security: a Loki run no longer executes Claude Code hooks defined by the repository it works on (#655). Engine sessions turn settings-file, skill and plugin hooks off; Loki's own command guard and write fence are unaffected. On the opt-in CLI invoker (LOKI_E10_INVOKER=cli or LOKI_LEGACY_BASH) the repository's Claude Code settings and CLAUDE.md are no longer loaded, because that route cannot drop hooks alone. Not covered yet: other keys of that settings file (#665). Not measured: no session with a planted hook was run.
+- Docker: the image now contains the permission policy files, so engine sessions start in the same mode as an npm install. Before, every session in the container ran in plan mode: lenient models were slow and strict models changed no files (#658). This also affected the always-on container (loki issues watch). Not measured: no container was built or run.
+- Setup: the GitHub CLI (gh) is now listed in the README, the install guide, the quickstart and loki doctor; it was needed for every issue ref and pull request and named in none of them. The quickstart no longer says Node 18, Python and jq are needed. loki setup is no longer a step on the main path: each run already checks what it needs and prints the fix.
+- loki start owner/repo#N, a GitHub issue URL, several issues of one repository, and owner/repo --label L now work from any folder. When the folder is not a checkout of that repository, Loki clones it under ~/.loki/checkouts, says so in one line and runs there; a second start is refused while a run is live in that clone, and an interrupted run there is offered for resume before anything is reset. Before, an empty folder became a new empty repository and the issue was built there, and inside a checkout of another repository the issue was built in the wrong one. Your own checkout is used whenever one of its remotes is that repository. The always-on watch loop now starts each pass with the same Bun safety flags as every other respawn. Not measured: no run.
+- A pull request that loki start opens on GitHub now carries the commit status loki/receipt on its head: green only for a VERIFIED run, red otherwise, with the receipt digest in its description. Not yet set on the combined pull request of a split issue or by the label-to-PR workflow. Require it in a branch rule to make "verified" a merge condition; it works beside your CI and beside the Claude Approvals check. The status belongs to one commit, so a later push by a person or by PR Steward leaves the new head without it. Loki still never approves or merges. Not measured: no pull request was opened with this build.
+- Removed: the "Loki Mode Code Review" GitHub Action (action.yml at the repository root). Loki is an issue-to-verified-pull-request tool, not a review bot, and Claude Code reviews pull requests for every user (anthropics/claude-code-action@v1, /code-review --comment, and Code Review on Team and Enterprise plans). Workflows pinned to an older tag keep working. The label-to-PR workflow and the receipt-check action are unchanged.
+
+### Release checks
+
+- Typecheck, syntax and the release fast checks. No test suite, bench or model run (founder rule); new cells are unrun. Plan: Claude Ship plan B1 to B6 (#659).
+
 ## v11.178.0 (2026-11-23)
 
 - Purple Lab (`loki web`, web-app/) is removed. It was deprecated in v7.44.0 and still shipped in the package; it held 148 of the repo's open code-scanning alerts. `loki web` now prints where to go instead (the Control Plane, `loki dashboard`) and exits 2.

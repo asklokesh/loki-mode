@@ -410,9 +410,9 @@ jobs:
       contents: write
       pull-requests: write
       issues: write
-    uses: asklokesh/loki-mode/.github/workflows/loki-issue-to-pr.yml@v11.178.0
+    uses: asklokesh/loki-mode/.github/workflows/loki-issue-to-pr.yml@v11.179.0
     with:
-      version: '11.178.0'
+      version: '11.179.0'
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
