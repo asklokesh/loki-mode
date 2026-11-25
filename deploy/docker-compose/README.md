@@ -159,3 +159,11 @@ docker compose --profile observability down -v
 ```
 
 This stops all containers and removes all named volumes (data will be lost).
+
+## Always running: the watch service
+
+`loki-watch.yml` in this directory starts the always-on form of Loki for one repository. Write a `.env` beside it with `LOKI_WATCH_REPO=owner/repo`, `GH_TOKEN` and `ANTHROPIC_API_KEY`, then:
+
+    docker compose -f loki-watch.yml up -d
+
+It works every open issue that carries the label `loki` (set `LOKI_WATCH_LABEL` to change it), one pull request per issue, and answers follow-ups on those pull requests. It needs no inbound port. Details: [docs/DOCKER.md](../../docs/DOCKER.md#always-running-one-container-that-works-tagged-issues).

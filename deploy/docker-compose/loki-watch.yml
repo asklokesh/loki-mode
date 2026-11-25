@@ -1,0 +1,24 @@
+# Loki, always running, with Docker Compose: one container that works every open issue labelled "loki" in one repository, opens a pull
+# request for each, and answers reviews, comments, failing checks and merge conflicts on those pull requests.
+# 1. Beside this file, write a .env file with three lines (never commit it):
+#      LOKI_WATCH_REPO=owner/repo
+#      GH_TOKEN=<a token that can read issues, push branches and open pull requests on that repository>
+#      ANTHROPIC_API_KEY=<key>
+# 2. docker compose -f loki-watch.yml up -d
+# Then tag an issue with the label "loki". Logs: docker compose -f loki-watch.yml logs -f
+name: loki-watch   # its own project: this directory also holds the Control Plane stack (docker-compose.yml), and two stacks must not share a default name
+services:
+  loki-watch:
+    image: asklokesh/loki-mode:latest
+    command: ["issues", "watch", "${LOKI_WATCH_REPO:?set LOKI_WATCH_REPO=owner/repo in .env}", "--label", "${LOKI_WATCH_LABEL:-loki}", "--interval", "300", "--parallel", "2"]
+    environment:
+      GH_TOKEN: "${GH_TOKEN:?set GH_TOKEN in .env}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:?set ANTHROPIC_API_KEY in .env}"
+      LOKI_WATCH_SETUP_GIT: "1"
+      LOKI_WATCH_DIR: /work
+    volumes:
+      - work:/work   # checkouts and kept address records; nothing here has to survive, an issue with a Loki pull request is skipped
+    restart: unless-stopped
+    stop_grace_period: 120s   # one container per repository: two would pick up the same issue
+volumes:
+  work: {}
