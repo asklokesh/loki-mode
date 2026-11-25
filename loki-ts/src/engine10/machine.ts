@@ -2,7 +2,7 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"; import { tmpdir } from "node:os"; import { baseDepsLinker } from "../util/base_guard.ts";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { noteRegenerated, regenDropOn } from "../e10ext/commit_filter.ts";
-import { hooks } from "./hooks.ts"; import { cascadeIntroducedOn, cascadeV0On, wallConcurrent } from "../util/wall_knobs.ts"; import { attemptModel, CASCADE_INTRODUCED_LEAD, CASCADE_LEAD, cascadeIntroducedTail, cascadeWallTail, wallFailedOf } from "../features/attempts.ts"; import { failureClasses } from "./closure.ts"; import { wallEnabled } from "./sizing.ts";
+import { hooks } from "./hooks.ts"; import { cascadeIntroducedOn, cascadeV0On, wallConcurrent } from "../util/wall_knobs.ts"; import { attemptModel, CASCADE_INTRODUCED_LEAD, CASCADE_LEAD, cascadeIntroducedTail, cascadeWallTail, wallFailedOf } from "../features/attempts.ts"; import { closurePlan, closureMoved, closureStop, CLOSURE_ROUNDS_BUILT, failureClasses, recordClosureRound, verifiedBounds, verifiedOn } from "./closure.ts"; import { wallEnabled } from "./sizing.ts";
 import { safeGit, commitHookBypassOn, treeDiffStat, treeSnapshot } from "../util/safe_git.ts";
 import { assumptionOf, consultAvailable, neverStopActive, readConsults, type NeverStopRecord } from "../features/opus_consult.ts";
 import { rerunOnQuota, sessionKind, usageLimitOf } from "../runner/retry_class.ts";
@@ -384,6 +384,54 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     else if (r.status === "skipped") { if (Array.isArray(r.data.not_proven)) outputs.wall = r.data; ctx.emit("stage.skipped", "wall", { ...r.data, reason: r.reason ?? "skipped by stage" }); } // TEN-COST-09: a skip that disclosed what it left unproven reaches seal, as runStage does
     else ctx.emit("stage.failed", "wall", { ...r.data, duration_s: dur(), reason: r.reason ?? "failed" });
   };
+  /** RW-03 closure rounds (--verified only): after commit and before seal, keep working while the label reads PARTIAL and something closable is open.
+   *  A round is one session on the class b items when there are any, a complete verify, the proof re-check, a commit and a new reading of the label.
+   *  A round that does not move the run is undone with a revert of its own commit and ends the loop, so the label can only improve. */
+  const closeOpenItems = async (): Promise<void> => {
+    const { evaluateSeal } = await import("./stages/seal.ts"), bounds = verifiedBounds(), t0 = ctx.clock.now(), spent0 = ctx.cost.read(ctx.repoDir, [...startedIds]);
+    const tokensOf = (c: { inputTokens: number; outputTokens: number }): number => c.inputTokens + c.outputTokens;
+    const note = (line: string): void => { outputs.fix = { ...outputs.fix, not_proven: [...((outputs.fix?.not_proven as string[] | undefined) ?? []), line] }; };
+    let ev = await evaluateSeal(sctx, capCtl.signal);
+    for (let round = 1; ; round++) {
+      if ("failed" in ev || ev.verdict !== "PARTIAL") return;
+      const plan = closurePlan(ev.reasons), items = plan.items, b = items.filter((i) => i.class === "b"), kinds = items.map((i) => i.kind);
+      if (plan.blocked !== null) { if (round === 1) recordClosureRound({ round, open_before: kinds, session: false, open_after: kinds, verdict_after: ev.verdict, kept: false, seconds: 0, stop: `a hold only a person can close is open: ${plan.blocked}` }); return; } // VERIFIED cannot be reached: no session is spent
+      if (items.length === 0 || capReached() || fatal || limited) return;
+      const now = ctx.cost.read(ctx.repoDir, [...startedIds]);
+      const stop = closureStop(bounds, { rounds: round - 1, elapsedS: (ctx.clock.now() - t0) / 1000, usd: now.usd === null || spent0.usd === null ? null : now.usd - spent0.usd, tokens: tokensOf(now) - tokensOf(spent0) });
+      if (stop) { recordClosureRound({ round, open_before: kinds, session: false, open_after: kinds, verdict_after: ev.verdict, kept: false, seconds: 0, stop }); return; }
+      const r0 = ctx.clock.now(), saved = { verify: outputs.verify, fix: outputs.fix, prove: outputs.prove, commit: outputs.commit };
+      let head0 = ""; try { head0 = safeGit(ctx.repoDir, ["rev-parse", "HEAD"]).trim(); } catch { return; }
+      ctx.emit("loop.repeat", "fix", { reason: "closure round", round, closure: true, items: kinds });
+      if (b.length) { outputs.fix = { ...outputs.fix, closure_pending: { round, items: b.map((i) => ({ kind: i.kind, why: i.why })) } }; await runStage("fix", true); }
+      let measured = false; // true only when this round's own complete verify ran to its end: the label is never read again from an older measurement
+      if (!fatal && !capHit) {
+        const keptFix = outputs.fix; delete outputs.fix; // a complete verify, never a fix round's quick one (as the attempts path does)
+        const v = await runStage("verify", true); measured = v?.status === "completed";
+        if (keptFix) outputs.fix = keptFix;
+        if (measured && outputs.prove) outputs.prove = await recheckProve(sctx, outputs.prove as unknown as ProveRecord, fatal || capHit ? 0 : unbounded ? proveBudgetS() : Math.floor(softCapS(ctx.capS) - elapsedS() - (STAGE_BUDGETS.commit.limitS + STAGE_BUDGETS.seal.limitS + STAGE_BUDGETS.pr.limitS)), capCtl.signal) as unknown as Obj;
+      }
+      const c = await runStage("commit", false), committed = c?.status === "completed" && outputs.commit?.committed === true; // whatever the session left is committed, so an undo is one revert
+      const commitFail = c?.status === "failed" ? `closure round ${round}: its commit failed (${String((c.data as Obj | undefined)?.commit_error ?? c.reason ?? "git commit failed")}); its change is not in this commit` : null;
+      outputs.commit = committed ? { ...outputs.commit, scope_notes: [...new Set([...((saved.commit?.scope_notes as string[] | undefined) ?? []), ...((outputs.commit?.scope_notes as string[] | undefined) ?? [])])] } : saved.commit;
+      const next = measured && !commitFail ? await evaluateSeal(sctx, capCtl.signal) : null, read = next !== null && !("failed" in next) ? next : null;
+      const after = read ? closurePlan(read.reasons).items : items, verdictAfter = read ? read.verdict : next === null ? "not measured" : "FAILED";
+      const moved = read !== null && closureMoved(items.length, after.length, verdictAfter);
+      if (!moved) { // undo: back to the tree and the measurements the last kept reading had
+        let undone = !committed;
+        if (committed) {
+          try { const head1 = safeGit(ctx.repoDir, ["rev-parse", "HEAD"]).trim(), [n = "loki", e = "loki@loki.invalid"] = safeGit(ctx.repoDir, ["log", "-1", "--format=%an%x00%ae", head1]).trim().split("\0"); if (head1 !== head0) safeGit(ctx.repoDir, ["-c", `user.name=${n}`, "-c", `user.email=${e}`, "revert", "--no-edit", head1]); undone = true; }
+          catch { try { safeGit(ctx.repoDir, ["revert", "--abort"]); } catch { /* nothing in progress */ } }
+        }
+        if (undone) { outputs.verify = saved.verify; outputs.prove = saved.prove; if (saved.fix) outputs.fix = saved.fix; else delete outputs.fix; outputs.commit = saved.commit ? { ...saved.commit, ...(committed ? { scope_notes: [...((saved.commit.scope_notes as string[] | undefined) ?? []), `closure round ${round} closed nothing and was undone`] } : {}) } : saved.commit; }
+        else note(`closure round ${round} closed nothing and could not be undone: its change is in this commit`);
+        if (commitFail) note(commitFail);
+      }
+      recordClosureRound({ round, open_before: kinds, session: b.length > 0, open_after: after.map((i) => i.kind), verdict_after: verdictAfter, kept: moved, seconds: Math.round((ctx.clock.now() - r0) / 1000), ...(moved ? {} : { stop: commitFail ? "the round's commit failed" : measured ? "the round closed nothing" : "the round's verify did not finish" }) });
+      if (!moved || !read) return;
+      ev = read;
+    }
+  };
   try {
     let jumped = false, resized = false, stopped: string | null = null;
     const sigs: string[] = [];
@@ -403,6 +451,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       if (wallJob && todo[0] === "verify") await installWallJob(); // FC-VACUOUS-WALL-GREEN: a Wall green on base no longer ends the run here
       if (todo[0] === "verify" && !outputs.verify && !jumped) scaffoldNow(); // LOKI_E10_SCAFFOLD: the deterministic release-note fragment, before the first verify so verify and the commit see it
       if (todo[0] === "verify" && !outputs.verify && !jumped && !outputs.prove && proveApplies(ctx.provider, outputs)) await proveNow(); // Q1 PROVE: after implement's continue loop and review turn, before verify // LOKI_E10_SCAFFOLD: the deterministic release-note fragment, before the first verify so verify and the commit see it
+      if (todo[0] === "seal" && CLOSURE_ROUNDS_BUILT && verifiedOn() && !jumped && !capHit && !fatal && stopped === null && outputs.implement?.exit === "done" && outputs.commit !== undefined && outputs.commit.failed !== true) await closeOpenItems(); // RW-03: nothing here runs without --verified
       const all = await Promise.allSettled(todo.map((n) => runStage(n, !isTail))), cut = all.find((x) => x.status === "rejected"); // allSettled: a parallel stage cut by a usage limit still settles before the run stops
       if (cut) throw (cut as PromiseRejectedResult).reason;
       const results = all.map((x) => (x as PromiseFulfilledResult<StageResult | null>).value);

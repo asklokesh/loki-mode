@@ -38,6 +38,18 @@ export function buildFixBrief(task: string, groups: FailureGroup[], diff: string
     FINISH_LINE,
   ].join("\n\n"));
 }
+/** RW-03 closure round: the session's brief when the checks pass and the label is still held. The same fixed block and task block lead it, so the
+ *  cached prefix is the one implement and the fix rounds share. */
+export function buildClosureBrief(task: string, items: readonly { kind: string; why: string }[], diff: string | null): string {
+  return withStagePrefix([
+    fixedRules(),
+    ...taskBlock(task),
+    "The change passes its checks, but Loki could not yet call it verified. Each item below is what is still open, in Loki's own words. Close every item you can with the smallest change: usually a test that fails without the change and passes with it, or a test that calls the code the item names. Do not weaken, skip or delete an existing test, and do not change behaviour the task did not ask for. If an item cannot be closed by a change in this repository, leave it and say so in one line.",
+    items.length ? items.map((g, i) => `${i + 1}. ${g.kind}\n   ${g.why}`).join("\n") : "(no open item was provided)",
+    `Diff of the files this run changed:\n${diff ?? "(the diff is not available)"}`,
+    FINISH_LINE,
+  ].join("\n\n"));
+}
 
 /** The fix round's model pick. ROLE-MODELS: escalate= (LOKI_ROLE_ESCALATE) names the repeated-failure model; a dev pin alone never escalates, never
  *  downgrades and never climbs (rolePin). No role set: exactly the pre-role rule (escalationModel on a repeat, the opt-in cascade downgrade otherwise). */
@@ -58,13 +70,14 @@ export const fixStage: Stage = {
     const priorRound = (prior.fix?.round as number | undefined) ?? 0;
     const routed = routerActive(), stallEsc = routed && prior.fix?.stall_escalated === true; // R1-13: a stall escalation grants one extra round on the next rung
     const replan = prior.fix?.replan_pending === true; // VERIFY-PLAN V6: the one fresh round machine.ts runs past the cap at a stall
-    if (!replan && priorRound >= MAX_FIX_ROUNDS + (stallEsc ? 1 : 0)) {
+    const closure = prior.fix?.closure_pending as { round: number; items: { kind: string; why: string }[] } | undefined; // RW-03: one session on the open items, set by machine.ts closeOpenItems
+    if (!replan && !closure && priorRound >= MAX_FIX_ROUNDS + (stallEsc ? 1 : 0)) {
       return { status: "skipped", data: { round: priorRound }, reason: "fix rounds exhausted" };
     }
     const round = priorRound + 1;
 
     const task = (prior.intake?.task as string | undefined) ?? "";
-    const groups = (prior.verify?.failures_grouped as FailureGroup[] | undefined) ?? [];
+    const groups: FailureGroup[] = closure ? closure.items.map((i) => ({ signature: i.kind, count: 1, sample: i.why })) : ((prior.verify?.failures_grouped as FailureGroup[] | undefined) ?? []);
     const holdoutFailed = (prior.verify?.holdout_failed as number | undefined) ?? 0;
     const diffStat = currentDiff(ctx.repoDir, ctx.baseSha, 6000, true, installOwned(ctx.repoDir, ctx.outputs().intake?.install_created)); // stat plus bounded hunks every round
     const treeBefore = treeFingerprint(ctx.repoDir, ctx.baseSha); // anti-loop: compared with tree_after in machine.ts
@@ -78,16 +91,16 @@ export const fixStage: Stage = {
     const actualModel = routedPin ?? pinnedModel ?? ctx.model;
     if (downgrade && pinnedModel === downgrade.to) process.stderr.write(`${downgrade.note}\n`);
     if (climbed) ctx.emit("route.escalated", "fix", { ...climbed });
-    const prevDiag = (prior.fix?.diagnosis as string | undefined) ?? null; const chain = fixChain(prior, replan, actualModel, ctx.model); const carried = (prior.fix?.diagnoses as string[] | undefined) ?? []; // VERIFY-PLAN V6
+    const prevDiag = (prior.fix?.diagnosis as string | undefined) ?? null; const chain = fixChain(prior, replan || !!closure, actualModel, ctx.model); const carried = (prior.fix?.diagnoses as string[] | undefined) ?? []; // VERIFY-PLAN V6
     const effort = hooks.effort?.fix(round, testFailures.length > 0, { model: actualModel, envOnly: environmentShaped(groups.filter((g) => !g.carried)) });
     const sessionBase = { stage: "fix" as const, tier: "development" as const, limitS: fixStage.limitS, signal, cwd: ctx.repoDir, ...suiteCmdsOpt(ctx.repoDir, prior.intake?.testmap), ...(effort ? { effort } : {}), ...(pinnedModel ? { model: pinnedModel } : {}), ...(routedPin ? { model: routedPin } : {}), ...(escPin ? { role: "escalate" as const } : {}) };
     const hints = siteHints(ctx); // LOKI_E10_SITE_HINTS, advisory
     // LOKI_E10_OPUS_CONSULT: a round after a never-stop fix conflict (machine.ts kept going instead of BLOCKED) gets the never-stop brief; a red verify after the first round gets the one consult (trigger stop or red-verify)
     const priorConflict = typeof prior.fix?.spec_conflict_reason === "string" && prior.fix?.exit === "spec_conflict" && neverStopActive() ? prior.fix.spec_conflict_reason : null;
-    const advice = round >= 2 && !signal.aborted ? await runConsult({ runDir: ctx.runDir, repoDir: ctx.repoDir, stage: `fix${round}`, trigger: priorConflict ? "stop" : "red-verify", task, evidence: [...(priorConflict ? [`The previous fix round stopped with LOKI_SPEC_CONFLICT: ${priorConflict}`] : []), ...groups.slice(0, 8).map((g) => `(${g.count}x) ${g.signature}\n${g.sample}`)].join("\n\n"), diff: diffStat, code: (() => { try { const b = briefCtx(ctx, "haiku"); return b.packText ?? b.text; } catch { return ""; } })() }) : null;
+    const advice = round >= 2 && !closure && !signal.aborted ? await runConsult({ runDir: ctx.runDir, repoDir: ctx.repoDir, stage: `fix${round}`, trigger: priorConflict ? "stop" : "red-verify", task, evidence: [...(priorConflict ? [`The previous fix round stopped with LOKI_SPEC_CONFLICT: ${priorConflict}`] : []), ...groups.slice(0, 8).map((g) => `(${g.count}x) ${g.signature}\n${g.sample}`)].join("\n\n"), diff: diffStat, code: (() => { try { const b = briefCtx(ctx, "haiku"); return b.packText ?? b.text; } catch { return ""; } })() }) : null;
     const hintsPlus = [hints, ...(priorConflict ? [neverStopBrief(priorConflict, advice)] : adviceBlock(advice))].filter((x): x is string => !!x).join("\n\n") || null; // the consult advice rides the site-hints slot in both the fresh and the resumed brief
-    const fullBrief = buildFixBrief(task, groups, diffStat, replan ? { priorDiagnosis: prevDiag, stepBack: carried } : repeated ? { priorDiagnosis: prevDiag } : undefined, holdoutFailed, hintsPlus);
-    let r = await runFixSession(ctx, sessionBase, `${ctx.runId}-fix${round}`, (prior.fix?.iteration_ids as string[] | undefined) ?? [], chain, actualModel, fullBrief, buildFixResumeBrief(groups, diffStat, prevDiag, holdoutFailed, [...((prior.implement?.tests_reverted as string[] | undefined) ?? []), ...((prior.fix?.tests_reverted as string[] | undefined) ?? [])].map((f) => relative(ctx.repoDir, resolve(ctx.repoDir, f))), hintsPlus)); // one session per round: a spec conflict starts no retry; the unchanged-tree rule below decides whether it is believed
+    const fullBrief = closure ? buildClosureBrief(task, closure.items, diffStat) : buildFixBrief(task, groups, diffStat, replan ? { priorDiagnosis: prevDiag, stepBack: carried } : repeated ? { priorDiagnosis: prevDiag } : undefined, holdoutFailed, hintsPlus);
+    let r = await runFixSession(ctx, sessionBase, closure ? `${ctx.runId}-closure${closure.round}` : `${ctx.runId}-fix${round}`, (prior.fix?.iteration_ids as string[] | undefined) ?? [], chain, actualModel, fullBrief, buildFixResumeBrief(groups, diffStat, prevDiag, holdoutFailed, [...((prior.implement?.tests_reverted as string[] | undefined) ?? []), ...((prior.fix?.tests_reverted as string[] | undefined) ?? [])].map((f) => relative(ctx.repoDir, resolve(ctx.repoDir, f))), hintsPlus)); // one session per round: a spec conflict starts no retry; the unchanged-tree rule below decides whether it is believed
     const ro = (prior.wall?.readOnlyFiles as ReadOnlyFile[] | undefined) ?? [], wd = r.session.markers.specConflict && !r.session.killed ? await adjudicateWallConflict(ctx, { ...sessionBase, iterationId: r.ids[r.ids.length - 1]!, brief: fullBrief }, r.session, ro) : null; if (wd) r = { ...r, session: wd.session, ids: [...r.ids, ...wd.ids] }; // FC-WALL-DEFECT-REPORTED-AS-SPEC-CONFLICT
     const testsReverted = restoreReadOnly(ro); // only the Wall is read-only after a fix pass
     const treeAfter = treeFingerprint(ctx.repoDir, ctx.baseSha), conflict =r.session.markers.specConflict && !r.session.killed && treeBefore !== null && treeBefore === treeAfter ? r.session.markers.specConflict : null; // evidence: a claim from a round that edited the tree is work in progress, not an escape from the failure
@@ -108,6 +121,7 @@ export const fixStage: Stage = {
         ...(stallEsc ? { stall_escalated: true } : {}), ...(climbed ? { route_escalation: climbed } : {}), ...(capStop ? { session_cap: capStop } : {}), session_caps: [...((prior.fix?.session_caps as string[] | undefined) ?? []), ...(capStop ? [`fix round ${round}: ${capStop}`] : [])], not_proven: [...((prior.fix?.not_proven as string[] | undefined) ?? []), ...(capNote ? [capNote] : [])], iteration_ids: r.ids, session_id: r.sessionId, fix_resume: r.mode, ...(r.why ? { fix_resume_why: r.why } : {}),
         ...(replanOn() ? { diagnoses: [...carried, String(r.session.summary ?? "").slice(0, 600)].filter(Boolean).slice(-6) } : {}), // VERIFY-PLAN V6: the earlier rounds' own summaries, for a replan brief
         ...(replan ? { replan: true } : {}),
+        ...(closure ? { closure: closure.round } : {}),
         fix_rounds: [...((prior.fix?.fix_rounds as unknown[] | undefined) ?? []), { round, fix_resume: r.mode, cache_read_tokens: r.cacheRead, ...(replan ? { replan: true } : {}) }] },
     };
   },
