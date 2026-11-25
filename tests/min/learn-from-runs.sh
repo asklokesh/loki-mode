@@ -688,4 +688,35 @@ u_out="$(cd "$AP" && LOKI_NO_COMPLETIONS=1 bash "$ROOT/bin/loki" lessons approve
 [ "$c_rc" -eq 0 ] && [ "$u_rc" -eq 1 ] && case "$c_out" in *"Approved $CID"*) true ;; *) false ;; esac \
     && ok "approval-cli: loki lessons approve exits 0 for a stored id and 1 for an unknown one" || bad "approval-cli: approve rc=$c_rc ($c_out), unknown rc=$u_rc ($u_out)"
 
+# --- ADDRESS-ITEMS: plain comments, failing checks and a conflict are items; every read is tolerant; marks settle them ---------------------------
+# Planted defects: openPrItems takes a comment written before the receipt (1st field 2); a comment from a reader (2nd field 0); a Loki status as a
+# failing check (3rd field 2); ignores the held mark at this head (4th field 1); a third fix on a check that already had two (5th field 0);
+# throws when gh cannot answer (6th field not "0/0"); linkedIssue reads another repository's link (7th field 9); takes Loki's own deep verify comment as an item
+# (11th field 1); buildDeepCommentBody drops its marker (12th field false).
+AI="$(cd "$ROOT/loki-ts" && bun -e '
+import { openPrItems, linkedIssue, itemMark, heldItemMark, checkKey, addressTask, renderAddressReply, CHECK_ATTEMPTS } from "./src/util/pr_lessons.ts";
+const H = "b".repeat(40), J = (v) => ({ code: 0, stdout: JSON.stringify(v), stderr: "" }), no = { code: 1, stdout: "", stderr: "x" };
+const receipt = { id: 1, created_at: "2026-01-01T00:00:10Z", user: { login: "me", type: "User" }, body: "<!-- loki-receipt -->" };
+const cm = (id, at, login, body = "please rename x") => ({ id, created_at: at, user: { login, type: "User" }, body, html_url: `https://github.com/acme/calc/pull/5#issuecomment-${id}` });
+const ghOf = (runs, statuses) => async (a) => { const s = a.join(" "); if (s.includes("/check-runs")) return runs ? J({ check_runs: runs }) : no; if (s.endsWith("/status")) return statuses ? J({ statuses }) : no; return no; };
+const run = (comments, o = {}) => openPrItems(ghOf(o.runs, o.statuses), "acme/calc", 5, { pr: { created_at: "2026-01-01T00:00:00Z", body: "", mergeable: o.mergeable, base: { ref: "main" } }, issueComments: [receipt, ...comments], canWrite: async (l) => l === "alice", head: H, seen: new Set(o.seen ?? []) });
+const a = await run([cm(2, "2026-01-01T00:00:05Z", "alice"), cm(3, "2026-01-01T00:01:00Z", "alice"), cm(4, "2026-01-01T00:02:00Z", "mallory")]);
+const failing = [{ id: 7, name: "ci", status: "completed", conclusion: "failure", output: { title: "1 failed" } }];
+const b = await run([], { runs: failing, statuses: [{ context: "loki/receipt", state: "failure" }, { context: "lint", state: "error", description: "bad" }], mergeable: false });
+const k = checkKey("ci"), held = await run([{ id: 9, created_at: "2026-01-01T00:03:00Z", user: { login: "me" }, body: `x\n${heldItemMark(k, H)}` }], { runs: failing });
+const twice = await run([8, 9].map((id) => ({ id, created_at: "2026-01-01T00:03:00Z", user: { login: "me" }, body: `x\n<!-- loki-respond -->\n${itemMark(k)}` })), { runs: failing });
+const dead = await run([]);
+const own = await run([cm(5, "2026-01-01T00:04:00Z", "alice", "## Loki deep verify: success\n\n### Checks\n- none\n")]);
+const conflict = b.open.find((x) => x.kind === "conflict");
+console.log([a.open.map((x) => x.id).join("+"), a.denied, b.open.filter((x) => x.kind === "check").length, held.open.length, `${twice.open.length}/${twice.stopped.length}`.replace("0/1", String(CHECK_ATTEMPTS)), `${dead.open.length}/${dead.stopped.length}`,
+  `${linkedIssue("acme/calc", "x\nRefs other/repo#9\n")}|${linkedIssue("acme/calc", "x\nCloses Acme/Calc#3\n")}`, addressTask(conflict, "loki/e10-a").includes("Merge origin/main into the current branch"),
+  renderAddressReply(a.open[0], { ok: false, reason: "r", runId: null, at: H }).includes(heldItemMark("comment:3", H)), (await run([cm(3, "2026-01-01T00:01:00Z", "alice")], { seen: ["comment:3"] })).open.length, own.open.length].join(","));' 2>&1)"
+DC="$(cd "$ROOT/loki-ts" && bun -e 'import { buildDeepCommentBody } from "./src/util/receipt_surface.ts"; const b = buildDeepCommentBody([], [], "success"); console.log(b.startsWith("## Loki deep verify: success\n") && b.includes("<!-- loki-"));' 2>&1)"
+[ "$AI,$DC" = "3,1,2,0,2,0/0,null|3,true,true,0,0,true" ] \
+    && ok "address items: a comment counts only after the receipt and from a writer; a failed check run and a failed status are items and Loki's own status is not; a held mark at this head and the seen file settle an item; a check fixed twice goes to a person; unreadable answers give no item; the linked issue is read only for this repository; the conflict task merges the base and the held reply carries the item mark; Loki's own deep verify comment is never an item and now carries a Loki marker" \
+    || bad "address items gave: $AI,$DC"
+AW="$ROOT/autonomy/loki"
+! grep -q 'LOKI_PR_REPAIR' "$AW" && ! grep -q 'git push origin "HEAD:refs/heads/\$branch"' "$AW" && grep -q "Loki no longer repairs a failing check here" "$AW" \
+    && ok "merge watch: no repair session and no ungated push remain; a red check names loki address" || bad "merge watch still repairs or pushes without a verdict"
+
 finish
