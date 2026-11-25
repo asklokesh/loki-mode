@@ -774,6 +774,7 @@ const TOOL_SPECS: readonly ToolSpec[] = [
   { displayName: "jq (optional: loki status, bash fallback CLI)", jsonName: "jq", cmd: "jq", required: "recommended" },
   { displayName: "git", jsonName: "git", cmd: "git", required: "required" },
   { displayName: "curl", jsonName: "curl", cmd: "curl", required: "required" },
+  { displayName: "gh (GitHub CLI: issue refs and pull requests)", jsonName: "gh", cmd: "gh", required: "recommended" },
   { displayName: "bash (>= 4.0)", jsonName: "bash", cmd: "bash", required: "recommended", min: "4.0" },
   // v7.4.9: Bun powers the routed commands (version, status, stats, doctor,
   // provider show/list, memory list/index). Marked recommended -- if missing,

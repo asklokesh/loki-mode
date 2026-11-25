@@ -61,6 +61,8 @@ Required (`loki doctor` fails without them):
 | git | any recent version |
 | curl | any |
 
+For issue refs and pull requests you also need the GitHub CLI (`gh`), logged in with `gh auth login`.
+
 Plus a way to reach a model. Claude Code (`claude`) is the default provider and the only one with every feature, so the default path needs it installed and logged in: `npm install -g @anthropic-ai/claude-code`, then `claude auth login`. With only `ANTHROPIC_API_KEY` set, `loki "<goal>"` runs on the bundled Claude Agent SDK with no CLI and no extra setting. `loki edit` and `loki chat` call the `claude` CLI directly. The only other provider is `opencode` (optional; any model, including OpenRouter via `OPENROUTER_API_KEY`). codex, cline, aider and gemini were removed and exit 2 with a migration line.
 
 Optional: Python 3.8+ (deep scans, Python repos and group runs; `loki "<goal>"` runs without it), jq (`loki status` and the bash fallback CLI), Bun 1.3+ (bundled by the npm package), bash 4+ (recommended), Ollama or an OpenRouter key for non-Claude model routes.

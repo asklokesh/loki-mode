@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Security: a Loki run no longer executes Claude Code hooks defined by the repository it works on (#655). Engine sessions turn settings-file, skill and plugin hooks off; Loki's own command guard and write fence are unaffected. On the opt-in CLI invoker (LOKI_E10_INVOKER=cli or LOKI_LEGACY_BASH) the repository's Claude Code settings and CLAUDE.md are no longer loaded, because that route cannot drop hooks alone. Not covered yet: other keys of that settings file (#665). Not measured: no session with a planted hook was run.
 - Docker: the image now contains the permission policy files, so engine sessions start in the same mode as an npm install. Before, every session in the container ran in plan mode: lenient models were slow and strict models changed no files (#658). This also affected the always-on container (loki issues watch). Not measured: no container was built or run.
+- Setup: the GitHub CLI (gh) is now listed in the README, the install guide, the quickstart and loki doctor; it was needed for every issue ref and pull request and named in none of them. The quickstart no longer says Node 18, Python and jq are needed. loki setup is no longer a step on the main path: each run already checks what it needs and prints the fix.
 
 ## v11.178.0 (2026-11-23)
 

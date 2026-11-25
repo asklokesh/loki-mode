@@ -42,14 +42,15 @@ Loki needs a model. [Claude Code](https://docs.claude.com/en/docs/claude-code) (
 
 ```bash
 cd your-repo
-loki setup                                   # first-run wizard (or: loki doctor --fix)
 loki start "add rate limiting to /api/login" # the primary path: build, verify, seal a receipt, open a PR
 loki start prd.md                            # same, from a PRD file
-loki start owner/repo#123                    # same, from a GitHub, GitLab or Jira issue
+loki start owner/repo#123                    # same, from a GitHub, GitLab or Jira issue; a GitHub issue runs from any folder
 loki "fix #123"                              # an issue of this checkout; a copied issue or PR URL works as is
 loki edit "rename fooBar to foo_bar"         # one small change, no loop
 loki chat                                    # interactive alternative: Plan and Build modes
 ```
+
+Every run checks what it needs first and prints the exact fix; `loki doctor --fix` runs the same checks on their own.
 
 `loki start`, `loki "<task>"`, `loki owner/repo#N` and `loki quick "<task>"` all run on the Loki 10 engine by default, whatever the flag order or input form. <!-- loki10-default --> Add `--no-pr` to build and verify without opening a pull request, `--max-cost <usd>` to cap spend, and `--provider <name>` to pick another coding CLI. The spend cap defaults to $100 when `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` is set and to no dollar cap on a subscription login; `budgets.per_run` in `loki.yaml` also sets it. Inspect the route without running: `loki route start prd.md` or `--explain-route`. New here? The [5-minute quickstart](docs/QUICKSTART.md) walks through it.
 
@@ -153,6 +154,10 @@ Required:
 - Node.js 20+ (`node`; 22 LTS is the CI target)
 - Git 2.x (`git`)
 - `curl`
+
+Needed for issue refs and pull requests:
+
+- GitHub CLI (`gh`), logged in with `gh auth login`. A text goal with `--no-pr` runs without it.
 
 Optional:
 

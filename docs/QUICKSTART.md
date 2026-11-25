@@ -10,7 +10,7 @@ path.
 npm install -g loki-mode
 ```
 
-You need Node.js 18+ (20+ recommended), Python 3.8+, git, jq and curl. Claude
+You need Node.js 20+, git and curl, and for issue refs and pull requests the GitHub CLI (`gh`, logged in). Python 3.8+ and jq are optional. Claude
 Code (`claude`) is the default provider and is needed for the default path:
 
 ```bash
@@ -21,7 +21,7 @@ claude auth login
 The other supported coding CLI, opencode, is optional (any model, including OpenRouter). Full list:
 [INSTALLATION.md](INSTALLATION.md).
 
-## 2. Set up
+## 2. Set up (optional)
 
 ```bash
 cd your-repo

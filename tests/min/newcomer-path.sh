@@ -168,6 +168,9 @@ case "$out" in *LOKI_SDK_MODE*) bad "L034 doctor --requirements still asks for L
 has "L050 doctor --requirements: All paths ready without python3 and jq" "$out" "All paths: ready"
 grep -q '\[MISS\] optional *Python 3.8' <<< "$out" && ok "L050 doctor lists Python 3.8 as optional" || bad "L050 doctor does not list Python as optional"
 grep -q '\[MISS\] optional *jq' <<< "$out" && ok "L050 doctor lists jq as optional" || bad "L050 doctor does not list jq as optional"
+has "doctor --requirements lists gh with what it is for" "$out" "gh, the GitHub CLI, logged in (issue refs and pull requests"
+grep -q 'Node.js 18' "$ROOT/docs/QUICKSTART.md" && bad "QUICKSTART still names Node.js 18" || ok "QUICKSTART names the Node minimum the requirements table has"
+grep -q 'gh auth login' "$ROOT/README.md" && grep -q 'gh auth login' "$ROOT/docs/INSTALLATION.md" && ok "README and INSTALLATION name gh and its login" || bad "README or INSTALLATION does not name gh"
 out="$(cd "$T" && "${doc_env[@]}" bash "$ROOT/bin/loki" doctor 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ok "L050 loki doctor exits 0 with only a key, no python3, no jq" || { bad "loki doctor exited $rc on a key-only host"; printf '%s\n' "$out" | grep -E 'FAIL|^  - ' | sed 's/^/    | /'; }
 has "L034 loki doctor names loki \"<goal>\" on the bundled SDK" "$out" 'loki "<goal>" needs no separate CLI'
