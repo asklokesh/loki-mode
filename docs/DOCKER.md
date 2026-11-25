@@ -479,9 +479,15 @@ docker run -d --name loki-watch \
   asklokesh/loki-mode:latest issues watch OWNER/REPO --label loki --interval 300 --parallel 2
 ```
 
+With Docker Compose it is two steps: write a `.env` file with `LOKI_WATCH_REPO=owner/repo`, `GH_TOKEN` and `ANTHROPIC_API_KEY` beside `deploy/docker-compose/loki-watch.yml`, then run `docker compose -f deploy/docker-compose/loki-watch.yml up -d`.
+
 - Credentials come from the environment only: `GH_TOKEN` (a token that can read issues and push branches and open pull requests on that repository) and `ANTHROPIC_API_KEY`. `LOKI_WATCH_SETUP_GIT=1` lets git push over https with that token.
 - One container per repository. Two on the same repository would pick up the same issue.
 - Nothing on its disk needs to survive a restart: the checkout is rebuilt from GitHub, and an issue that already has a Loki pull request is skipped.
 - An issue whose runs end with no pull request is tried twice (`LOKI_WATCH_ATTEMPTS`), then held back; the log names it and the file to delete to try again. This keeps a failing issue from being rerun, and paid for, every interval.
 - Stop it with SIGTERM (docker stop): the pass in flight is interrupted and the loop ends.
-- Manifests: `deploy/kubernetes/loki-watch.yaml` (Deployment) and `deploy/ecs/loki-watch-task.json` (Fargate task). Options: `--label`, `--interval` (seconds, 30 or more), `--parallel`, `--limit`, `--draft`, `--once` (one pass, then exit), `--dir` (where checkouts live; `LOKI_WATCH_DIR`).
+- Manifests: `deploy/docker-compose/loki-watch.yml` (Compose), `deploy/kubernetes/loki-watch.yaml` (Deployment) and `deploy/ecs/loki-watch-task.json` (Fargate task). Options: `--label`, `--interval` (seconds, 30 or more), `--parallel`, `--limit`, `--draft`, `--no-follow-up`, `--once` (one pass, then exit), `--dir` (where checkouts live; `LOKI_WATCH_DIR`).
+- Follow-ups: after each pickup pass the loop runs `loki address --post` for every open Loki pull request whose head, conversation, checks or mergeable state changed. A review comment, a plain comment from a user with write access, a failing check and a conflict with the base branch each get one run on the branch, and a change lands only with its own VERIFIED receipt. `--no-follow-up` turns this off.
+- PR Steward: a pull request that carries the label `claude-pr-steward-watching` is left to PR Steward and named in the log. Two agents never push to one branch.
+- The board is GitHub. At start the loop prints three links: issues waiting (the label), pull requests labelled `loki: safe to merge`, and pull requests labelled `loki: needs you`. Each Loki pull request head also carries the commit status `loki/receipt`.
+- Replies, run receipts and a bundle of each run branch are kept under `<watch dir>/<owner>__<repo>.address/kept` before a follow-up clone is removed.
