@@ -25,3 +25,5 @@ Security fixes land on the latest published release of `loki-mode`. Upgrade to t
 In scope: the `loki` CLI, the Control Plane, the Evidence Receipt signing and verification code, and the published npm package.
 
 Out of scope: vulnerabilities in third-party providers or tools that Loki invokes, and findings that need an already-compromised local machine.
+
+Loki sessions do not run Claude Code hooks defined by the repository being worked on (from 11.179.0). Other executable keys of that repository's Claude Code settings file are tracked in the issue linked from GHSA-wgxh-xgc7-68wr.

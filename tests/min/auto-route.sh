@@ -73,6 +73,8 @@
 #  33. fix.ts: let routedFix run under a dev pin (dev pin leg: events.jsonl records a climb).
 #  34. advisor_probe.ts routerAdvisorModel: always ROUTER_ADVISOR_MODEL (unit set= and the advisor leg).
 #  35. supervisor.ts: drop the role value from the engine10 argv (every role e2e leg).
+#  36. providers.ts buildSdkLoopOptions: drop disableAllHooks (#655 hooks leg: engine=undefined). 37. claudeProvider argv: drop the --setting-sources pair
+#      (cli=false). 38. opus_consult.ts or patch_protocol.ts: drop the --settings pair (calls=false).
 #   Equivalent, not killable here: childEnv sending a role pin through routerSessionPin (it differs only with the router on and the advisor
 #   unavailable, which the stub does not produce); the run() cap guard (childEnv pins opts.roleModel either way).
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -164,6 +166,25 @@ console.log(`engine=${e} legacy=${l} merge=${src.includes("for (const [k, v] of 
 [ "$UA" = 'engine=project;/x/helper.sh;noplugins;{"ANTHROPIC_BASE_URL":"http://127.0.0.1:9"} legacy=user,project,local;none;noplugins;{} merge=true' ] \
     && ok "user-settings auth (SDK route): an engine10 session carries the user's apiKeyHelper and auth or proxy env from ~/.claude/settings.json (not other env, not plugins, not over a value the process has) and merges that env under the process env; outside engine10 the user source is loaded instead" \
     || bad "user-settings auth (SDK route) gave: $UA"
+
+# --- #655 repository hooks: an engine10 session turns settings-file hooks off (the SDK settings option is the flag layer, above project settings). ----
+# Loki's own guards are SDK hook callbacks, which the key leaves running. The CLI invoker's guard is itself a --settings hook, so that route loads the
+# user source only. The two tool-less calls that load the project source pass the key as a flag. This shows the option reaches the session; it does
+# not show a planted hook stays silent (that needs a real session).
+# Planted defects (number them after the last one in this file's header list): buildSdkLoopOptions: drop disableAllHooks (engine=undefined);
+# claudeProvider argv: drop the --setting-sources pair (cli=false); opus_consult.ts: drop the --settings pair (calls=false).
+HK="$(cd "$ROOT/loki-ts" && env -u LOKI_E10_STAGE -u LOKI_ROUTER bun -e '
+import { buildSdkLoopOptions } from "./src/runner/providers.ts";
+const fs = await import("node:fs"), src = (f) => fs.readFileSync(f, "utf8");
+process.env.LOKI_E10_STAGE = "implement"; const e = buildSdkLoopOptions({ tier: "development", model: "claude-sonnet-5-5", cwd: "/nonexistent" });
+delete process.env.LOKI_E10_STAGE; const l = buildSdkLoopOptions({ tier: "development", model: "claude-sonnet-5-5", cwd: "/nonexistent" });
+const flag = `"--settings", ` + "\x27" + `{"disableAllHooks":true}` + "\x27";
+const cli = src("./src/runner/providers.ts").includes(`process.env["LOKI_E10_STAGE"] && claudeFlagSupported("--setting-sources") ? ["--setting-sources", "user"] : []`);
+console.log(`engine=${e.settings?.disableAllHooks} legacy=${l.settings?.disableAllHooks} cli=${cli} calls=${["./src/features/patch_protocol.ts", "./src/features/opus_consult.ts"].every((f) => src(f).includes(flag))}`);
+' 2>&1)"
+[ "$HK" = "engine=true legacy=undefined cli=true calls=true" ] \
+    && ok "#655 hooks: an engine10 SDK session carries disableAllHooks, a session outside engine10 does not, the CLI invoker loads the user source only, both tool-less project-source calls pass the key" \
+    || bad "#655 hooks gave: $HK"
 
 # --- ROLE-MODELS unit: one model per role (util/claude_model.ts), through the source ---------------------------------------------
 # No role set: every per-call model helper returns today's literal default (the byte-identical baseline); a role moves only its own calls;

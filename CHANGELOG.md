@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- Security: a Loki run no longer executes Claude Code hooks defined by the repository it works on (#655). Engine sessions turn settings-file, skill and plugin hooks off; Loki's own command guard and write fence are unaffected. On the opt-in CLI invoker (LOKI_E10_INVOKER=cli or LOKI_LEGACY_BASH) the repository's Claude Code settings and CLAUDE.md are no longer loaded, because that route cannot drop hooks alone. Not covered yet: other keys of that settings file (#665). Not measured: no session with a planted hook was run.
+
 ## v11.178.0 (2026-11-23)
 
 - Purple Lab (`loki web`, web-app/) is removed. It was deprecated in v7.44.0 and still shipped in the package; it held 148 of the repo's open code-scanning alerts. `loki web` now prints where to go instead (the Control Plane, `loki dashboard`) and exits 2.

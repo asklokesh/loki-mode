@@ -616,6 +616,7 @@ export function claudeProvider(): ProviderInvoker {
         ...modelArgv,
         ...autoFlags,
         ...sessionArgv,
+        ...(process.env["LOKI_E10_STAGE"] && claudeFlagSupported("--setting-sources") ? ["--setting-sources", "user"] : []), // #655: this route's own guard is a --settings hook, so hooks cannot be turned off alone; the repository's settings are not loaded at all
         // The run-owned scratch directory is a working directory of the session: the write fence above blocks Write and Edit outside the working
         // directories, and a session that reaches for Write (not a shell heredoc) to leave its proof script there was refused and ended unfinished.
         ...(process.env["LOKI_SCRATCH"] && claudeFlagSupported("--add-dir") ? ["--add-dir", process.env["LOKI_SCRATCH"]] : []),
@@ -846,6 +847,7 @@ export function buildSdkLoopOptions(args: {
     const ua = userAuthSettings();
     if (Object.keys(ua.settings).length) out.settings = { ...ua.settings, ...out.settings };
     if (Object.keys(ua.env).length) out.authEnv = ua.env;
+    out.settings = { ...out.settings, disableAllHooks: true }; // #655: settings-file, skill and plugin hooks of the target repository do not run; Loki's own guards are SDK hook callbacks, which this key leaves running
   }
 
   // effort tier (same mapping as buildAutoFlags).
