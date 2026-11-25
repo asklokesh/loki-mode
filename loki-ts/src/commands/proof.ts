@@ -538,7 +538,7 @@ async function mdProof(id: string | undefined): Promise<number> {
   }
   const r = spawnSync(
     "bash",
-    ["-c", `source ${JSON.stringify(lib)} && render_evidence_receipt_md ${JSON.stringify(proofPath)}`],
+    ["-c", 'source "$1" && render_evidence_receipt_md "$2"', "_", lib, proofPath], // both paths travel as positional arguments, never spliced into the script text
     { env: { ...process.env }, encoding: "utf8" },
   );
   if (r.stdout) process.stdout.write(r.stdout);
