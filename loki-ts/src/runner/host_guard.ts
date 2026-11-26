@@ -10,7 +10,8 @@
 // The checks that need no script (input shape, workspace cwd, the audit line, the allow or no-decision verdict)
 // are ported exactly. tests/min/host-guard.sh compares both on a corpus and plants a defect per rule.
 
-import { appendFileSync, mkdirSync, realpathSync } from "node:fs";
+import { appendFileSync, mkdirSync, realpathSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { isAbsolute, join, resolve, sep } from "node:path";
 import { REPO_ROOT } from "../util/paths.ts";
 import { envWithPwd } from "./worker_proc.ts";
@@ -127,6 +128,37 @@ function realpathOrNull(p: string): string | null {
   try { return realpathSync(p); } catch { return null; }
 }
 
+const within = (p: string, base: string): boolean => p === base || p.startsWith(base + sep);
+
+/** The session's own scratch directory ($LOKI_SCRATCH), by realpath, or null when it must be ignored: it must be absolute,
+ *  an existing directory, not `/`, not the home directory and not the workspace or an ancestor of it (a scratch that held the
+ *  workspace would open every directory above it). The script applies the same rules (cwd block of validate-bash.sh). */
+export function validScratch(scratch: string | undefined, root: string, env: NodeJS.ProcessEnv = process.env): string | null {
+  if (!scratch || !isAbsolute(scratch)) return null;
+  const real = realpathOrNull(scratch);
+  if (real === null) return null;
+  try { if (!statSync(real).isDirectory()) return null; } catch { return null; }
+  const home = realpathOrNull(env["HOME"] || homedir());
+  if (real === sep || real === home || within(root, real)) return null;
+  return real;
+}
+
+// RECOVERY: a call whose cwd is outside the workspace and the scratch may still begin with `cd <absolute path>` into one of them
+// (one unquoted or quoted word with no expansion, then `&&`, `;`, a newline or the end). The rest of the command goes through every other rule.
+const RECOVERY_CD = /^[ \t\n]*cd[ \t]+(?:--[ \t]+)?(?:"([^"$`\\\n]+)"|'([^'\n]+)'|([^\s;&|()<>$`\\'"*?[\]~{}]+))[ \t]*(?:&&|;|\n|$)/;
+export function recoveryCd(command: string, roots: string[]): boolean {
+  const m = RECOVERY_CD.exec(command);
+  const target = m ? (m[1] ?? m[2] ?? m[3]) : undefined;
+  if (!target || !isAbsolute(target)) return false;
+  const real = realpathOrNull(target);
+  if (real === null) return false;
+  try { if (!statSync(real).isDirectory()) return false; } catch { return false; }
+  return roots.some((r) => within(real, r));
+}
+
+export const cwdRefusal = (root: string): Decision =>
+  hostGuardDecision(`LOKI_HOST_GUARD: Bash command cwd is outside the assigned workspace. Run \`cd ${root}\` first.`);
+
 // Python json.dumps (ensure_ascii) of the command as `echo` prints it, the script's audit-line encoding.
 function pyJson(s: string): string {
   return JSON.stringify(s).replace(/[\u0080-\uffff]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
@@ -141,12 +173,14 @@ function appendAudit(cwd: string, command: string): void {
 }
 
 /** Runs validate-bash.sh on one hook input; fails closed on a timeout, a crash or a verdict it cannot read. */
-export async function runHostGuardScript(input: unknown, cwd: string, compiled: boolean): Promise<Decision | Record<string, never>> {
+export async function runHostGuardScript(input: unknown, cwd: string, compiled: boolean, scratch?: string): Promise<Decision | Record<string, never>> {
   try {
+    const senv: NodeJS.ProcessEnv = { ...process.env, LOKI_HOST_GUARD: "1", LOKI_TARGET_DIR: cwd };
+    if (scratch) senv["LOKI_SCRATCH"] = scratch; else delete senv["LOKI_SCRATCH"]; // the script sees the scratch this session was given, never a stray value
     const proc = Bun.spawn({
       cmd: ["bash", HOST_GUARD_SCRIPT],
       cwd,
-      env: envWithPwd({ ...process.env, LOKI_HOST_GUARD: "1", LOKI_TARGET_DIR: cwd }, cwd),
+      env: envWithPwd(senv, cwd),
       stdin: "pipe",
       stdout: "pipe",
       stderr: "ignore",
@@ -179,7 +213,7 @@ export async function runHostGuardScript(input: unknown, cwd: string, compiled: 
  * The PreToolUse callback for one session in `cwd` (the assigned workspace). Same verdicts as the script, which
  * runs only for a command scriptRuleMayApply names; `onScript` (tests, telemetry) learns each time it does.
  */
-export function createHostGuardHook(cwd: string, env: NodeJS.ProcessEnv = process.env, onScript?: (rule: string) => void): (input: unknown) => Promise<Decision | Record<string, never>> {
+export function createHostGuardHook(cwd: string, env: NodeJS.ProcessEnv = process.env, onScript?: (rule: string) => void, scratch?: string): (input: unknown) => Promise<Decision | Record<string, never>> {
   const compiled = permissionPolicyMode(env, () => {}) === "compiled";
   const root = realpathOrNull(cwd);
   return async (input: unknown) => {
@@ -189,11 +223,13 @@ export function createHostGuardHook(cwd: string, env: NodeJS.ProcessEnv = proces
     if (typeof raw !== "string" || PY_BLANK.test(raw)) return hostGuardDecision("LOKI_HOST_GUARD: malformed or missing Bash command input was denied.");
     const command = raw.replace(CONTINUATION, "$1");
     const inputCwd = typeof data?.["cwd"] === "string" ? (data["cwd"] as string) : "";
-    if (!inputCwd) return hostGuardDecision("LOKI_HOST_GUARD: Bash command cwd is outside the assigned workspace.");
+    if (!inputCwd) return cwdRefusal(root ?? cwd);
     const real = isAbsolute(inputCwd) ? realpathOrNull(inputCwd) : null;
+    const scratchReal = root === null ? null : validScratch(scratch, root, env);
     const rule = root === null || real === null ? "cwd" : scriptRuleMayApply(command, env);
-    if (rule !== null) { onScript?.(rule); return runHostGuardScript(input, cwd, compiled); }
-    if (real !== root && !real!.startsWith(root + sep)) return hostGuardDecision("LOKI_HOST_GUARD: Bash command cwd is outside the assigned workspace.");
+    if (rule !== null) { onScript?.(rule); return runHostGuardScript(input, cwd, compiled, scratchReal ?? undefined); }
+    const roots = scratchReal === null ? [root!] : [root!, scratchReal];
+    if (!roots.some((r) => within(real!, r)) && !recoveryCd(command, roots)) return cwdRefusal(root!);
     appendAudit(inputCwd, command);
     return compiled ? {} : ALLOW;
   };
