@@ -114,7 +114,7 @@ export function rankExecutorsByCost(runs: readonly RunOutcome[], shape: string):
 export function haikuFloorExecutor(repoKey: string, shape: string | null, cacheRoot?: string): RunExecutor {
   if (shape === null) return "haiku";
   const all = readRunHistory(repoKey, cacheRoot);
-  const last = all.filter((r) => r.shape === shape && r.executor === "haiku").slice(-FLOOR_WINDOW);
+  const last = all.filter((r) => r.shape === shape && r.executor === "haiku" && r.verdict !== "not_proven").slice(-FLOOR_WINDOW);
   if (last.length < FLOOR_WINDOW) return "haiku";
   const losses = last.filter(isCodeLoss).length;
   if (losses >= FLOOR_LOSSES) return "sonnet";

@@ -10,6 +10,7 @@ import { redactSecrets, UNSAFE_TERMINAL_CHARS_RE } from "../util/redact.ts";
 import { safeGit, treeSnapshot } from "../util/safe_git.ts";
 const LIVE_LABELS: Record<string, string> = { intake: "reading the task", plan: "planning", wall: "writing acceptance checks", implement: "implementing", verify: "verifying", fix: "fixing failures", commit: "committing", seal: "sealing the receipt", pr: "opening the PR", deep: "deep review" };
 type LiveEvent = { type: string; stage: string | null; data: Record<string, unknown>; run?: string; ts?: string };
+const QUIET_REPEAT_S = 60;
 export const CANDIDATE_LABEL = "candidate, not yet checked";
 const MAX_DIFF_LINES = 40;
 /** The candidate diff text: base (intake base_sha) against a snapshot of the working tree (new files included), limited to the paths implement changed. Never throws; null when unreadable. */
@@ -51,7 +52,7 @@ export class CandidateView {
 export interface LiveLineOpts { tty: boolean; write: (s: string) => void; now?: () => number; columns?: number; graceS?: number; repoDir?: string; env?: NodeJS.ProcessEnv; diffOf?: CandidateOpts["diffOf"]; spend?: (events: EventEnvelope[]) => string }
 /** D82: quiet-mode progress. TTY: one status line rewritten in place (\r + clear-line), cleared before the summary. Non-TTY: one plain line per stage that stays open past graceS (fast stages print nothing, so the D48 line budget holds). */
 export class LiveLine {
-  private cur: { stage: string; at: number; announced: boolean } | null = null;
+  private cur: { stage: string; at: number; announced: boolean; turns: number } | null = null; private lastLine = 0; // lastLine: time of the last plain line (piped output only)
   private done: { stage: string; s: number } | null = null;
   private url: string | null = null; private runId: string | null = null; private shown = false; private closed = false; private readonly t0: number;
   private readonly seen: EventEnvelope[] = []; private spent: string | null = null; private readonly cand: CandidateView;
@@ -64,24 +65,36 @@ export class LiveLine {
     if (typeof e.run === "string" && e.run) this.runId = e.run;
     const cp = e.data?.control_plane_url; if (typeof cp === "string" && cp) this.url = cp;
     if (aweOn("LOKI_AWE_LIVE_COST", this.env)) { this.seen.push(e as EventEnvelope); if (e.type === "cost") { try { this.spent = (this.o.spend ?? ((ev) => spendSoFar(ev, this.o.repoDir ? `${this.o.repoDir}/.loki` : undefined)))(this.seen).replace(/^\((.*)\)$/, "$1"); } catch { /* display only */ } } }
-    if (e.type === "stage.started" && e.stage) this.cur = { stage: e.stage, at: this.now(), announced: false };
+    if (e.type === "stage.started" && e.stage) this.cur = { stage: e.stage, at: this.now(), announced: false, turns: 0 };
     else if (/^stage\.(completed|failed|skipped)$/.test(e.type) && e.stage) {
       if (e.type === "stage.completed" && typeof e.data.duration_s === "number") this.done = { stage: e.stage, s: e.data.duration_s };
       if (this.cur?.stage === e.stage) this.cur = null;
     }
     this.cand.onEvent(e, (lines) => this.printAbove(lines));
+    this.pipedEvent(e);
     this.tick();
   }
   /** Persistent lines above the status line: the TTY line is erased first and redrawn after. */
   private printAbove(lines: string[]): void { if (this.o.tty && this.shown) { this.o.write("\r\x1b[2K"); this.shown = false; } this.o.write(`${lines.join("\n")}\n`); }
   text(): string | null {
     if (!this.cur) return null;
-    const bits = [`[${this.cur.stage}] ${LIVE_LABELS[this.cur.stage] ?? this.cur.stage}`, formatDuration((this.now() - this.cur.at) / 1000)];
-    if (aweOn("LOKI_AWE_LIVE_COST", this.env)) bits.push(`run ${formatDuration((this.now() - this.t0) / 1000)}`, this.spent ?? "spend not measured yet");
+    const bits = [`[${this.cur.stage}] ${LIVE_LABELS[this.cur.stage] ?? this.cur.stage}`, formatDuration((this.now() - this.cur.at) / 1000), ...this.costBits()];
     if (this.cand.unchecked) bits.push(CANDIDATE_LABEL);
     if (this.done) bits.push(`(${this.done.stage} done ${formatDuration(this.done.s)})`);
     if (this.url) bits.push(controlRunLink(this.url, this.o.repoDir ?? process.env.LOKI_E10_REPO_DIR ?? process.cwd(), this.runId ?? "") ?? this.url); // P12-19 (D06): deep link once the run id is known
     return bits.join("  ");
+  }
+  private costBits(): string[] { return aweOn("LOKI_AWE_LIVE_COST", this.env) ? [`run ${formatDuration((this.now() - this.t0) / 1000)}`, this.spent ?? "spend not measured yet"] : []; }
+  /** Piped output only: one plain line for each turn after the first, proof run, acceptance round and early review of an announced stage. A missing number prints no line. */
+  private pipedEvent(e: LiveEvent): void {
+    const c = this.cur; if (this.o.tty || !c) return;
+    const d = e.data ?? {}, num = (k: string): number | null => (typeof d[k] === "number" && Number.isFinite(d[k]) ? (d[k] as number) : null);
+    let msg: string | null = null;
+    if (e.type === "session.started" && e.stage === c.stage) { c.turns++; if (c.turns >= 2) msg = [`turn ${c.turns} started`, ...this.costBits()].join("  "); }
+    else if (e.type === "proof.rerun") { const p = num("proved"), f = num("failed"); if (p !== null && f !== null) msg = `Loki ran the proof: ${p} passed, ${f} failed`; }
+    else if (e.type === "acceptance.round") { const r = num("round"), m = num("met"), u = num("unmet"); if (r !== null && m !== null && u !== null) msg = `acceptance check, round ${r}: ${m} of ${m + u} lines met`; }
+    else if (e.type === "review.early") { const n = num("findings"); if (typeof d["level"] === "string" && n !== null) msg = `independent review: ${safeLine(String(d["level"]), 40)}, ${n} finding${n === 1 ? "" : "s"}`; }
+    if (msg !== null && c.announced) { this.o.write(`[${c.stage}] ${msg}\n`); this.lastLine = this.now(); }
   }
   /** Heartbeat: redraws the TTY line (elapsed ticks) or announces a stage that outlived the grace period. */
   tick(): void { if (!this.closed) this.render(); }
@@ -91,8 +104,8 @@ export class LiveLine {
       const w = terminalWidth({ columns: this.o.columns }) - 1;
       this.o.write(`\r\x1b[2K${t.length > w ? t.slice(0, w) : t}`); this.shown = true;
     } else if (!this.cur.announced && (this.now() - this.cur.at) / 1000 >= (this.o.graceS ?? 3)) {
-      this.cur.announced = true; this.o.write(`${t}\n`);
-    }
+      this.cur.announced = true; this.o.write(`${t}\n`); this.lastLine = this.now();
+    } else if (this.cur.announced && (this.now() - this.lastLine) / 1000 >= QUIET_REPEAT_S) { this.o.write(`${t}\n`); this.lastLine = this.now(); } // a working run says so at least once a minute
   }
   /** Erase the status line; call before the final summary. Idempotent; later events are ignored. */
   clear(): void { if (this.shown) { this.o.write("\r\x1b[2K"); this.shown = false; } this.closed = true; }
