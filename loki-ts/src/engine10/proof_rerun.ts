@@ -90,19 +90,39 @@ export const PROOF_HELPER = "loki-check.sh", ACCEPTANCE_FILE = "acceptance.txt";
 export const PROOF_HELPER_SH = `# Loki proof helpers. Source this file; never edit it. Only lines printed by these functions count toward the label.
 # Each result is printed, and also appended to the file Loki names in LOKI_PROOF_LOG, so a script that pipes or redirects its output loses nothing.
 _lp() { printf 'LOKI-PROOF %s %s %s: %s\\n' "\${LOKI_PROOF_TOKEN:-session}" "$1" "$2" "$3"; if [ -n "\${LOKI_PROOF_LOG:-}" ]; then printf 'LOKI-PROOF %s %s %s: %s\\n' "\${LOKI_PROOF_TOKEN:-session}" "$1" "$2" "$3" >> "$LOKI_PROOF_LOG" 2>/dev/null; fi; }
+# _lstep <text>: appends one line to the step log (LOKI_STEP_LOG, default $TMPDIR/loki-steps.log). A file only; never printed, never fails.
+_lstep() { { printf '%s\\n' "$*" >> "\${LOKI_STEP_LOG:-\${TMPDIR:-/tmp}/loki-steps.log}"; } 2>/dev/null; return 0; }
+# The step log holds "start <item> <epoch> <what>" before each loki_http and loki_cmd and "end <item> <rc> <seconds>" after it: a start with no end is the step still running.
+# loki_wait_http <url> [seconds]: polls once a second (default 60) until the address answers with any HTTP status; returns 0.
+#   On timeout prints "LOKI-WAIT gave up after <s> s: <url>" to stderr, then the last 20 lines of the file named in LOKI_WAIT_LOG when set, and returns 1.
+loki_wait_http() {
+  local url="$1" s="\${2:-60}" deadline
+  case "$s" in ''|*[!0-9]*) s=60 ;; esac
+  deadline=$((SECONDS + s))
+  while :; do
+    curl -s -o /dev/null --connect-timeout 1 --max-time 10 "$url" 2>/dev/null && return 0
+    [ "$SECONDS" -ge "$deadline" ] && break
+    sleep 1
+  done
+  echo "LOKI-WAIT gave up after $s s: $url" >&2
+  if [ -n "\${LOKI_WAIT_LOG:-}" ] && [ -f "$LOKI_WAIT_LOG" ]; then tail -n 20 "$LOKI_WAIT_LOG" >&2; fi
+  return 1
+}
 # loki_http <item number> "<what is proved>" <expected status> <curl arguments...>
 #   <item number> is the number of the acceptance item in acceptance.txt (1, 2, 3 ...), never a line of this script.
 #   Sends the request with curl. Passes when the status equals the expected one (and, when LOKI_BODY_MATCH is set, the body matches that grep -E pattern).
 loki_http() {
   local n="$1" what="$2" want="$3"; shift 3
   what="\${what//|//}"  # ADS-REAL: no "|" in the description, so no description text can read as a status or a command
-  local body code snip ok=1
+  local body code snip ok=1 t0
   body="$(mktemp "\${TMPDIR:-/tmp}/lpb.XXXXXX")" || return 1
+  t0="$(date +%s)"; _lstep "start $n $t0 $(printf '%s' "$what" | tr '\\n' ' ')"
   code="$(curl -sS -o "$body" -w '%{http_code}' --max-time 60 "$@" 2>/dev/null)" || code="000"
   snip="$(head -c 300 "$body" | tr '\\n' ' ')"
   [ "$code" = "$want" ] || ok=0
   if [ "$ok" = 1 ] && [ -n "\${LOKI_BODY_MATCH:-}" ]; then grep -Eq -- "$LOKI_BODY_MATCH" "$body" || ok=0; fi
   rm -f "$body"
+  _lstep "end $n $((1 - ok)) $(( $(date +%s) - t0 ))"
   if [ "$ok" = 1 ]; then _lp PROVED "$n" "$what | status $code | $snip"; else _lp FAILED "$n" "$what | wanted $want\${LOKI_BODY_MATCH:+ and a body matching $LOKI_BODY_MATCH}, got $code | $snip"; return 1; fi
 }
 # loki_cmd <item number> "<what is proved>" <command...>
@@ -111,10 +131,38 @@ loki_http() {
 loki_cmd() {
   local n="$1" what="$2"; shift 2
   what="\${what//|//}"
-  local out rc snip
+  local out rc snip t0 lim="\${LOKI_STEP_MAX_S:-}" late="" of pid pg was ticks=0 max=0
   local cmdline; cmdline="$(printf '%s ' "$@" | tr '\\n' ' ' | cut -c1-200)"; cmdline="\${cmdline//|/%7C}"  # a pipe in the command is printed as %7C
-  out="$("$@" 2>&1)"; rc=$?
+  t0="$(date +%s)"; _lstep "start $n $t0 $(printf '%s' "$what" | tr '\\n' ' ')"
+  # LOKI_STEP_MAX_S (a positive number of seconds) limits this one command: its own process group is stopped when the time is up. Unset: no limit.
+  if [ -n "$lim" ] && awk -v l="$lim" 'BEGIN{exit !(l ~ /^[0-9]+(\\.[0-9]+)?$/ && l + 0 > 0)}' && of="$(mktemp "\${TMPDIR:-/tmp}/lpo.XXXXXX")"; then
+    max="$(awk -v l="$lim" 'BEGIN{printf "%d", l * 5 + 0.999}')"
+    case $- in *m*) was=1 ;; *) was=0 ;; esac
+    set -m  # job control gives the background command its own process group (its pid is the group id)
+    "$@" </dev/null >"$of" 2>&1 &
+    pid=$!
+    [ "$was" = 1 ] || set +m
+    while kill -0 "$pid" 2>/dev/null; do
+      if [ "$ticks" -ge "$max" ]; then late=1; break; fi
+      sleep 0.2 2>/dev/null || sleep 1
+      ticks=$((ticks + 1))
+    done
+    if [ -n "$late" ]; then
+      pg="$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')"  # only the group this function started: when the pid is not its own group leader, only the pid is stopped
+      if [ "$pg" = "$pid" ]; then kill -TERM -- "-$pid" 2>/dev/null; else kill -TERM "$pid" 2>/dev/null; fi
+      ticks=0; while kill -0 "$pid" 2>/dev/null && [ "$ticks" -lt 10 ]; do sleep 0.2 2>/dev/null || sleep 1; ticks=$((ticks + 1)); done
+      if kill -0 "$pid" 2>/dev/null; then if [ "$pg" = "$pid" ]; then kill -KILL -- "-$pid" 2>/dev/null; else kill -KILL "$pid" 2>/dev/null; fi; fi
+      { wait "$pid"; } 2>/dev/null; rc=124
+    else
+      { wait "$pid"; } 2>/dev/null; rc=$?
+    fi
+    out="$(cat "$of" 2>/dev/null)"; rm -f "$of"
+  else
+    out="$("$@" 2>&1)"; rc=$?
+  fi
   snip="$(printf '%s' "$out" | tail -n 3 | tr '\\n' ' ' | cut -c1-300)"
+  _lstep "end $n $rc $(( $(date +%s) - t0 ))"
+  if [ -n "$late" ]; then _lp FAILED "$n" "$what | no result after $lim s | cmd: $cmdline| $snip"; return 1; fi
   if [ "$rc" = 0 ]; then _lp PROVED "$n" "$what | exit 0 | cmd: $cmdline| $snip"; else _lp FAILED "$n" "$what | exit $rc | cmd: $cmdline| $snip"; return 1; fi
 }
 
