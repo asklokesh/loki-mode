@@ -88,6 +88,7 @@ export const planStage: Stage = {
     ctx.emit("variant", null, { size: sz.size, reasons: sz.reasons, plan_mode: mode, plan_skipped: skip, wall_model: wallEnabled() ? wallFirstModel(sz.size) : null, wall_model_reauthor: wallEnabled() ? wallModel() : null, small_task_path: path, cascade: cascadeEnabled() });
     if (skip) pr.record({ planModel: "none", skipReason: ownList ? OWN_LIST_REASON : mode === "never" || !pr.preset ? "plan stage skipped (LOKI_E10_PLAN=0)" : `no plan session: task sized ${sz.size} and not hard` });
     if (skip && mode === "auto") seedPlanScope(ctx.runDir, namedFiles(task, loaded)); // the scope guard reads plan-scope.json
+    if (skip && ownList) await applyIntent("", intentCardEnabled(process.env), ctx.runDir, () => {}, issueAcceptanceOf(prior.intake)); // #701: no plan session means no card, but the issue's own acceptance lines are still shown (intent_card.ts prints them for an empty plan)
     if (skip) return { status: "skipped", data: { size: sz.size }, reason: mode === "never" ? "LOKI_E10_PLAN=0" : ownList ? OWN_LIST_REASON : `${sz.size === "small" ? "small" : "normal"} task: implementer plans` };
 
     const relevantFiles = selectRelevantFiles(task, repoMap, undefined, ctx.repoDir);
