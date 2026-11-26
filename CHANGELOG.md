@@ -7,12 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-- No code reaches seal unread: after a fix turn, a bounded follow-up review reads what that turn changed, one reader per tree, and a finding that comes with an input is closed by that input as a test in the repository's own tests; code that reads untrusted input is steered to the parser the repository already depends on (#692). On FireLater#17 (11.182.0) the quoted-attribute hole was written by the fix turn and first read by the seal review, which only labels. Not measured on a real run yet.
-- A proof script the session runs while it works is bounded: a run that stalls ends at a limit and says so, instead of the session waiting on it (#693). On FireLater#17 (11.182.0) the session waited 860 s on three stalled runs of a script that takes 10 s when Loki runs it. Why it stalled is not known.
-- The start quote is sized: once Loki knows the task's size it prints a second quote from runs of a similar size, so a large issue is no longer quoted from the median of small ones (#694). The 11.182.0 quote for FireLater#17 was $0.38 against $7.22.
-- The plan no longer writes an acceptance line out of scope: a line the issue asks for stays in the plan (#688). On FireLater#17 the plan scoped out "migrate every route", so the first turn stopped at 26 of 488 routes.
-- Measured for the record: plain Claude Code on FireLater#17 cost $7.90 and 29 min, passed the repository's tests and stopped all five attack inputs, but it ran Sonnet plus a Fable advisor from the user's settings ($4.45 of the $7.90), so it is not a same-model floor (#695). Loki 11.182.0 cost $7.22, 42 min, PARTIAL, and stopped 3 of 5.
-
 ## v11.182.0 (2026-11-25)
 
 ### Changed
