@@ -1053,7 +1053,7 @@ console.log([b.filter((l) => /^\d+\. /.test(l)).length, b.find((l) => l.startsWi
 RC3="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
 const x = await import("./src/engine10/stages/implement.ts");
 const a = x.combinedHandBack(["x"], ""), u = x.combinedHandBack([], "u"), e = x.combinedHandBack([], "");
-console.log([a.includes("add that exact input as a test"), a.includes("already depends on"), a.includes("run the proof again until it passes. When the reviewer gave an input"), a.includes("Where the reviewer is wrong, say why in one line"), u.includes("add that exact input as a test"), u.includes("already depends on"), JSON.stringify(e)].join(" | "));
+console.log([a.includes("add that exact input as a test"), a.includes("already depends on"), a.includes("Add no mechanism the issue does not ask for. When the reviewer gave an input"), a.includes("Where the reviewer is wrong, say why in one line"), u.includes("add that exact input as a test"), u.includes("already depends on"), JSON.stringify(e)].join(" | "));
 ' 2>&1)"
 [ "$RC3" = 'true | true | true | true | false | false | ""' ] \
     && ok "REVIEW-CLOSES unit 3: the review hand-back asks for the reviewer's input as a test and for the repository's own parser; an unmet-only hand-back carries neither; empty stays empty" || bad "REVIEW-CLOSES unit 3 gave: $RC3"
@@ -1072,6 +1072,64 @@ console.log([n("line-check", true), n("review", false), n("follow", false), n("r
 ' 2>&1)"
 [ "$RC5" = 'true | true | true | false | false' ] \
     && ok "REVIEW-CLOSES unit 5: the line check runs for its own reader and for any reader whose review did not run, never after a review that did" || bad "REVIEW-CLOSES unit 5 gave: $RC5"
+
+# REVIEW-HOLDS (#698, FireLater#21): the review state of the implement loop decides the label. Reviews said flag 11, block 14, block 11; the last block's findings went to a turn no reviewer read again; the run sealed
+# VERIFIED. Now a follow-up names which earlier findings are still open (stillOpen), review findings are handed back followMax() times (default 1) and every fix made in answer is read (mayHandBack), a closing read
+# covers a change no review read (needsClosingRead), and reviewHolds turns the last review state into holds that seal reads (a VERIFIED reading becomes PARTIAL). Pure cells 1 to 8; the stub-run legs are further down.
+# Plants: closure.ts reviewHolds returns [] always (cells 7 and 8 go red); implement.ts mayHandBack returns true always (cell 4 goes red); implement.ts needsClosingRead returns false always (cell 5 goes red).
+RH1="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const x = await import("./src/engine10/stages/xreview.ts"), s = x.stillOpen;
+console.log([JSON.stringify(s("x\nSTILL OPEN: 2, 4", 5)), JSON.stringify(s("STILL OPEN: none", 5)), JSON.stringify(s("no such line", 5)), JSON.stringify(s("- **STILL OPEN:** 3, 9", 5)), JSON.stringify(s("STILL OPEN: 1\nthen more\nSTILL OPEN: 2, 2, 3", 5))].join(" | "));
+' 2>&1)"
+[ "$RH1" = '[2,4] | [] | null | [3] | [2,3]' ] \
+    && ok "REVIEW-HOLDS unit 1: stillOpen reads the numbers up to the earlier count, none as [], a missing line as null, a marked line, and the last line wins" || bad "REVIEW-HOLDS unit 1 gave: $RH1"
+RH2="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const x = await import("./src/engine10/stages/xreview.ts");
+const b = x.followBlock(["a".repeat(500), "b"]), last = b[b.length - 1];
+console.log([b.filter((l) => /^\d+\. /.test(l)).length, b.find((l) => l.startsWith("1. "))?.length === 303, b.includes("2. b"), last.includes("STILL OPEN:"), last.includes("STILL OPEN: none")].join(" | "));
+' 2>&1)"
+[ "$RH2" = '2 | true | true | true | true' ] \
+    && ok "REVIEW-HOLDS unit 2: followBlock keeps its two numbered entries and ends with the STILL OPEN line request" || bad "REVIEW-HOLDS unit 2 gave: $RH2"
+RH3="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const x = await import("./src/engine10/stages/implement.ts");
+console.log([x.followMax({}), x.followMax({ LOKI_E10_REVIEW_FOLLOW_MAX: "2" }), x.followMax({ LOKI_E10_REVIEW_FOLLOW_MAX: "0" })].join(" | "));
+' 2>&1)"
+[ "$RH3" = '1 | 2 | 0' ] \
+    && ok "REVIEW-HOLDS unit 3: followMax defaults to 1 hand-back and honors 2 and 0" || bad "REVIEW-HOLDS unit 3 gave: $RH3"
+RH4="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const x = await import("./src/engine10/stages/implement.ts"), m = (handBacks, max) => x.mayHandBack({ handBacks, max });
+console.log([m(0, 1), m(1, 1), m(0, 0), m(1, 2)].join(" | "));
+' 2>&1)"
+[ "$RH4" = 'true | false | false | true' ] \
+    && ok "REVIEW-HOLDS unit 4: mayHandBack is true only while the hand-backs that carried review findings are under the bound" || bad "REVIEW-HOLDS unit 4 gave: $RH4"
+RH5="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const x = await import("./src/engine10/stages/implement.ts"), n = x.needsClosingRead;
+console.log([n({ reviewRan: true, tree: "b", reviewedTree: "a" }), n({ reviewRan: true, tree: "a", reviewedTree: "a" }), n({ reviewRan: false, tree: "b", reviewedTree: "a" })].join(" | "));
+' 2>&1)"
+[ "$RH5" = 'true | false | false' ] \
+    && ok "REVIEW-HOLDS unit 5: needsClosingRead is true only when a model review ran and the tree is not the tree it read" || bad "REVIEW-HOLDS unit 5 gave: $RH5"
+RH6="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const x = await import("./src/engine10/stages/implement.ts"), k = "Add no mechanism the issue does not ask for";
+console.log([x.combinedHandBack(["x"], "").split(k).length - 1, x.combinedHandBack([], "u").includes(k)].join(" | "));
+' 2>&1)"
+[ "$RH6" = '1 | false' ] \
+    && ok "REVIEW-HOLDS unit 6: the review hand-back carries the close-where-the-code-is line once; an unmet-only hand-back does not" || bad "REVIEW-HOLDS unit 6 gave: $RH6"
+RH7="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const x = await import("./src/engine10/closure.ts"), h = x.reviewHolds, j = JSON.stringify;
+const b = { findings: 3, follow: false, still_open: [], changed_unread: false };
+const two = h({ level: "flag", findings: 3, follow: true, still_open: ["alpha", "beta"], changed_unread: false });
+const nul = h({ level: "flag", findings: 3, follow: true, still_open: null, changed_unread: false });
+console.log([j(h(undefined)), j(h(null)), j(h("x")), j(h({})), j(h({ ...b, level: "pass", findings: 0 })), j(h({ ...b, level: "flag" })), h({ ...b, level: "block" }).length, h({ ...b, level: "block" })[0].startsWith("review block open"), two.length, two[0], nul.length, nul[0].includes("did not say"), ["pass", "flag", "block"].map((l) => { const r = h({ ...b, level: l, changed_unread: true }); return r.length + (r[0].startsWith("changed after the last review") ? "y" : "n"); }).join(",")].join(" | "));
+' 2>&1)"
+[ "$RH7" = '[] | [] | [] | [] | [] | [] | 1 | true | 2 | reviewer finding still open after the fix: alpha | 1 | true | 1y,1y,1y' ] \
+    && ok "REVIEW-HOLDS unit 7: reviewHolds gives nothing for no state, a pass, or a flag the session rebutted; one line for a block, for a follow-up that did not say, and for an unread change; one line per finding still open" || bad "REVIEW-HOLDS unit 7 gave: $RH7"
+RH8="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const c = await import("./src/engine10/closure.ts"), p = await import("./src/engine10/stages/pr.ts");
+const holds = c.reviewHolds({ level: "block", findings: 11, follow: true, still_open: null, changed_unread: true });
+console.log([holds.length > 0, p.lokiLabelFor("PARTIAL").name].join(" | "));
+' 2>&1)"
+[ "$RH8" = 'true | loki: needs you' ] \
+    && ok "REVIEW-HOLDS unit 8: the FireLater#21 end state (a block, then a turn that changed the code and no review read it) is held and its pull request label is 'loki: needs you'" || bad "REVIEW-HOLDS unit 8 gave: $RH8"
 
 # G5 SKIP-NOTE end to end (oc63960): a full suite red only on base ids must seal without the "fix round skipped" note holding it; the same run with one
 # new failing id in that suite is held by it. Plant G5-10: util/check_result.ts suiteSkipHolds always false: the new-id run seals without the note.
@@ -2388,8 +2446,8 @@ RFPY
 )"
 [ "$RFS" = "early=yes pf=yes order=ok" ] && ok "REVIEW-FIRST stub run: review.early comes before the first -pf hand-back session" || bad "REVIEW-FIRST stub run gave: $RFS (sessions '$RWSTAGES')"
 # REVIEW-CLOSES stub-run leg (written, not run by its author; the lead runs it after the bundle is rebuilt on the merged tree). The stub reviewer gives one verdict on every call (no block-then-pass
-# sequence), so with BLOCK the first review is followed by follow-up reviews up to the bound (LOKI_E10_REVIEW_FOLLOW_MAX, default 2): exactly three review.early events, with follow 0, 1, 2, and no line check
-# before the last of them. Needs a stub that changes the tree in the -pf hand-back session; if it does not, the second review.early never appears and this leg reads fewer than three.
+# sequence), so with BLOCK the first review is handed back once (LOKI_E10_REVIEW_FOLLOW_MAX, default 1) and the fix is read once: exactly two review.early events, with follow 0, 1, and no line check
+# before the second of them (REVIEW-HOLDS: findings of the follow-up are not handed back). Needs a stub that changes the tree in the -pf hand-back session; if it does not, the second review.early never appears and this leg reads fewer than three.
 rw_proof 'grep -q "export function multiply" calc.ts' 'grep -q "export function multiply" calc.ts'
 rw_engine reviewcloses "$RWD/list.md" LOKI_RISK_TIER=medium LOKI_REVIEW_DEFAULT=1 E2E_STUB_REVIEW=BLOCK
 RCS="$(python3 -I - "$RWRUN" <<'RCPY'
@@ -2400,10 +2458,28 @@ early = [e for e in ev if e["type"] == "review.early"]
 print("early=" + str(len(early)), "follow=" + ",".join(str(e["data"].get("follow", 0)) for e in early))
 RCPY
 )"
-# The seal stage reads the tree itself (its own review and line check), so the whole-run line check count is 2 (measured 2026-11-26: the loop's one after the follow-ups, and the seal's). The bound is in the loop: with the
-# reviewer always blocking and LOKI_E10_REVIEW_FOLLOW_MAX at its default 2, exactly three review.early events (follow 0, 1, 2) and the first line check comes after the third review.
+# The seal stage reads the tree itself (its own review and line check). The bound is in the loop: with the reviewer always blocking and LOKI_E10_REVIEW_FOLLOW_MAX at its default 1, exactly two review.early events
+# (follow 0, 1) and no loop line check after a model review has read a tree, so the first line check is the seal's and comes after the seal's own review (three reviews before it: two in the loop, one at the seal; the seal runs its review, then its line check).
 RCPRE="${RWSTAGES%%linecheck*}"
-[ "$RCS" = "early=3 follow=0,1,2" ] && [ "$(grep -o review <<< "$RCPRE" | wc -l | tr -d ' ')" = 3 ] && ok "REVIEW-CLOSES stub run: three review.early (the first, then follow 1 and 2, the bound), and no line check before the last follow-up" || bad "REVIEW-CLOSES stub run gave: $RCS (sessions '$RWSTAGES')"
+[ "$RCS" = "early=2 follow=0,1" ] && [ "$(grep -o review <<< "$RCPRE" | wc -l | tr -d ' ')" = 3 ] && ok "REVIEW-CLOSES stub run: two review.early (the first, then follow 1, the bound), and no loop line check (the seal's own review is the third review before the first line check)" || bad "REVIEW-CLOSES stub run gave: $RCS (sessions '$RWSTAGES')"
+# REVIEW-HOLDS stub-run leg (written, not run by its author; the lead runs it after the bundle is rebuilt on the merged tree). (a) The reviewer flags with two findings (the stub concern and a second
+# line) and every follow-up says `STILL OPEN: 2`: two review.early events (follow absent, then 1), exactly one -pf hand-back session, no loop line check (three reviews before the first line check: two in the loop and the seal's own), a PARTIAL receipt held by "review open".
+rw_proof 'grep -q "export function multiply" calc.ts' 'grep -q "export function multiply" calc.ts'
+rw_engine reviewholds "$RWD/list.md" LOKI_RISK_TIER=medium LOKI_REVIEW_DEFAULT=1 E2E_STUB_REVIEW=FLAG "E2E_STUB_REVIEW_EXTRA=STILL OPEN: 2"
+RHS="$(python3 -I - "$RWRUN" <<'RHPY'
+import json, os, sys
+try: ev = [json.loads(l) for l in open(os.path.join(sys.argv[1], "events.jsonl"))]
+except Exception: print("no events"); sys.exit(0)
+try: r = json.load(open(os.path.join(sys.argv[1], "receipt.json")))
+except Exception: r = {}
+early = [e for e in ev if e["type"] == "review.early"]
+pf = [e for e in ev if e["type"] == "session.started" and str(e["data"].get("session_id", "")).endswith("-pf")]
+print("early=" + str(len(early)), "follow=" + ",".join(str(e["data"].get("follow", 0)) for e in early), "pf=" + str(len(pf)), r.get("verdict"), "held=" + ("open" if any(h.get("kind") == "review open" for h in r.get("held_by") or []) else "no"))
+RHPY
+)"
+RHPRE="${RWSTAGES%%linecheck*}"
+[ "$RHS" = "early=2 follow=0,1 pf=1 PARTIAL held=open" ] && [ "$(grep -o review <<< "$RHPRE" | wc -l | tr -d ' ')" = 3 ] && ok "REVIEW-HOLDS stub run (a): a flag still open after the one fix is read twice, hands back once, runs no loop line check, and seals PARTIAL held by review open" || bad "REVIEW-HOLDS stub run (a) gave: $RHS (sessions '$RWSTAGES')"
+# Leg (b) (a session turn after the review that changes no file: one review.early, no follow-up, not held by review open) is not written: the stub's -pf session always changes the tree and the stub fixture is not in this lane's files. Unit 7 covers its rule (a flag with still_open [] and nothing changed gives no hold).
 rw_proof 'grep -q "export function multiply" calc.ts' 'grep -q "export function multiply" calc.ts' 'false' # line 2 has one passing and one failing check
 rw_engine failing "$RWD/list.md"; RWF="$(rw_facts)"
 [ "$RWF" = "PARTIAL road=work source=text lines=2 receipt=met,unmet own=1 reruns=yes noscript=no plan=skipped src=issue cap=2400" ] \
