@@ -69,8 +69,8 @@ export function estimateFromHistory(shape: string | null, key: string, cacheRoot
     return prior ? { ok: false, reason, prior } : { ok: false, reason };
   };
   if (shape === null) return withPrior("no project shape recorded for this repo");
-  const runs = readRunHistory(key, cacheRoot).filter((r) => r.shape === shape && r.verdict === "pass").slice(-WINDOW);
-  if (runs.length < MIN_RUNS) return withPrior(`${runs.length} prior verified run${runs.length === 1 ? "" : "s"} for shape ${shape}, need ${MIN_RUNS}`);
+  const runs = readRunHistory(key, cacheRoot).filter((r) => r.shape === shape && (r.verdict === "pass" || r.verdict === "not_proven")).slice(-WINDOW); // every finished run of the shape, not only the ones that went well
+  if (runs.length < MIN_RUNS) return withPrior(`${runs.length} finished run${runs.length === 1 ? "" : "s"} for shape ${shape}, need ${MIN_RUNS}`);
   const usd = runs.map((r) => r.usd), wall = runs.filter((r) => r.wallKind === WALL_KIND).map((r) => r.wallS);
   return { ok: true, est: { shape, runs: runs.length, usd: [Math.min(...usd), Math.max(...usd)], usd_mid: median(usd), wall_s: wall.length > 0 ? [Math.min(...wall), Math.max(...wall)] : null, wall_mid_s: wall.length > 0 ? median(wall) : null } };
 }
@@ -90,7 +90,7 @@ function startBase(r: EstimateResult): string {
   if (!r.ok) return `estimate: NOT AVAILABLE (${r.reason})`;
   const { est: e } = r, mid = e.usd_mid ?? (e.usd[0] + e.usd[1]) / 2;
   const time = e.wall_s ? timeClause(e.wall_mid_s ?? (e.wall_s[0] + e.wall_s[1]) / 2, e.wall_s[0], e.wall_s[1]) : "time NOT RECORDED";
-  return `estimate: about ${fmtUsd(mid)} (range ${fmtUsd(e.usd[0])}-${fmtUsd(e.usd[1])}), ${time}, from ${e.runs} prior runs of shape ${e.shape}`;
+  return `estimate: about ${fmtUsd(mid)} (range ${fmtUsd(e.usd[0])}-${fmtUsd(e.usd[1])}), ${time}, from ${e.runs} finished runs of shape ${e.shape}`;
 }
 
 /** The estimate as carried from the supervisor to the sealing worker, or null when the preview is off. */
@@ -112,13 +112,14 @@ export function receiptBlock(env: Env, usd: number | null, unmetered: boolean, w
 }
 
 /**
- * The history row for a sealed run, or null when none is recorded. VERIFIED is an accepted pass (the estimator reads only these).
- * FAILED is a code-owned loss (router evidence for expectedCost). PARTIAL, SPEC_CONFLICT and ALREADY_SATISFIED say nothing about the route and get no history row.
+ * The history row for a sealed run, or null when none is recorded. VERIFIED is an accepted pass and PARTIAL a not_proven row (the estimator reads both, so the quote counts every finished run).
+ * FAILED is a code-owned loss (router evidence for expectedCost). A not_proven row never counts for the route (isCodeLoss, routeScore, haikuFloorExecutor skip it). SPEC_CONFLICT and ALREADY_SATISFIED get no history row.
  */
 export function outcomeFor(shape: string, model: string, verdict: string, usd: number, wallS: number): RunOutcome | null {
   const executor = /haiku/i.test(model) ? "haiku" : "sonnet";
   if (verdict === "VERIFIED") return { shape, executor, verdict: "pass", owner: null, escalated: false, usd, wallS, wallKind: WALL_KIND };
   if (verdict === "FAILED") return { shape, executor, verdict: "fail", owner: "code", escalated: false, usd, wallS, wallKind: WALL_KIND };
+  if (verdict === "PARTIAL") return { shape, executor, verdict: "not_proven", owner: null, escalated: false, usd, wallS, wallKind: WALL_KIND };
   return null;
 }
 
@@ -167,7 +168,7 @@ export const ESTIMATE_HELP = `loki estimate - Show what a run is likely to cost
 Usage: loki estimate [--model M] [--provider P] [--json]
 
 Prints the same quote "loki start" prints before a run: "about $X (range $lo-$hi),
-about N min (range a-b min)" from this repo's prior verified runs of the same project
+about N min (range a-b min)" from this repo's finished runs (verified or not proven) of the same project
 shape. With fewer than ${MIN_RUNS} such runs it prints the benchmark prior for the model
 (measured p10 / p50 / p90 of citable runs in benchmarks/h2h/results, files listed in
 PRIOR_SOURCES in runner/router/cost_preview.ts), or NOT AVAILABLE (reason) when the
