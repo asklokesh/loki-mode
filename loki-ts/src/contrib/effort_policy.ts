@@ -1,15 +1,18 @@
 // ER-01 / COST-1: per-stage reasoning effort. Pure; on by default (LOKI_E10_EFFORT_POLICY=off|0|false|legacy opts out).
-// implement and wall run at medium, fix round 1 at high, fix round 2+ at xhigh only for a code-owned failure (Haiku: medium every round, see fixEffort).
+// wall runs at medium; implement runs at the provider default (see stageEffort); fix round 1 at high, fix round 2+ at xhigh only for a code-owned failure (Haiku: medium every round, see fixEffort).
 import { defaultBudgetsOn } from "../engine10/types.ts";
 export function effortPolicyOn(env: NodeJS.ProcessEnv = process.env): boolean {
   const v = (env["LOKI_E10_EFFORT_POLICY"] ?? "").trim().toLowerCase();
   return !(v === "off" || v === "0" || v === "false" || v === "legacy");
 }
 
-/** Effort for stages that need only the stage name; undefined when the policy is off or the stage is not covered. */
+/** Effort for stages that need only the stage name; undefined when the policy is off or the stage is not covered.
+ *  implement returns undefined (the provider's default effort) unless LOKI_E10_IMPLEMENT_EFFORT names one. This holds for every implement session, not only issue runs:
+ *  a fixed medium cost accuracy against one plain session on the same model (FireLater#21), and a cost-saving setting that can cost accuracy is not kept (founder rule, 2026-11-18). It raises cost on every run. */
 export function stageEffort(stage: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
   if (!effortPolicyOn(env)) return undefined;
-  return stage === "implement" || stage === "wall" ? "medium" : undefined;
+  if (stage === "implement") return (env["LOKI_E10_IMPLEMENT_EFFORT"] ?? "").trim() || undefined;
+  return stage === "wall" ? "medium" : undefined;
 }
 
 export const isHaikuModel = (model: string | undefined): boolean => /haiku/i.test(model ?? "");

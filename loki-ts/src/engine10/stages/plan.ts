@@ -20,6 +20,7 @@ import { behaviorChangeInstruction, mutationStrict, readBehaviorChange } from ".
 import { reviewerBriefEnabled } from "../../util/reviewer_brief.ts";
 
 const MAX_PLAN_LINES = 10;
+const OWN_LIST_REASON = "the issue has its own acceptance list: the implementer plans";
 const PLAN_OUTPUT_FILENAME = "plan-output.txt";
 
 function planOutputPath(runDir: string): string { return join(runDir, PLAN_OUTPUT_FILENAME); }
@@ -30,6 +31,11 @@ export { selectRelevantFiles };
 export function keepsPlanForConsentOrCap(env: NodeJS.ProcessEnv, tty: boolean, size: string, named: () => number, packages: () => number): boolean {
   if (confirmRequested(env)) return true;
   return size === "normal" && ((intentCardEnabled(env) && tty) || (named() === 0 && packages() > 1));
+}
+
+/** plain-first (#701): an issue that carries its own acceptance list, at any size, is implemented without a separate plan session (the implementer plans), unless LOKI_E10_PLAN forces or disables the plan. */
+export function ownListSkipsPlan(mode: "auto" | "always" | "never", source: unknown, lines: number): boolean {
+  return mode === "auto" && source === "issue" && lines > 0;
 }
 
 /** Truncates the planner's output to at most `max` non-empty lines: engine-side enforcement, since nothing stops a session from writing more. */
@@ -75,13 +81,14 @@ export const planStage: Stage = {
     const pr = await planRoute(ctx.runDir, ctx.provider, process.env, ctx.repoDir); // R1-10 (runner/router/plan_route.ts): flag off adds nothing
     // FC-35: with the router on a task still plans (Opus must route it); only an explicit LOKI_E10_PLAN=0 skips, and records why. A large task keeps the plan session; small and normal fold the plan into the implement brief.
     const hard = pr.preset ? hardReason(sz.size, loaded, task) : null, routedPlan = pr.routed && (!pr.preset || hard !== null); // LOKI_ROUTER=auto: Opus plans only a hard task
-    const skip = mode === "never" || (mode === "auto" && sz.size !== "large" && !routedPlan && !keepsPlanForConsentOrCap(process.env, stderrIsTty(), sz.size, () => namedFiles(task, loaded).length, () => loadProjectApi(ctx.repoDir)?.packages().length ?? 0));
+    const ownList = ownListSkipsPlan(mode, prior.intake?.source, issueAcceptanceOf(prior.intake).length);
+    const skip = mode === "never" || ownList || (mode === "auto" && sz.size !== "large" && !routedPlan && !keepsPlanForConsentOrCap(process.env, stderrIsTty(), sz.size, () => namedFiles(task, loaded).length, () => loadProjectApi(ctx.repoDir)?.packages().length ?? 0));
     // E-64: wall.ts makes this same check to skip itself; a forced plan (LOKI_E10_PLAN=always) also forces "wall", since it still gets its own Wall.
     const path = mode === "always" || (wallEnabled() && wallOnLeanOn()) ? "wall" : smallTaskPath(sz.size, hasRelevantTests(task, loaded, testMap, ctx.tests.impacted));
     ctx.emit("variant", null, { size: sz.size, reasons: sz.reasons, plan_mode: mode, plan_skipped: skip, wall_model: wallEnabled() ? wallFirstModel(sz.size) : null, wall_model_reauthor: wallEnabled() ? wallModel() : null, small_task_path: path, cascade: cascadeEnabled() });
-    if (skip) pr.record({ planModel: "none", skipReason: mode === "never" || !pr.preset ? "plan stage skipped (LOKI_E10_PLAN=0)" : `no plan session: task sized ${sz.size} and not hard` });
+    if (skip) pr.record({ planModel: "none", skipReason: ownList ? OWN_LIST_REASON : mode === "never" || !pr.preset ? "plan stage skipped (LOKI_E10_PLAN=0)" : `no plan session: task sized ${sz.size} and not hard` });
     if (skip && mode === "auto") seedPlanScope(ctx.runDir, namedFiles(task, loaded)); // the scope guard reads plan-scope.json
-    if (skip) return { status: "skipped", data: { size: sz.size }, reason: mode === "never" ? "LOKI_E10_PLAN=0" : `${sz.size === "small" ? "small" : "normal"} task: implementer plans` };
+    if (skip) return { status: "skipped", data: { size: sz.size }, reason: mode === "never" ? "LOKI_E10_PLAN=0" : ownList ? OWN_LIST_REASON : `${sz.size === "small" ? "small" : "normal"} task: implementer plans` };
 
     const relevantFiles = selectRelevantFiles(task, repoMap, undefined, ctx.repoDir);
     const outputPath = planOutputPath(ctx.runDir);
