@@ -15,6 +15,8 @@ import { CONNECTION_ENV } from "./session.ts";
 import { acceptanceLines, FRESH_INSTALL_ASK, issueAcceptanceCapOn, issueAcceptanceOf, optionalAsk } from "../util/intent_card.ts";
 import { neededServices } from "../util/stack_tools.ts";
 import { issueRunBrief } from "./types.ts";
+import { MANIFEST } from "../e10ext/commit_filter.ts";
+import { LOCKFILE_RE } from "../util/lock_ecosystems.ts";
 
 /** RW-02 TITLE STAND-IN (LOKI_E10_TITLE_ACCEPTANCE, default on; 0/off/false/no opts out): the lines of a run on the proof road whose task has no acceptance
  *  list of its own. The plan's intent-card "Acceptance:" lines when a plan session ran for its own reasons (a large or hard task, consent); otherwise the
@@ -364,7 +366,7 @@ export function proofScriptRefusal(text: string): string | null {
   if (/(^|[\s;&|({])(function\s+)?(loki_http|loki_cmd|_lp)\s*\(\s*\)/.test(code)) return "the proof script redefines loki_http, loki_cmd or _lp; source loki-check.sh and use its functions unchanged";
   return null;
 }
-export interface ProofRerun { refused?: string; exit: number | null; seconds: number; proved: number; failed: number; tail: string; script_chars: number; stopped: number; left: number; lines: Record<string, { proved: number; failed: number; real?: number; http?: number; first_proved?: string; first_failed?: string; inert?: number; first_inert?: string; first_counted?: string }>; checks?: ProofCheck[]; restored?: string[]; dropped?: string[]; reused?: true; measured_at?: string }
+export interface ProofRerun { facts?: { repo: string; base: string }; refused?: string; exit: number | null; seconds: number; proved: number; failed: number; tail: string; script_chars: number; stopped: number; left: number; lines: Record<string, { proved: number; failed: number; real?: number; http?: number; first_proved?: string; first_failed?: string; inert?: number; first_inert?: string; first_counted?: string }>; checks?: ProofCheck[]; restored?: string[]; dropped?: string[]; reused?: true; measured_at?: string }
 /** One run of a proof script by Loki: a new scratch directory, the helper with a token that exists only in this run, an empty directory as the argument,
  *  the user's own database settings blanked, and the ownership cleanup afterwards. `plan` gets the scratch directory and names the script and where it runs
  *  (null: nothing is run). Null when no scratch directory could be made. Never throws. */
@@ -401,7 +403,7 @@ export async function rerunProof(repoDir: string, runDir: string, signal?: Abort
   let restored: string[] = []; const r = await withTrackedRestored(repoDir, () => runProofScript(env, signal, runDir, async () => ({ script, cwd: repoDir })), (p) => { restored = p; noteHarnessRestored(runDir, p); }, env);
   if (!r) return { exit: null, seconds: 0, proved: 0, failed: 0, tail: "Loki could not create a scratch directory for its own re-run", script_chars: scriptChars, stopped: 0, left: 0, lines: {} };
   const lines = tallyProof(r.results, r.token, repoDir), vals = Object.values(lines); // from the result file when it has lines, else from the output
-  const out: ProofRerun = { exit: r.exit, seconds: r.seconds, proved: vals.reduce((a, v) => a + v.proved, 0), failed: vals.reduce((a, v) => a + v.failed, 0), tail: r.text.replace(new RegExp(`LOKI-PROOF ${r.token} `, "g"), "").slice(-TAIL_CHARS), script_chars: scriptChars, stopped: r.stopped, left: r.left, lines, checks: proofChecks(r.results, r.token, repoDir), ...(restored.length ? { restored } : {}), ...(() => { const d = Object.values(lines).flatMap((v) => (v.inert && v.first_inert ? [v.first_inert.slice(0, 160)] : [])).slice(0, 20); return d.length ? { dropped: d } : {}; })() };
+  const out: ProofRerun = { exit: r.exit, seconds: r.seconds, proved: vals.reduce((a, v) => a + v.proved, 0), failed: vals.reduce((a, v) => a + v.failed, 0), tail: r.text.replace(new RegExp(`LOKI-PROOF ${r.token} `, "g"), "").slice(-TAIL_CHARS), script_chars: scriptChars, stopped: r.stopped, left: r.left, lines, checks: proofChecks(r.results, r.token, repoDir), ...(restored.length ? { restored } : {}), ...(() => { const f = recordedBase(repoDir, runDir); return f ? { facts: f } : {}; })(), ...(() => { const d = Object.values(lines).flatMap((v) => (v.inert && v.first_inert ? [v.first_inert.slice(0, 160)] : [])).slice(0, 20); return d.length ? { dropped: d } : {}; })() };
   saveRerun(repoDir, runDir, out); return out;
 }
 const RERUN_CACHE = "proof-rerun.json";
@@ -721,6 +723,48 @@ export function proofFacts(runDir: string, r: ProofRerun | null, expected: boole
   ];
 }
 
+const recordedBase = (repoDir: string, runDir: string): { repo: string; base: string } | null => { // the base revision the run recorded (baseline.json), or none
+  try { const b = (JSON.parse(readFileSync(join(runDir, "baseline.json"), "utf8")) as { revision?: unknown }).revision; return typeof b === "string" && /^[0-9a-f]{7,64}$/i.test(b) ? { repo: repoDir, base: b } : null; } catch { return null; }
+};
+/** OUTSIDE-LINE: the names an acceptance line gives for a product (a capitalized word of 3 or more characters that is not all capitals and not the line's first word, and any word inside backticks), lower case, no repeats. A line Loki added itself gives none. */
+export function outsideNames(line: string): string[] {
+  if (/\(added by Loki\)/i.test(line)) return [];
+  const out = new Set<string>(), words = [...line.matchAll(/[A-Za-z][A-Za-z0-9]*/g)];
+  words.forEach((m, i) => { const w = m[0]; if (i > 0 && /^[A-Z]/.test(w) && w.length >= 3 && w !== w.toUpperCase()) out.add(w.toLowerCase()); });
+  for (const span of line.matchAll(/`([^`]+)`/g)) for (const w of span[1]!.matchAll(/[A-Za-z0-9]+/g)) out.add(w[0].toLowerCase());
+  return [...out];
+}
+/** OUTSIDE-LINE: the line allows another product or a stand-in (similar, equivalent, or other, or another, e.g., such as). */
+export const allowsAlternative = (line: string): boolean => /\b(similar|equivalent)\b|\bor (other|another)\b|\be\.g\.|\bsuch as\b/i.test(line);
+/** OUTSIDE-LINE: why a line that names an outside product is not met yet, or null. */
+export function outsideHold(f: { line: string; absent: string[]; inManifest: string[]; manifestAdded: number; http: number }): string | null {
+  const names = f.absent.filter((n) => !f.inManifest.includes(n));
+  if (!names.length || f.http > 0 || (allowsAlternative(f.line) && f.manifestAdded > 0)) return null;
+  return `the line names ${names.join(", ")}, which this repository did not use before the change; no dependency manifest names it, the change adds no dependency, and no check for this line makes a request, so nothing shows the integration runs. Add the package and prove the path that sends to it against a local stand-in`;
+}
+const ABSENT_MEMO = new Map<string, string[]>();
+const gitOut = (repo: string, args: string[]): string | null => { try { return execFileSync("git", args, { cwd: repo, encoding: "utf8", timeout: 10000, maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] }); } catch (e) { return (e as { status?: number }).status === 1 ? "" : null; } }; // git grep exits 1 for no match
+const wholeWord = (name: string): RegExp => new RegExp(`(?<![A-Za-z0-9])${name}(?![A-Za-z0-9])`, "i");
+/** OUTSIDE-LINE: the git facts for a line, or null when any call fails (no hold). The base-tree part is kept per repository, base and line; the manifest part is read fresh, because the session may add the package between proof rounds. */
+function outsideFacts(repo: string, base: string, line: string): { absent: string[]; inManifest: string[]; manifestAdded: number } | null {
+  const names = outsideNames(line); if (!names.length) return null;
+  const key = `${repo}\0${base}\0${line}`; let absent = ABSENT_MEMO.get(key);
+  if (!absent) {
+    absent = [];
+    for (const n of names) {
+      const o = gitOut(repo, ["grep", "-I", "-i", "-w", "-l", "-F", "-e", n, base, "--"]); if (o === null) return null;
+      if (!o.split("\n").some((l) => l && !LOCKFILE_RE.test(l.slice(base.length + 1)))) absent.push(n);
+    }
+    ABSENT_MEMO.set(key, absent);
+  }
+  if (!absent.length) return { absent, inManifest: [], manifestAdded: 0 };
+  const tracked = gitOut(repo, ["ls-files", "-z"]); if (tracked === null) return null;
+  const inManifest = new Set<string>();
+  for (const f of tracked.split("\0")) { if (!f || !MANIFEST.test(f)) continue; let t = ""; try { t = readFileSync(join(repo, f), "utf8"); } catch { continue; } for (const n of absent) if (wholeWord(n).test(t)) inManifest.add(n); }
+  const num = gitOut(repo, ["diff", "--numstat", base, "--"]); if (num === null) return null;
+  let manifestAdded = 0; for (const l of num.split("\n")) { const [a, , f] = l.split("\t"); if (f && MANIFEST.test(f) && /^\d+$/.test(a ?? "")) manifestAdded += Number(a); }
+  return { absent, inManifest: [...inManifest], manifestAdded };
+}
 /** The fixed rule: an acceptance line is met when Loki's own run has at least one passing check for its number and no failing one, and (when `base` is
  *  given and its comparison is available) at least one of those checks does not also pass on the base commit. No model is asked. A passing check that read nothing
  *  of the product or the tree (stepKind inert) is not counted. */
@@ -730,6 +774,7 @@ export function ruleStatus(asks: string[], r: ProofRerun | null, base?: ProofBas
     const e = r?.lines[String(i + 1)], opt = optionalAsk(line) ? { optional: true as const } : {}, counted = e ? e.proved - (e.inert ?? 0) : 0;
     if (e && e.proved > 0 && e.failed === 0 && counted === 0) return { line, status: "unmet" as const, reason: `its only passing check${e.proved === 1 ? "" : "s"} read nothing of the product or the tree when ${e.proved === 1 ? "it" : "they"} ran (for example: ${e.first_inert ?? ""}); make the request with loki_http or run the real command inside loki_cmd, so Loki sees it`.slice(0, 300), ...opt };
     if (e && e.proved > 0 && e.failed === 0 && empty.has(i + 1)) return { line, status: "unmet" as const, reason: provesNothingReason(base!, i + 1), ...opt };
+    if (e && e.proved > 0 && e.failed === 0 && r?.facts) { const f = outsideFacts(r.facts.repo, r.facts.base, line), hold = f ? outsideHold({ line, ...f, http: e.http ?? 0 }) : null; if (hold) return { line, status: "unmet" as const, reason: hold.slice(0, 400), ...opt }; }
     if (e && e.proved > 0 && e.failed === 0) return { line, status: "met" as const, evidence: `Loki's own run: ${counted} passing check${counted === 1 ? "" : "s"}; first: ${e.first_counted ?? e.first_proved ?? ""}`.slice(0, 300), ...opt };
     return { line, status: "unmet" as const, reason: (!r ? "there is no proof script for Loki to run" : r.refused ? `Loki did not run the proof script: ${r.refused}` : r.exit === null ? "Loki's own run of the proof did not finish" : e && e.failed > 0 ? `a check failed in Loki's own run: ${e.first_failed ?? ""}` : "Loki's own run has no passing check for this line").slice(0, 300), ...opt };
   });

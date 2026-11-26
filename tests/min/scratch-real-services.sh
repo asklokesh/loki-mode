@@ -120,4 +120,47 @@ const { PROOF_SCRIPT_LINE: L } = await import(process.env.ROOT + "/loki-ts/src/e
 const c = (s) => L.split(s).length - 1;
 console.log(c("loki_wait_http") === 1 && c("loki-steps.log") === 1 ? "once" : "counts " + c("loki_wait_http") + " " + c("loki-steps.log"));' 2>&1)"
 [ "$W5" = once ] && ok "W5 PROOF_SCRIPT_LINE names loki_wait_http and loki-steps.log once each" || bad "W5 brief line: $W5"
+
+# ---- Outside line (#697): a line that names an outside product is not met from a log line or a unit test while the package is absent. ----
+# O1 to O5 are pure bun cells; O6 builds a git fixture under the run temp dir.
+echo "TEST: outsideNames, allowsAlternative, outsideHold, ruleStatus facts"
+O="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const m = await import(process.env.ROOT + "/loki-ts/src/engine10/proof_rerun.ts");
+const j = JSON.stringify, r = {};
+const names = { "Integrate error tracking (Sentry/similar)": ["sentry"], "Define comprehensive error type hierarchy": [], "Add login with Google and GitHub": ["google", "github"], "Add RTL support for applicable languages": [], "Support both frontend and API response localization": [], "Use `stripe` for payments": ["stripe"], "Fresh install (added by Loki): after this change, an empty database is created": [] };
+r.o1 = Object.entries(names).filter(([l, w]) => j(m.outsideNames(l)) !== j(w)).map(([l]) => l + " -> " + j(m.outsideNames(l)));
+r.o2 = [m.allowsAlternative("Integrate error tracking (Sentry/similar)"), m.allowsAlternative("Postgres or another database"), m.allowsAlternative("Integrate Sentry")];
+const L = "Integrate error tracking (Sentry/similar)", h = (o) => m.outsideHold({ line: "Integrate Sentry", absent: ["sentry"], inManifest: [], manifestAdded: 0, http: 0, ...o });
+r.o3 = [m.outsideHold({ line: L, absent: [], inManifest: [], manifestAdded: 0, http: 0 }), h({ http: 1 }), h({ inManifest: ["sentry"] }), m.outsideHold({ line: L, absent: ["sentry"], inManifest: [], manifestAdded: 2, http: 0 }), typeof m.outsideHold({ line: L, absent: ["sentry"], inManifest: [], manifestAdded: 0, http: 0 }), typeof h({}), /sentry/.test(h({}) ?? "")];
+r.o4 = m.ruleStatus([L], { exit: 0, seconds: 1, proved: 2, failed: 0, tail: "", script_chars: 1, stopped: 0, left: 0, lines: { "1": { proved: 2, failed: 0, http: 0 } } })[0].status;
+r.o5 = [typeof m.outsideHold({ line: L, absent: ["sentry"], inManifest: [], manifestAdded: 0, http: 0 }), m.outsideHold({ line: L, absent: ["sentry"], inManifest: ["sentry"], manifestAdded: 0, http: 0 })];
+console.log(j(r));' 2>&1)"
+echo "    $O"
+OC() { python3 -I -c 'import json, sys
+o = json.loads(sys.argv[1]); sys.exit(0 if eval(sys.argv[3], {"v": o[sys.argv[2]]}) else 1)' "$O" "$1" "$2" 2>/dev/null; }
+OC o1 'v == []' && ok "O1 outsideNames gives the expected names for the spec lines, the stripe line and the stored Loki line" || bad "O1 outsideNames: $O"
+OC o2 'v == [True, True, False]' && ok "O2 allowsAlternative: true for (Sentry/similar) and 'or another', false for 'Integrate Sentry'" || bad "O2 allowsAlternative: $O"
+OC o3 'v == [None, None, None, None, "string", "string", True]' && ok "O3 outsideHold truth table (no absent name, http, in manifest, alternative with manifest lines added: null; else a string naming the product)" || bad "O3 outsideHold: $O"
+OC o4 'v == "met"' && ok "O4 ruleStatus with no facts reads met, as before" || bad "O4 ruleStatus: $O"
+OC o5 'v == ["string", None]' && ok "O5 FireLater#21 line 4 replay: the stored facts hold, the plain run's facts do not" || bad "O5 replay: $O"
+# O6: git fixture. A base without the name, a change that names it in source and adds no manifest line: unmet. A manifest line naming it: met.
+OF="$T/outside-fixture"
+mkdir -p "$OF/src"
+git -C "$OF" init -q
+printf 'x\n' > "$OF/README.md"
+printf '{"name":"fx","dependencies":{}}\n' > "$OF/package.json"
+git -C "$OF" add README.md package.json
+git -C "$OF" -c user.name=t -c user.email=t@example.invalid commit -q -m base
+OBASE="$(git -C "$OF" rev-parse HEAD)"
+printf 'const sentry = 1;\n' > "$OF/src/errors.ts"
+git -C "$OF" add src/errors.ts
+git -C "$OF" -c user.name=t -c user.email=t@example.invalid commit -q -m change
+O6="$(ROOT="$ROOT" OF="$OF" BASE="$OBASE" bun --no-env-file --config=/dev/null -e '
+const m = await import(process.env.ROOT + "/loki-ts/src/engine10/proof_rerun.ts"), fs = await import("node:fs");
+const L = "Integrate error tracking (Sentry/similar)", rr = { exit: 0, seconds: 1, proved: 2, failed: 0, tail: "", script_chars: 1, stopped: 0, left: 0, lines: { "1": { proved: 2, failed: 0, http: 0 } }, facts: { repo: process.env.OF, base: process.env.BASE } };
+const a = m.ruleStatus([L], rr)[0].status;
+fs.writeFileSync(process.env.OF + "/package.json", JSON.stringify({ name: "fx", dependencies: { "@sentry/node": "1.0.0" } }) + "\n");
+const b = m.ruleStatus([L], rr)[0].status;
+console.log(a + " " + b);' 2>&1)"
+[ "$O6" = "unmet met" ] && ok "O6 git fixture: a source file naming the product and no manifest line is unmet; a manifest line naming it is met" || bad "O6 fixture: $O6"
 finish
