@@ -16,7 +16,7 @@ import { isClaudeModel, noteRoleModel, PROVIDER_DEFAULT_MODEL, roleModel } from 
 import { backstopS, type RunContext, type Verdict } from "../types.ts";
 export type ReviewLevel = "pass" | "flag" | "block" | "not_run";
 export type ReviewedBy = "model" | "deterministic" | "none";
-export interface CrossReview { provider: ReviewProvider; level: ReviewLevel; notes: string[]; same_vendor_default?: boolean; hygiene?: string[]; reviewed_by?: ReviewedBy; reviewer_model?: string; cost_iteration?: string; }
+export interface CrossReview { provider: ReviewProvider; level: ReviewLevel; notes: string[]; same_vendor_default?: boolean; hygiene?: string[]; reviewed_by?: ReviewedBy; reviewer_model?: string; cost_iteration?: string; reasons?: string[]; }
 /** True only when a model reviewer really returned a verdict; a deterministic-only result never credits "one reviewer". */
 export const modelReviewRan = (xr: CrossReview | null | undefined): xr is CrossReview => !!xr && xr.level !== "not_run" && xr.reviewed_by !== "deterministic" && xr.reviewed_by !== "none"; // a hygiene flag can lift level off not_run with no model call (reviewed_by none)
 // Compiled or bytecode cache files by extension or dir (generic across stacks). Any other run-added path counts only when the repo's own ignore rules ignore it (it was force-added); legit source such as src/build/index.ts never counts.
@@ -66,8 +66,12 @@ export function parseReview(p: ReviewProvider, out: string): CrossReview {
   const all = reviewFlagLines(out.slice(m.index + m[0].length)).map(clean).filter(Boolean), unmet = (r: string): boolean => UNMET_REASON_RE.test(r);
   const reasons = [...all.filter(unmet), ...all.filter((r) => !unmet(r))].slice(0, MAX_NOTES); // F3: UNMET reasons first, so the cap of 5 never cuts one
   const notes = level === "pass" ? [] : (reasons.length ? reasons : ["no reason given"]).map((r) => `cross-review ${level} (${p}): ${r}`);
-  return { provider: p, level, notes };
+  const reasonsAll = level === "pass" ? [] : all.length ? [...all.filter((r) => !unmet(r)), ...all.filter(unmet)] : ["no reason given"]; // the full list in the order a session reads it: specific findings first, the bare UNMET lines after; never cut by MAX_NOTES (only the early review round reads it, reviewRound in implement.ts)
+  return { provider: p, level, notes, ...(reasonsAll.length ? { reasons: reasonsAll } : {}) };
 }
+export const HAND_BACK_MAX = 12, HAND_BACK_CLIP = 500; // the early review's own bound: what is handed back to the session stays small without the receipt's cap of 5 cutting a finding
+/** What the early review round hands back to the session: the reviewer's specific findings first, then its UNMET lines, at most HAND_BACK_MAX, each clipped. The receipt side (notes, held_by, the label) keeps MAX_NOTES and the UNMET-first order. */
+export const handBackReasons = (xr: CrossReview | null | undefined): string[] => (xr && (xr.level === "block" || xr.level === "flag") ? (xr.reasons ?? xr.notes.filter((n) => /^cross-review (block|flag) /.test(n) || isUnmetNote(n)).map((n) => n.replace(/^cross-review \w+ \([^)]*\):\s*/, ""))) : []).slice(0, HAND_BACK_MAX).map((r) => capWhole(r, HAND_BACK_CLIP));
 /** Rule 6 (h2h 2026-11-01, 115 Loki runs): the unconfigured same-vendor review changed no verdict and was 74% of Loki-on-Haiku spend. It stays on by default for the high tier (auth, crypto, payments, migrations, CI, public API: no ready PR there without a review) and is opt-in for medium (LOKI_REVIEW_DEFAULT=1). A configured reviewer (loki.yaml review:, LOKI_REVIEW_PROVIDER, a reviewer agent) always runs. */
 export const reviewDefaultOn = (tier: string, env: NodeJS.ProcessEnv = process.env): boolean => tier === "high" || (tier === "medium" && env["LOKI_REVIEW_DEFAULT"] === "1");
 // Review time box: 300s (real claude reviews often exceed 60s); LOKI_E10_REVIEW_BOX_S overrides (tests). Seal's limit grows by it when a review is planned.
