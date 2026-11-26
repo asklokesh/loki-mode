@@ -171,7 +171,12 @@ const reviewChecksBlock = (ctx: RunContext): string[] => { const cs = (ctx.outpu
  *  met was sealed PARTIAL on two defects the reviewer found (a documented quoted-phrase search rejected by input validation, a documented date filter that
  *  did nothing) that the session would have fixed in minutes. */
 export const reviewFixOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_REVIEW_FIX"] ?? "").trim());
-export async function crossReview(ctx: RunContext, verdict: Verdict, head: string, signal?: AbortSignal, early = false): Promise<CrossReview | null> {
+/** The follow-up review's block (loki-mode#692): what the earlier review found, numbered and clipped, and what to report now. Pure. */
+export function followBlock(earlier: string[]): string[] {
+  return ["This is a follow-up review. An earlier review of this change found the problems numbered below, and the author then changed the code. The diff below is only what changed since that review. Say which of the earlier problems are still open in this diff. Then look for new defects in the changed lines, above all in code that was rewritten to answer a finding. Report only what is still open or new; do not restate an UNMET line unless this diff makes it unmet.", "", ...earlier.map((f, i) => `${i + 1}. ${f.length > 300 ? f.slice(0, 300) : f}`)];
+}
+/** follow (loki-mode#692): a follow-up review of from..head instead of base..head; n numbers its cost file (default 1). An empty diff returns null with no call. */
+export async function crossReview(ctx: RunContext, verdict: Verdict, head: string, signal?: AbortSignal, early = false, follow?: { from: string; earlier: string[]; n?: number }): Promise<CrossReview | null> {
   // early: no risk record exists yet (verify writes it), so the reviewer is the configured one, else the run's own CLI; `head` is a tree of the uncommitted change
   const agent = configuredReviewer(ctx.repoDir), picked = pickReviewer(ctx, agent), earlyP = early && !picked.p && ctx.provider === "claude" && !isOff(process.env["LOKI_REVIEW_PROVIDER"]) ? (ctx.provider as ReviewProvider) : null;
   const p = picked.p ?? earlyP, dflt = picked.p ? picked.dflt : earlyP !== null; if (!p) return null; // a configured reviewer/council agent turns the default review on
@@ -187,17 +192,18 @@ export async function crossReview(ctx: RunContext, verdict: Verdict, head: strin
   };
   if (tier === "low") return tag({ provider: p, level: "not_run", notes: [`cross-review skipped: low risk (${p} not run)`] }); // COST-4: low risk records the skip, never a pass
   if (roomS(ctx) < MIN_REVIEW_S) return tag({ provider: p, level: "not_run", notes: [`cross-review not run: insufficient run time for ${p}`] });
-  const d = await safeGitRun(ctx.repoDir, ["diff", "--no-color", ctx.baseSha, head, "--", ".", ":(exclude).loki"], { timeoutMs: 20000 }).catch(() => null);
+  const d = await safeGitRun(ctx.repoDir, ["diff", "--no-color", follow ? follow.from : ctx.baseSha, head, "--", ".", ":(exclude).loki"], { timeoutMs: 20000 }).catch(() => null);
   if (!d || d.exitCode !== 0) return tag({ provider: p, level: "not_run", notes: [`cross-review not run: diff unavailable for ${p}`] });
+  if (follow && !d.stdout.trim()) return null; // nothing changed since the earlier review: no call
   const rd = lineCheckDiff(d.stdout), changedList = [...d.stdout.matchAll(/^diff --git a\/(\S+)/gm)].map((m) => m[1]!).slice(0, 80).join(", ");
   const prompt = [agent ? `${agent.prompt}\nReview ONLY the diff below. Do not modify files.` : "You are an independent code reviewer. Review ONLY the diff below for correctness bugs, spec violations and missing tests. Do not modify files.",
     REVIEW_TOOLS_NOTE,
-    "Reply with a first line exactly `VERDICT: PASS`, `VERDICT: FLAG` (concerns) or `VERDICT: BLOCK` (a reproduced defect), then one `- reason` line per concern.", ...acceptancePromptBlock(reviewAcceptance(ctx)), ...reviewChecksBlock(ctx), ...(rd.truncated || rd.cut.length ? [`The diff below is NOT the whole change: ${rd.truncated ? "it is cut at its end" : "it is complete except for the files named next"}${rd.cut.length ? `; lockfile, snapshot and generated files are left out (${rd.cut.slice(0, 8).join(", ")})` : ""}. Every changed file is listed here; read any you need with your tools before saying something is missing: ${changedList}`] : []), "", "```diff", rd.text, "```"].join("\n");
+    "Reply with a first line exactly `VERDICT: PASS`, `VERDICT: FLAG` (concerns) or `VERDICT: BLOCK` (a reproduced defect), then one `- reason` line per concern.", ...(follow ? followBlock(follow.earlier) : [...acceptancePromptBlock(reviewAcceptance(ctx)), ...reviewChecksBlock(ctx)]), ...(rd.truncated || rd.cut.length ? [`The diff below is NOT the whole change: ${rd.truncated ? "it is cut at its end" : "it is complete except for the files named next"}${rd.cut.length ? `; lockfile, snapshot and generated files are left out (${rd.cut.slice(0, 8).join(", ")})` : ""}. Every changed file is listed here; read any you need with your tools before saying something is missing: ${changedList}`] : []), "", "```diff", rd.text, "```"].join("\n");
   try {
     if (p === "claude") await ensureClaudeHelpCache();
     if (p === "claude") noteRoleModel("review", agent?.model || pin || ctx.model); // ROLE-MODELS: the receipt's models_by_role
     const r = await withChildLedger(run, join(ctx.repoDir, ".loki"), "xreview")(reviewArgv(p, prompt, process.env, p === "claude" ? agent?.model || pin : undefined), { cwd: ctx.repoDir, timeoutMs: boxFor(ctx) * 1000, group: true, signal });
-    const costId = `${ctx.runId}-xreview-${p}${early ? "-early" : ""}`; // the reviewer's own result-cost file, so seal's cost read includes it
+    const costId = `${ctx.runId}-xreview-${p}${follow ? `-follow${follow.n ?? 1}` : early ? "-early" : ""}`; // the reviewer's own result-cost file, so seal's cost read includes it
     writeReviewerCost(join(ctx.repoDir, ".loki"), costId, { reviewer: `xreview-${p}`, provider: p, model: p === "claude" ? agent?.model || pin : undefined, stdout: r.stdout, stderr: r.stderr });
     if (r.exitCode !== 0) return { ...tag({ provider: p, level: "not_run", notes: [`cross-review not run: ${p} exited ${r.exitCode}`] }), cost_iteration: costId };
     return { ...tag(parseReview(p, r.stdout)), cost_iteration: costId };
