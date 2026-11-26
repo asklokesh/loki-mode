@@ -7,11 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-- Label fix (#698): VERIFIED now needs the last review read in the run to be no block, the final tree to be the tree that review read, and every finding handed back to the session to be listed as closed by the next read. On FireLater#21 (11.183.0) Loki labelled a change VERIFIED and "loki: safe to merge" while its last follow-up review was an unanswered block on code no reviewer read afterwards; an independent review found the change not merge-ready. That run now ends PARTIAL. Rejected: holding on any open flag, which would turn 23 of 27 stored VERIFIED receipts into PARTIAL.
-- An acceptance line that names an outside product (a service or package the repository does not use yet) is not met while no manifest names it and no counted check for it made a request (#697). On FireLater#21 the error-tracking line was met from a log grep with the package absent. Replay over 41 stored issue lines holds 1, the right one.
-- Plain floor first (#701): the implement session runs at the provider's default effort instead of medium; an issue with its own acceptance list skips the plan session (the plan narrowed a line on 4 of 4 stored user runs); issue runs may add a dependency with its lockfile and may run the full test suite. On FireLater#21 plain Claude Code on Sonnet with the user's settings off cost $1.51 and 9 min and was merge-ready; Loki cost $4.87 and 30 min.
-- Calibration cannot test these rules: its 32 cases fire no review and no proof rerun. The rules only lower a label. Their effect is checked on the next same-hour Loki and plain pair on a FireLater issue Loki has not run.
-
 ## v11.183.0 (2026-11-26)
 
 ### Changed
