@@ -338,8 +338,8 @@ case "$OUT" in *"sizes large"*|*"split into"*|*"Split planning"*) wsplit=yes ;; 
 wstages="$(python3 -I -c 'import json,sys
 ev=[json.loads(l) for l in open(sys.argv[1]) if l.strip()]
 print(" ".join("%s:%s" % (e["stage"], e["type"].split(".")[1]) for e in ev if e["type"] in ("stage.completed", "stage.skipped") and e["stage"] in ("plan", "wall")))' "$WEV" 2>/dev/null)"
-[ "$wsize" = large ] && [ "$wstages" = "wall:skipped plan:completed" ] && ok "whole-first: the whole-issue run takes the measured LOKI_UNIT_ID=whole path: sized large by structure, plan session kept, Wall off by default" \
-    || bad "whole-first: the whole-issue run sized '${wsize:-none}' with stages '${wstages:-none}' (want large, wall:skipped plan:completed)"
+[ "$wsize" = large ] && [ "$wstages" = "plan:skipped wall:skipped" ] && ok "whole-first: the whole-issue run takes the measured LOKI_UNIT_ID=whole path: sized large by structure, no plan session (the epic lists its own acceptance criteria, #701), Wall off by default" \
+    || bad "whole-first: the whole-issue run sized '${wsize:-none}' with stages '${wstages:-none}' (want large, plan:skipped wall:skipped)"
 
 # S1b no-loss (issue run): an issue run whose implement reply ends with a finish line has the same stage order, receipt key set, implement key set and
 # normalized implement brief as on the base commit (8c7ae842b, captured by this same leg there).
@@ -496,9 +496,9 @@ c1_has "$ISSUE_P" "Never use a fixed port number: pick a port you have just chec
     && ! c1_has "$ISSUE_P" "Time budget: about" \
     && ok "candidate 1: the issue brief has the port rule, the tried-first rule, the take-the-time and deliver-each lines, no reconciling sentences and no time-budget sentence" \
     || bad "candidate 1: issue-run block lines wrong"
-c1_has "$ISSUE_P" "$CARD_LINE" && [ "$ISSUE_PATH" = "$ISSUE_PLANPATH:$T/fake-opt/postgresql@15/bin" ] && [ -f "$ISSUE_RUN/env-card.json" ] && grep -q '"type":"env.card"' "$ISSUE_RUN/events.jsonl" \
+c1_has "$ISSUE_P" "$CARD_LINE" && [ "${ISSUE_PATH##*:}" = "$T/fake-opt/postgresql@15/bin" ] && ! c1_has "$ISSUE_PLANPATH" "$T/fake-opt" && [ -f "$ISSUE_RUN/env-card.json" ] && grep -q '"type":"env.card"' "$ISSUE_RUN/events.jsonl" \
     && ok "candidate 1 card: a repo needing postgres with a keg off PATH gets the newest keg's line in the brief and its bin appended (not prepended) to the implement session's PATH only; env-card.json and one event" \
-    || bad "candidate 1 card: line $(grep -c 'Available on this machine' <<< "$ISSUE_P"), implement PATH tail '${ISSUE_PATH##*:}', plan PATH equal to implement head: $([ "${ISSUE_PATH%:*}" = "$ISSUE_PLANPATH" ] && echo yes || echo no)"
+    || bad "candidate 1 card: line $(grep -c 'Available on this machine' <<< "$ISSUE_P"), implement PATH tail '${ISSUE_PATH##*:}', plan PATH free of the keg: $(c1_has "$ISSUE_PLANPATH" "$T/fake-opt" && echo no || echo yes)"
 c1_run issue-ownlist none start acme/search#24 --no-pr --max-cost 5 -- # PFSTUB plain-first: a large issue with its own acceptance list starts no plan session
 PFV="$(python3 -I -c 'import json,sys
 for l in open(sys.argv[1]):
@@ -507,17 +507,17 @@ for l in open(sys.argv[1]):
 [ "$PFV" = "True large" ] && [ -z "$(ls "$T"/c1-issue-ownlist.prompt.plan* 2>/dev/null)" ] && [ -n "$C1P" ] \
     && ok "plain-first stub: a large issue with its own acceptance list emits variant plan_skipped true and starts no plan session" || bad "plain-first stub: variant '$PFV', plan prompts: $(ls "$T"/c1-issue-ownlist.prompt.plan* 2>/dev/null | wc -l)"
 c1_run issue-none none start acme/search#24 --no-pr --max-cost 5 --
-c1_has "$C1P" "This issue lists several things to deliver." && ! c1_has "$C1P" "Available on this machine" && [ "$C1PATH" = "$C1PLANPATH" ] \
+c1_has "$C1P" "This issue lists several things to deliver." && ! c1_has "$C1P" "Available on this machine" && ! c1_has "$C1PATH" "$T/fake-opt" \
     && ok "candidate 1 card: an issue run on a repo that needs no service gets no card line and an unchanged PATH" || bad "candidate 1 card: repo needing nothing got a card or a PATH change"
 c1_run text-pg pg "add a multiply(a, b) function to calc.ts" --no-pr -- LOKI_E10_DEFAULT_BUDGETS=1 # the time sentence exists only under a time limit (NO-DEFAULT-BUDGET); the knob restores today's limit
 c1_has "$C1P" "- Never kill processes." && c1_has "$C1P" "Time budget: about" && ! c1_has "$C1P" "LOKI_UNFINISHED" && ! c1_has "$C1P" "prove the change works by running it" && ! c1_has "$C1P" "Available on this machine" && [ -n "$C1PATH" ] && ! c1_has "$C1PATH" "$T/fake-opt" \
     && ok "candidate 1: a text goal keeps today's rules, finish line and time sentence, gets no block and no card, and no keg directory reaches its PATH" \
     || bad "candidate 1: the text goal changed: old rule $(grep -c 'Never kill processes' <<< "$C1P"), time $(grep -c 'Time budget' <<< "$C1P"), UNFINISHED $(grep -c LOKI_UNFINISHED <<< "$C1P"), block $(grep -c 'prove the change works' <<< "$C1P"), card $(grep -c 'Available on this' <<< "$C1P"), keg on PATH $(grep -c fake-opt <<< "$C1PATH"), PATH set $([ -n "$C1PATH" ] && echo yes || echo no)"
 c1_run issue-off pg start acme/search#24 --no-pr --max-cost 5 -- LOKI_E10_PROVE_BY_RUNNING=0 LOKI_E10_DEFAULT_BUDGETS=1 # time sentence needs a time limit (NO-DEFAULT-BUDGET)
-c1_has "$C1P" "- Never kill processes." && c1_has "$C1P" "Time budget: about" && ! c1_has "$C1P" "LOKI_UNFINISHED" && ! c1_has "$C1P" "Available on this machine" && [ "$C1PATH" = "$C1PLANPATH" ] \
+c1_has "$C1P" "- Never kill processes." && c1_has "$C1P" "Time budget: about" && ! c1_has "$C1P" "LOKI_UNFINISHED" && ! c1_has "$C1P" "Available on this machine" && ! c1_has "$C1PATH" "$T/fake-opt" \
     && ok "candidate 1: LOKI_E10_PROVE_BY_RUNNING=0 restores today's issue-run rules, time sentence and PATH, with no block and no card" || bad "candidate 1: the opt-out left a candidate-1 change"
 c1_run issue-cardoff pg start acme/search#24 --no-pr --max-cost 5 -- LOKI_E10_ENV_CARD=0
-c1_has "$C1P" "This issue lists several things to deliver." && ! c1_has "$C1P" "Available on this machine" && [ "$C1PATH" = "$C1PLANPATH" ] \
+c1_has "$C1P" "This issue lists several things to deliver." && ! c1_has "$C1P" "Available on this machine" && ! c1_has "$C1PATH" "$T/fake-opt" \
     && ok "candidate 1 card: LOKI_E10_ENV_CARD=0 turns off only the card" || bad "candidate 1 card: LOKI_E10_ENV_CARD=0 did not turn the card off"
 # The path a real user hits most: the session cannot do an item, writes LOKI_UNFINISHED, is resumed once, changes nothing. One PR, PARTIAL, the diff committed,
 # and the session's own what-is-left text on the receipt and in the PR body.
@@ -942,9 +942,9 @@ c1_run tm-haiku none start acme/search#24 --no-pr --max-cost 5 --session-model h
 c1_run tm-off none start acme/search#24 --no-pr --max-cost 5 --session-model haiku -- E2E_STUB_ARGV_LOG="$T/c1-tm-off.argv" E2E_STUB_MEMORY_LOG="$T/c1-tm-off.mem"; TMB="$(tm_facts tm-off)"
 c1_run tm-sonnet none start acme/search#24 --no-pr --max-cost 5 --session-model sonnet -- LOKI_E10_TASK_MEMORY=1 E2E_STUB_ARGV_LOG="$T/c1-tm-sonnet.argv" E2E_STUB_MEMORY_LOG="$T/c1-tm-sonnet.mem"; TMC="$(tm_facts tm-sonnet)"
 echo "    task memory (implement argv | implement disable | plan disable | modes | MEMORY.md | scratch): haiku =1 $TMA; default $TMB; sonnet =1 $TMC"
-case "$TMA" in "yes|unset|unset|555/444|task+asks|gone") ok "task memory e2e: with LOKI_E10_TASK_MEMORY=1 a Haiku issue run's implement session carries autoMemoryDirectory and finds a read-only MEMORY.md with the task and its numbered acceptance lines; the plan session gets no auto-memory env from Loki; the scratch is removed after the run" ;; *) bad "task memory e2e (haiku) gave $TMA" ;; esac
-case "$TMB" in "none|unset|unset|"*"|nobody|na") ok "task memory e2e: by default (LOKI_E10_TASK_MEMORY unset) Loki writes no memory and no session carries a memory setting or env" ;; *) bad "task memory e2e (default) gave $TMB" ;; esac
-case "$TMC" in "none|unset|unset|"*) ok "task memory e2e: a Sonnet run with LOKI_E10_TASK_MEMORY=1 carries no memory setting or env on any session" ;; *) bad "task memory e2e (sonnet) gave $TMC" ;; esac
+case "$TMA" in "yes|unset|nosession|555/444|task+asks|gone") ok "task memory e2e: with LOKI_E10_TASK_MEMORY=1 a Haiku issue run's implement session carries autoMemoryDirectory and finds a read-only MEMORY.md with the task and its numbered acceptance lines; no plan session starts, so none gets an auto-memory env from Loki (#701); the scratch is removed after the run" ;; *) bad "task memory e2e (haiku) gave $TMA" ;; esac
+case "$TMB" in "none|unset|nosession|"*"|nobody|na") ok "task memory e2e: by default (LOKI_E10_TASK_MEMORY unset) Loki writes no memory and no session carries a memory setting or env" ;; *) bad "task memory e2e (default) gave $TMB" ;; esac
+case "$TMC" in "none|unset|nosession|"*) ok "task memory e2e: a Sonnet run with LOKI_E10_TASK_MEMORY=1 carries no memory setting or env on any session" ;; *) bad "task memory e2e (sonnet) gave $TMC" ;; esac
 
 # --- split repair: a list detail is repaired, any other refusal is re-asked once with the exact error ------------------------
 # FireLater#24 (v11.116.0): one 520-character acceptance criterion refused the whole split and the epic ran as one 413 s session.

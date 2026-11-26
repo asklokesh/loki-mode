@@ -2447,7 +2447,7 @@ RFPY
 [ "$RFS" = "early=yes pf=yes order=ok" ] && ok "REVIEW-FIRST stub run: review.early comes before the first -pf hand-back session" || bad "REVIEW-FIRST stub run gave: $RFS (sessions '$RWSTAGES')"
 # REVIEW-CLOSES stub-run leg (written, not run by its author; the lead runs it after the bundle is rebuilt on the merged tree). The stub reviewer gives one verdict on every call (no block-then-pass
 # sequence), so with BLOCK the first review is handed back once (LOKI_E10_REVIEW_FOLLOW_MAX, default 1) and the fix is read once: exactly two review.early events, with follow 0, 1, and no line check
-# before the second of them (REVIEW-HOLDS: findings of the follow-up are not handed back). Needs a stub that changes the tree in the -pf hand-back session; if it does not, the second review.early never appears and this leg reads fewer than three.
+# before the second of them (REVIEW-HOLDS: findings of the follow-up are not handed back). The stub also changes the tree in the -rv self review turn, so a third read, the closing one (closing true, follow 2), follows by rule 1(b). Needs a stub that changes the tree in the -pf hand-back session; if it does not, the second review.early never appears and this leg reads fewer than three.
 rw_proof 'grep -q "export function multiply" calc.ts' 'grep -q "export function multiply" calc.ts'
 rw_engine reviewcloses "$RWD/list.md" LOKI_RISK_TIER=medium LOKI_REVIEW_DEFAULT=1 E2E_STUB_REVIEW=BLOCK
 RCS="$(python3 -I - "$RWRUN" <<'RCPY'
@@ -2455,13 +2455,13 @@ import json, os, sys
 try: ev = [json.loads(l) for l in open(os.path.join(sys.argv[1], "events.jsonl"))]
 except Exception: print("no events"); sys.exit(0)
 early = [e for e in ev if e["type"] == "review.early"]
-print("early=" + str(len(early)), "follow=" + ",".join(str(e["data"].get("follow", 0)) for e in early))
+print("early=" + str(len(early)), "follow=" + ",".join(str(e["data"].get("follow", 0)) for e in early), "closing=" + ",".join(str(e["data"].get("follow", 0)) for e in early if e["data"].get("closing")))
 RCPY
 )"
 # The seal stage reads the tree itself (its own review and line check). The bound is in the loop: with the reviewer always blocking and LOKI_E10_REVIEW_FOLLOW_MAX at its default 1, exactly two review.early events
 # (follow 0, 1) and no loop line check after a model review has read a tree, so the first line check is the seal's and comes after the seal's own review (three reviews before it: two in the loop, one at the seal; the seal runs its review, then its line check).
 RCPRE="${RWSTAGES%%linecheck*}"
-[ "$RCS" = "early=2 follow=0,1" ] && [ "$(grep -o review <<< "$RCPRE" | wc -l | tr -d ' ')" = 3 ] && ok "REVIEW-CLOSES stub run: two review.early (the first, then follow 1, the bound), and no loop line check (the seal's own review is the third review before the first line check)" || bad "REVIEW-CLOSES stub run gave: $RCS (sessions '$RWSTAGES')"
+[ "$RCS" = "early=3 follow=0,1,2 closing=2" ] && [ "$(grep -o review <<< "$RCPRE" | wc -l | tr -d ' ')" = 4 ] && ok "REVIEW-CLOSES stub run: three review.early (the first, follow 1 the bound, then the closing read of the -rv self review turn the stub changes the tree in, #698 rule 1b), and no loop line check (the seal's own review is the fourth review before the first line check)" || bad "REVIEW-CLOSES stub run gave: $RCS (sessions '$RWSTAGES')"
 # REVIEW-HOLDS stub-run leg (written, not run by its author; the lead runs it after the bundle is rebuilt on the merged tree). (a) The reviewer flags with two findings (the stub concern and a second
 # line) and every follow-up says `STILL OPEN: 2`: two review.early events (follow absent, then 1), exactly one -pf hand-back session, no loop line check (three reviews before the first line check: two in the loop and the seal's own), a PARTIAL receipt held by "review open".
 rw_proof 'grep -q "export function multiply" calc.ts' 'grep -q "export function multiply" calc.ts'
@@ -2474,11 +2474,11 @@ try: r = json.load(open(os.path.join(sys.argv[1], "receipt.json")))
 except Exception: r = {}
 early = [e for e in ev if e["type"] == "review.early"]
 pf = [e for e in ev if e["type"] == "session.started" and str(e["data"].get("session_id", "")).endswith("-pf")]
-print("early=" + str(len(early)), "follow=" + ",".join(str(e["data"].get("follow", 0)) for e in early), "pf=" + str(len(pf)), r.get("verdict"), "held=" + ("open" if any(h.get("kind") == "review open" for h in r.get("held_by") or []) else "no"))
+print("early=" + str(len(early)), "follow=" + ",".join(str(e["data"].get("follow", 0)) for e in early), "closing=" + ",".join(str(e["data"].get("follow", 0)) for e in early if e["data"].get("closing")), "pf=" + str(len(pf)), r.get("verdict"), "held=" + ("open" if any(h.get("kind") == "review open" for h in r.get("held_by") or []) else "no"))
 RHPY
 )"
 RHPRE="${RWSTAGES%%linecheck*}"
-[ "$RHS" = "early=2 follow=0,1 pf=1 PARTIAL held=open" ] && [ "$(grep -o review <<< "$RHPRE" | wc -l | tr -d ' ')" = 3 ] && ok "REVIEW-HOLDS stub run (a): a flag still open after the one fix is read twice, hands back once, runs no loop line check, and seals PARTIAL held by review open" || bad "REVIEW-HOLDS stub run (a) gave: $RHS (sessions '$RWSTAGES')"
+[ "$RHS" = "early=3 follow=0,1,2 closing=2 pf=1 PARTIAL held=open" ] && [ "$(grep -o review <<< "$RHPRE" | wc -l | tr -d ' ')" = 4 ] && ok "REVIEW-HOLDS stub run (a): a flag still open after the one fix is read twice, hands back once, the -rv self review turn the stub changes the tree in gets its closing read (#698 rule 1b, handed back nowhere), no loop line check, and seals PARTIAL held by review open" || bad "REVIEW-HOLDS stub run (a) gave: $RHS (sessions '$RWSTAGES')"
 # Leg (b) (a session turn after the review that changes no file: one review.early, no follow-up, not held by review open) is not written: the stub's -pf session always changes the tree and the stub fixture is not in this lane's files. Unit 7 covers its rule (a flag with still_open [] and nothing changed gives no hold).
 rw_proof 'grep -q "export function multiply" calc.ts' 'grep -q "export function multiply" calc.ts' 'false' # line 2 has one passing and one failing check
 rw_engine failing "$RWD/list.md"; RWF="$(rw_facts)"
