@@ -228,7 +228,7 @@ stale() { git -C "$1" for-each-ref --format='%(refname)' refs/heads/loki/ | grep
 run_loki() {
     local repo="$1" log="$2"; shift 2
     OUT="$(cd "$repo" && env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY -u LOKI_SPEED \
-        LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$T/bin:$FIX/bin:$PATH" E2E_STUB_LOG="$log" \
+        LOKI_E10_INVOKER=cli LOKI_E10_THIN_WRAP=0 LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$T/bin:$FIX/bin:$PATH" E2E_STUB_LOG="$log" \
         LOKI_RECEIPT_SIGNING_KEY_FILE="$T/k.pem" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" "$@" 2>&1)"
     RC=$?
 }
@@ -447,7 +447,7 @@ hk_leg() { # hk_leg <name> <VAR=value...> -- <start args...>: the structural epi
 run_loki_env() { # run_loki_env <repo> <log> <VAR=value...> -- <args...>: run_loki with extra env for this call only
     local repo="$1" log="$2"; shift 2; local envs=(); while [ "$1" != "--" ]; do envs+=("$1"); shift; done; shift
     OUT="$(cd "$repo" && env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY -u LOKI_SPEED \
-        LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$T/bin:$FIX/bin:$PATH" E2E_STUB_LOG="$log" E2E_STUB_MODE=slice E2E_STUB_SPLIT="$SPLIT" \
+        LOKI_E10_INVOKER=cli LOKI_E10_THIN_WRAP=0 LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$T/bin:$FIX/bin:$PATH" E2E_STUB_LOG="$log" E2E_STUB_MODE=slice E2E_STUB_SPLIT="$SPLIT" \
         LOKI_RECEIPT_SIGNING_KEY_FILE="$T/k.pem" "${envs[@]}" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" "$@" 2>&1)"
     RC=$?
 }
@@ -652,7 +652,7 @@ case "$PVS" in "verdict=PARTIAL; asks=1=not proved,2=not proved; "*"lines=not pr
 # Interrupt: SIGINT to the run while an ask script has a server child up, one child in the driver's group and one that left it (its own session), both
 # recorded in prove/pids. Afterwards no recorded id is alive (checked by id). A resume reuses the prover's files: no second listing or prover session.
 PVA="$T/pv-abort"; make_repo "$PVA" 0; rm -f "$T/pv-abort.mark"
-(cd "$PVA" && exec env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY -u LOKI_SPEED LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$T/bin:$FIX/bin:$PATH" \
+(cd "$PVA" && exec env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY -u LOKI_SPEED LOKI_E10_INVOKER=cli LOKI_E10_THIN_WRAP=0 LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$T/bin:$FIX/bin:$PATH" \
     E2E_STUB_LOG="$T/pv-abort-stub.log" LOKI_E10_PROVE=1 E2E_STUB_MODE=done E2E_STUB_PROVE=abort E2E_STUB_ABORT_MARK="$T/pv-abort.mark" LOKI_RECEIPT_SIGNING_KEY_FILE="$T/k.pem" \
     bash "$ROOT/bin/loki" start acme/search#24 --no-pr --max-cost 5 </dev/null >"$T/pv-abort.out" 2>&1) &
 PVAP=$!
@@ -817,7 +817,7 @@ try {
     || bad "scratch final TZ and record: $SOTZ"
 # e2e: an unrelated process started in the work tree during the session survives; a SIGINT to the run still stops what the session left in scratch
 SOR="$T/so-intree"; make_repo "$SOR" 0
-(cd "$SOR" && exec env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY -u LOKI_SPEED LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$T/bin:$FIX/bin:$PATH" \
+(cd "$SOR" && exec env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY -u LOKI_SPEED LOKI_E10_INVOKER=cli LOKI_E10_THIN_WRAP=0 LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$T/bin:$FIX/bin:$PATH" \
     E2E_STUB_LOG="$T/so-intree-stub.log" E2E_STUB_MODE=done E2E_STUB_SCRATCH=leave E2E_STUB_SCRATCH_PID_LOG="$T/so-intree.left" E2E_STUB_SLEEP=3 LOKI_RECEIPT_SIGNING_KEY_FILE="$T/k.pem" \
     bash "$ROOT/bin/loki" start acme/search#24 --no-pr --max-cost 5 </dev/null >"$T/so-intree.out" 2>&1) & SOP=$!
 for i in $(seq 1 900); do [ -s "$T/so-intree.left" ] && break; sleep 0.1; done
@@ -830,7 +830,7 @@ except Exception: print("no")' "$1"; }
     && ok "scratch owned e2e: the session's process in scratch is stopped; a process started in the work tree during the session (not the run's) survives" || bad "scratch owned e2e: left '$SOL' alive $(so_alive "$SOL"), in-tree '$SOT' alive $(so_alive "$SOT")"
 python3 -I -c 'import os, signal, sys; os.kill(int(sys.argv[1]), signal.SIGTERM)' "$SOT" 2>/dev/null
 SOI="$T/so-intr"; make_repo "$SOI" 0
-(cd "$SOI" && exec env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY -u LOKI_SPEED LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$T/bin:$FIX/bin:$PATH" \
+(cd "$SOI" && exec env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY -u LOKI_SPEED LOKI_E10_INVOKER=cli LOKI_E10_THIN_WRAP=0 LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$T/bin:$FIX/bin:$PATH" \
     E2E_STUB_LOG="$T/so-intr-stub.log" E2E_STUB_MODE=done E2E_STUB_SCRATCH=leave E2E_STUB_SCRATCH_PID_LOG="$T/so-intr.left" E2E_STUB_SLEEP=120 LOKI_RECEIPT_SIGNING_KEY_FILE="$T/k.pem" \
     bash "$ROOT/bin/loki" start acme/search#24 --no-pr --max-cost 5 </dev/null >"$T/so-intr.out" 2>&1) & SOP=$!
 for i in $(seq 1 900); do [ -s "$T/so-intr.left" ] && break; sleep 0.1; done
@@ -1062,7 +1062,7 @@ ir_run() { # ir_run <dir> [VAR=value...]: `loki issues run acme/search --yes --p
     local d="$1"; shift
     make_repo "$d" 0; git init -q --bare "$d-origin.git"; git -C "$d" remote add origin "$d-origin.git"; git -C "$d" push -q origin main
     OUT="$(cd "$d" && env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY -u LOKI_SPEED \
-        LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$T/bin-ir:$T/bin:$FIX/bin:$PATH" E2E_STUB_LOG="$d-stub.log" E2E_STUB_MODE=done E2E_STUB_SPLIT="$SPLIT" \
+        LOKI_E10_INVOKER=cli LOKI_E10_THIN_WRAP=0 LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$T/bin-ir:$T/bin:$FIX/bin:$PATH" E2E_STUB_LOG="$d-stub.log" E2E_STUB_MODE=done E2E_STUB_SPLIT="$SPLIT" \
         LOKI_RECEIPT_SIGNING_KEY_FILE="$T/k.pem" "$@" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" issues run acme/search --yes --parallel 1 2>&1)"
     RC=$?
 }
