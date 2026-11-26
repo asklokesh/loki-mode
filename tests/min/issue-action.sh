@@ -155,8 +155,7 @@ if [ "$(printf '%s\n' "$refs" | wc -l | tr -d ' ')" = 1 ] && grep -q "loki-issue
     && grep -q "version: '${PIN_V}'" "$EX" && grep -q "version: '${PIN_V}'" "$G"; then
     ok "static: the workflow, the example and the guide call @${PIN} only (never @main), the version input defaults to ${PIN_V} and every npm install names an exact version"
 else bad "static: pinning wrong: refs [$refs] installs [$(printf '%s' "$installs" | tr '\n' ';')] default [$vdef]"; fi
-# STAGE-A (not yet run): expected string derived by reading the code on 2026-11-22.
-grep -q '`loki start owner/repo --label <label>` is the current command for many issues at once' "$G" && grep -q 'It has no triage router' "$G" && ok "guide: loki start --label is named as the current many-issue command, with its missing triage step" || bad "guide: loki start --label is not named, or its missing triage step is not stated"
+grep -q '`loki start owner/repo --label <label>` is the command for many issues at once' "$G" && grep -q '`loki backlog`, described next, is the older form with a deterministic triage step; `loki start --label` runs every matching issue' "$G" && ok "guide: loki start --label is named as the many-issue command, and the guide says it runs every matching issue while loki backlog has the triage step" || bad "guide: loki start --label is not named as the many-issue command, or the guide no longer contrasts it with the loki backlog triage step"
 # Never close, edit or delete: no such call anywhere in the workflow, and it never switches on a run-behaviour variable.
 if grep -nE 'gh pr (close|edit|merge)|gh (api|issue)[^#]*-X *DELETE|push[^#]*(--delete| -d | :refs/)|branch -[dD] |LOKI_SPLIT_ONE_PR' "$WF"; then
     bad "static: the workflow holds a close, edit or delete call for a pull request or branch, or sets LOKI_SPLIT_ONE_PR"
