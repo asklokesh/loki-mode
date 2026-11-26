@@ -1658,6 +1658,27 @@ console.log([fl.length, JSON.stringify(fl), JSON.stringify(heading), JSON.string
 WIA='9 | ["Implement PostgreSQL full-text search with ranking","Create advanced filter query builder","Add filter template save/load functionality","Implement search history tracking","Build faceted search UI","Create search analytics dashboard","Add comprehensive search tests","Document search query syntax","Optimize search performance for large datasets"] | ["results are ranked","an empty query returns nothing"] | ["one works","two works"] | [] | ["alpha works"]'
 [ "$IA" = "$WIA" ] && ok "issue acceptance: FireLater#24 gives its nine lines verbatim, in order; a bold or plain Acceptance criteria heading without checkboxes is read; no list gives none; checked boxes and attestations are left out" \
     || bad "issue acceptance gave: $IA"
+
+# #688 PLAN-SCOPE: with the issue's own acceptance lines the plan may not scope any of them out. The brief swaps the optional "Out of scope:"
+# permission for "they are the scope"; a plan-written Out of scope line is dropped from the printed and stored card and kept as scope_narrowed.
+PS="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const ic = await import("./src/util/intent_card.ts"), pl = await import("./src/engine10/stages/plan.ts");
+const I = ic.INTENT_CARD_INSTRUCTION, T = ic.intentCardInstruction(true), OLD = "You may add one optional line starting";
+const c1 = ic.intentCardInstruction(false) === I && I.includes(OLD) && !T.includes(OLD) && T.includes("they are the scope");
+const base = pl.buildPlanBrief("t", ["f.ts"], "/x/plan-output.txt", undefined, false, true), off = pl.buildPlanBrief("t", ["f.ts"], "/x/plan-output.txt", undefined, false, true, false, false, undefined, false), on = pl.buildPlanBrief("t", ["f.ts"], "/x/plan-output.txt", undefined, false, true, false, false, undefined, true);
+const c2 = base === off && base.includes(OLD) && on.includes("they are the scope") && !on.includes(OLD);
+const raw = "1. migrate routes\nWhat I think you want: migrate the routes\nAcceptance: every route uses the helper\nOut of scope: migrating every route\nAcceptance: tests pass";
+const w = process.stderr.write.bind(process.stderr); let printed = ""; (process.stderr as any).write = (s: string) => { printed += s; return true; };
+const withIssue = await ic.applyIntent(raw, true, "/nonexistent", () => {}, ["a", "b", "c", "d", "e", "f", "g"]);
+const shown = printed; printed = "";
+const plain = await ic.applyIntent(raw, true, "/nonexistent", () => {}, []);
+(process.stderr as any).write = w;
+const wd = withIssue.data as any, pd = plain.data as any;
+const c3 = shown.length > 0 && !/out of scope/i.test(shown) && wd.scope_narrowed === "migrating every route" && !wd.intent_card.some((l: string) => /^out of scope/i.test(l)) && /out of scope/i.test(printed) && pd.intent_card.some((l: string) => /^out of scope/i.test(l)) && !("scope_narrowed" in pd);
+console.log(JSON.stringify([c1, c2, c3]));
+' 2>&1)"
+[ "$PS" = "[true,true,true]" ] && ok "plan scope: issue lines swap the Out of scope permission for 'they are the scope' (no issue lines: brief byte-identical); a plan Out of scope line is dropped from the card and kept as scope_narrowed" \
+    || bad "plan scope gave: $PS"
 ia_run() { # ia_run <name> <line-check reply file or -> <VAR=value...>: the FireLater#24 body (or IA_BODY) as acme/search#24 on the stub, the switch on unless IA_ON is set empty; sets IAD, IARUN, IAOUT
     local name="$1" reply="$2" d="$T/ia-$1"; shift 2
     make_repo "$d" 0
