@@ -499,6 +499,13 @@ c1_has "$ISSUE_P" "Never use a fixed port number: pick a port you have just chec
 c1_has "$ISSUE_P" "$CARD_LINE" && [ "$ISSUE_PATH" = "$ISSUE_PLANPATH:$T/fake-opt/postgresql@15/bin" ] && [ -f "$ISSUE_RUN/env-card.json" ] && grep -q '"type":"env.card"' "$ISSUE_RUN/events.jsonl" \
     && ok "candidate 1 card: a repo needing postgres with a keg off PATH gets the newest keg's line in the brief and its bin appended (not prepended) to the implement session's PATH only; env-card.json and one event" \
     || bad "candidate 1 card: line $(grep -c 'Available on this machine' <<< "$ISSUE_P"), implement PATH tail '${ISSUE_PATH##*:}', plan PATH equal to implement head: $([ "${ISSUE_PATH%:*}" = "$ISSUE_PLANPATH" ] && echo yes || echo no)"
+c1_run issue-ownlist none start acme/search#24 --no-pr --max-cost 5 -- # PFSTUB plain-first: a large issue with its own acceptance list starts no plan session
+PFV="$(python3 -I -c 'import json,sys
+for l in open(sys.argv[1]):
+    e = json.loads(l)
+    if e.get("type") == "variant" and e.get("stage") is None: print(e["data"].get("plan_skipped"), e["data"].get("size")); break' "$C1RUN/events.jsonl" 2>/dev/null)"
+[ "$PFV" = "True large" ] && [ -z "$(ls "$T"/c1-issue-ownlist.prompt.plan* 2>/dev/null)" ] && [ -n "$C1P" ] \
+    && ok "plain-first stub: a large issue with its own acceptance list emits variant plan_skipped true and starts no plan session" || bad "plain-first stub: variant '$PFV', plan prompts: $(ls "$T"/c1-issue-ownlist.prompt.plan* 2>/dev/null | wc -l)"
 c1_run issue-none none start acme/search#24 --no-pr --max-cost 5 --
 c1_has "$C1P" "This issue lists several things to deliver." && ! c1_has "$C1P" "Available on this machine" && [ "$C1PATH" = "$C1PLANPATH" ] \
     && ok "candidate 1 card: an issue run on a repo that needs no service gets no card line and an unchanged PATH" || bad "candidate 1 card: repo needing nothing got a card or a PATH change"
@@ -533,6 +540,15 @@ const onPath = st.detectServiceBinaries(["redis"], { PATH: process.env.T + "/fak
 console.log([errCard === null, onPath.length === 1 && onPath[0].on_path === true && st.envCardLine(onPath) === null, c.proveByRunningBlock("opencode", "issue") === "", c.proveByRunningBlock("claude", "text") === "", c.fixedRules({}, false) === c.FIXED_RULES].join(" "));
 ' 2>&1)"
 [ "$C1U" = "true true true true true" ] && ok "candidate 1 unit: a detection error gives no card and never throws; a service already on PATH adds no line; opencode and a text goal get no block; non-issue rules are today's constant" || bad "candidate 1 unit gave: $C1U"
+# --- PLAIN-FIRST (#701): an issue with its own acceptance list is implemented without a plan session, at any size. Pure cell, no model, no run.
+# Plant: stages/plan.ts ownListSkipsPlan returns false always (reads "ynnnn").
+PFU="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const p = await import(process.env.ROOT + "/loki-ts/src/engine10/stages/plan.ts");
+console.log([p.ownListSkipsPlan("auto", "issue", 9) === true, p.ownListSkipsPlan("auto", "issue", 0) === false, p.ownListSkipsPlan("auto", "text", 9) === false, p.ownListSkipsPlan("always", "issue", 9) === false, p.ownListSkipsPlan("never", "issue", 9) === false].map((b) => (b ? "y" : "n")).join(""));
+' 2>&1)"
+[ "$PFU" = "yyyyy" ] && ok "plain-first unit: auto mode plus an issue source plus at least one own acceptance line skips the plan; no lines, a text goal, LOKI_E10_PLAN=1 and =0 do not take that path" || bad "plain-first unit gave: $PFU"
+# plain-first stub leg (WRITTEN, NOT RUN in the lane that added it): acme/search#24 is sized large and carries its own acceptance criteria, so the variant event
+# says plan_skipped true and no plan prompt is written. It sits after c1_run is defined, so it is placed with the c1 legs below (PFSTUB).
 # --- Q1 PROVE (stages/prove.ts, LOKI_E10_PROVE default on): an issue run on claude gets a listing call that fixes the asks (each a verbatim line of the
 # issue, stages/prove_list.ts) and a prover session that did not write the change; the harness runs its per-ask scripts and the exit codes cap the label.
 # The stub answers both calls (E2E_STUB_LIST, E2E_STUB_PROVE). PR legs publish to a local bare origin, so a kept pull request is a local:// URL.
