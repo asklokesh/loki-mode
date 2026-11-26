@@ -100,7 +100,7 @@ loki_wait_http() {
   case "$s" in ''|*[!0-9]*) s=60 ;; esac
   deadline=$((SECONDS + s))
   while :; do
-    curl -s -o /dev/null --connect-timeout 1 --max-time 2 "$url" 2>/dev/null && return 0
+    curl -s -o /dev/null --connect-timeout 1 --max-time 10 "$url" 2>/dev/null && return 0
     [ "$SECONDS" -ge "$deadline" ] && break
     sleep 1
   done

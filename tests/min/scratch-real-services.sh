@@ -99,7 +99,7 @@ W3S=$(date +%s)
 ( . "$HP"; LOKI_PROOF_TOKEN=tk LOKI_STEP_LOG="$T/steps3.log" LOKI_STEP_MAX_S=1 loki_cmd 1 "slow" bash "$T/slow.sh" "$T/slow.pid" > "$T/c3.out" 2>/dev/null; echo $? > "$T/c3.rc" )
 W3E=$(( $(date +%s) - W3S ))
 [ "$(cat "$T/c3.rc" 2>/dev/null)" != 0 ] && [ "$W3E" -lt 4 ] && ok "W3 a 5 s command under LOKI_STEP_MAX_S=1 returns non-zero within 4 s (took $W3E s)" || bad "W3 rc $(cat "$T/c3.rc" 2>/dev/null), $W3E s"
-has "W3 prints a FAILED line with no result after 1 s" "$(cat "$T/c3.out")" "FAILED 1 slow | no result after 1 s"
+has "W3 prints a FAILED line with no result after 1 s" "$(cat "$T/c3.out")" "FAILED 1: slow | no result after 1 s"
 SLOWPID="$(cat "$T/slow.pid" 2>/dev/null)"
 [ -n "$SLOWPID" ] && ! kill -0 "$SLOWPID" 2>/dev/null && ok "W3 the stopped command's PID is gone" || bad "W3 the command's PID $SLOWPID is still alive"
 [ -n "$SLOWPID" ] && kill -0 "$SLOWPID" 2>/dev/null && kill -KILL "$SLOWPID" 2>/dev/null
