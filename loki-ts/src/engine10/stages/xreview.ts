@@ -16,7 +16,7 @@ import { isClaudeModel, noteRoleModel, PROVIDER_DEFAULT_MODEL, roleModel } from 
 import { backstopS, type RunContext, type Verdict } from "../types.ts";
 export type ReviewLevel = "pass" | "flag" | "block" | "not_run";
 export type ReviewedBy = "model" | "deterministic" | "none";
-export interface CrossReview { provider: ReviewProvider; level: ReviewLevel; notes: string[]; same_vendor_default?: boolean; hygiene?: string[]; reviewed_by?: ReviewedBy; reviewer_model?: string; cost_iteration?: string; reasons?: string[]; still_open?: number[] | null; }
+export interface CrossReview { provider: ReviewProvider; level: ReviewLevel; notes: string[]; same_vendor_default?: boolean; hygiene?: string[]; reviewed_by?: ReviewedBy; reviewer_model?: string; cost_iteration?: string; reasons?: string[]; still_open?: number[] | null; reused?: "implement loop"; }
 /** True only when a model reviewer really returned a verdict; a deterministic-only result never credits "one reviewer". */
 export const modelReviewRan = (xr: CrossReview | null | undefined): xr is CrossReview => !!xr && xr.level !== "not_run" && xr.reviewed_by !== "deterministic" && xr.reviewed_by !== "none"; // a hygiene flag can lift level off not_run with no model call (reviewed_by none)
 // Compiled or bytecode cache files by extension or dir (generic across stacks). Any other run-added path counts only when the repo's own ignore rules ignore it (it was force-added); legit source such as src/build/index.ts never counts.
@@ -31,7 +31,7 @@ export function minVerdict(verdict: Verdict, review: CrossReview | null): Verdic
   return RANK[ceiling] < RANK[verdict] ? ceiling : verdict;
 }
 /** Exactly what review ran, for the receipt: a model verdict (fast-tier when pinned), the deterministic check alone, or none. */
-export const reviewRanWording = (xr: CrossReview | null | undefined): string => (modelReviewRan(xr) ? (xr.reviewer_model ? `reviewer (${xr.reviewer_model})` : "reviewer") : (xr as CrossReview | null | undefined)?.reviewed_by === "deterministic" ? "deterministic check" : "none"); // the guard's false branch narrows xr to never, so the cast restores the real type
+export const reviewRanWording = (xr: CrossReview | null | undefined): string => (modelReviewRan(xr) ? (xr.reviewer_model ? `reviewer (${xr.reviewer_model})` : "reviewer") + (xr.reused ? ", read during the run" : "") : (xr as CrossReview | null | undefined)?.reviewed_by === "deterministic" ? "deterministic check" : "none"); // the guard's false branch narrows xr to never, so the cast restores the real type
 /** Receipt review block plus the NOT PROVEN line, only when the flag is on. vendor_differs compares the judge to the builder. */
 export function reviewReceipt(builder: string, xr: CrossReview | null, env: NodeJS.ProcessEnv = process.env): { review?: { provider: string | null; vendor_differs: boolean; same_vendor?: boolean; defaulted?: boolean; level?: ReviewLevel; ran?: string; reviewer_model?: string; observations?: string[] }; notProven: string[] } {
   const obs = xr?.hygiene?.length ? { observations: xr.hygiene.map((f) => `committed build or cache artifact: ${f}`) } : {}; // an observation, never a not-proven claim

@@ -51,6 +51,9 @@ export const needsLineCheck = (reader: "review" | "follow" | "line-check", revie
 export const followMax = (env: NodeJS.ProcessEnv = process.env): number => { const n = Number((env["LOKI_E10_REVIEW_FOLLOW_MAX"] ?? "").trim()); return (env["LOKI_E10_REVIEW_FOLLOW_MAX"] ?? "").trim() !== "" && Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 1; };
 /** True while the review findings may still be handed back: handBacks counts the hand-backs that carried review findings. An unmet acceptance line is handed back whatever this says. Pure. */
 export const mayHandBack = (s: { handBacks: number; max: number }): boolean => s.handBacks < s.max;
+/** SEAL-REUSE: the fields of a model read that seal needs to rebuild the review (notes already capped by xreview). */
+export interface ReviewRead { notes: string[]; reasons: string[]; provider: string; reviewed_by?: string; reviewer_model?: string }
+export const readOf = (xr: CrossReview): ReviewRead => ({ notes: xr.notes, reasons: xr.reasons ?? [], provider: xr.provider, ...(xr.reviewed_by ? { reviewed_by: xr.reviewed_by } : {}), ...(xr.reviewer_model ? { reviewer_model: xr.reviewer_model } : {}) });
 /** True when a model review ran in this stage and the tree now differs from the tree the last review read: one more read of reviewedTree..tree is due, and nothing is handed back from it. Pure. */
 export const needsClosingRead = (s: { reviewRan: boolean; tree: string; reviewedTree: string }): boolean => s.reviewRan && s.tree !== s.reviewedTree;
 const UNTRUSTED_INPUT_RULE = "Code that reads untrusted input uses the parser or escaping library this repository already depends on for that format. Hand-written matching of such input is a defect unless the repository has no such dependency; then say so in your reply.";
@@ -313,7 +316,7 @@ export const implementStage: Stage = {
       if (r.session.summary) session = { ...session, summary: `${session.summary ?? ""}\n\n[proof script turn]\n${r.session.summary}` };
     }
     const lineRounds: { met: number; unmet: number; usd: number | null; reader?: "review" | "follow" }[] = [];
-    let reviewedTree = "", lastFound: string[] = [], followUps = 0, lastReviewRan = false, handBacks = 0, pendingFollow = false, lastReadFound: string[] = [], lastRead: { level: string; findings: number; follow: boolean; still_open: string[] | null } | null = null; /* handBacks: hand-backs that carried review findings; pendingFollow: the last such hand-back is not read yet; lastRead: the last model read, for review_state */ const reviewFollow: { round: number; level: string; findings: number }[] = [], followCosts: string[] = []; // loki-mode#692: the tree the last review read, what it found, and the follow-ups that read what each fix turn changed
+    let reviewedTree = "", lastFound: string[] = [], followUps = 0, lastReviewRan = false, handBacks = 0, pendingFollow = false, lastReadFound: string[] = [], lastRead: { level: string; findings: number; follow: boolean; still_open: string[] | null; tree: string; read: ReviewRead } | null = null; /* handBacks: hand-backs that carried review findings; pendingFollow: the last such hand-back is not read yet; lastRead: the last model read, for review_state */ const reviewFollow: { round: number; level: string; findings: number }[] = [], followCosts: string[] = []; // loki-mode#692: the tree the last review read, what it found, and the follow-ups that read what each fix turn changed
     const proofRounds: { exit: number | null; failed: number; seconds: number; base_seconds?: number }[] = []; // PROOF LOOP: Loki runs the proof itself and hands a failure back with its real output, so a session that is wrong is corrected by evidence, not asked to try harder
     let reviewedEarly = false, earlyReviewCost: string | null = null; let proofFails = 0, lineTurns = 0; const LINE_TURNS_MAX = 2;
     // NO-DEFAULT-BUDGET: with no time limit the proof and acceptance turn counts are not the bound. A round makes progress when Loki's own proof run fails fewer
@@ -328,13 +331,13 @@ export const implementStage: Stage = {
       const xr = await crossReview(ctx, "VERIFIED", tree, signal, true); if (xr?.cost_iteration) earlyReviewCost = xr.cost_iteration;
       const found = handBackReasons(xr); // flags too: a reviewer filed "the default search page fails with a 400 on first load" as a flag, and the session can fix or rebut a flag in one turn; the reviewer's whole findings come first, then its UNMET items, bounded by handBackReasons and not by the receipt's cap of 5
       ctx.emit("review.early", "implement", { level: xr?.level ?? "not_run", findings: found.length });
-      lastReviewRan = modelReviewRan(xr); lastFound = found; if (lastReviewRan) { reviewedTree = tree; lastReadFound = found; lastRead = { level: xr!.level, findings: found.length, follow: false, still_open: [] }; }
+      lastReviewRan = modelReviewRan(xr); lastFound = found; if (lastReviewRan) { reviewedTree = tree; lastReadFound = found; lastRead = { level: xr!.level, findings: found.length, follow: false, still_open: [], tree, read: readOf(xr!) }; }
       return found;
     };
     // A follow-up review of what the last fix turn changed (reviewedTree..tree); the earlier findings are named so the reviewer says which are still open. It ends when it finds nothing (lastFound is then empty).
     const noteFollow = (xr: CrossReview, earlier: string[], found: string[], tree: string): void => { // the follow-up read's record for review_state: which earlier findings it listed as open (null: it gave no STILL OPEN line; [] when there was nothing earlier to list)
       reviewedTree = tree; lastReadFound = found; pendingFollow = false;
-      lastRead = { level: xr.level, findings: found.length, follow: true, still_open: earlier.length === 0 ? [] : xr.still_open == null ? null : xr.still_open.map((k) => earlier[k - 1]!.slice(0, 300)) };
+      lastRead = { level: xr.level, findings: found.length, follow: true, still_open: earlier.length === 0 ? [] : xr.still_open == null ? null : xr.still_open.map((k) => earlier[k - 1]!.slice(0, 300)), tree, read: readOf(xr) };
     };
     const followFound = async (tree: string, round: number): Promise<string[]> => {
       const n = ++followUps, earlier = lastReadFound;
@@ -423,8 +426,8 @@ export const implementStage: Stage = {
     if (lastRead) {
       const endTree = (await worktreeTree(ctx.repoDir)) ?? "";
       if (needsClosingRead({ reviewRan: true, tree: endTree, reviewedTree }) && endTree && !signal.aborted && !session.killed) await closingRead(endTree);
-      const final = lastRead as { level: string; findings: number; follow: boolean; still_open: string[] | null };
-      reviewState = { level: final.level, findings: final.findings, follow: final.follow, still_open: final.still_open, changed_unread: !!endTree && endTree !== reviewedTree };
+      const final = lastRead as { level: string; findings: number; follow: boolean; still_open: string[] | null; tree: string; read: ReviewRead };
+      reviewState = { level: final.level, findings: final.findings, follow: final.follow, still_open: final.still_open, changed_unread: !!endTree && endTree !== reviewedTree, tree: final.tree, read: final.read }; // SEAL-REUSE (#702, #691): the tree the last read saw and what it said, so seal can reuse a block read of the sealed tree
     }
     const iterationId = ids[ids.length - 1]!;
     // E-68 classifies exit codes; a non-killed, marker-less non-zero exit is an error, never "done".
