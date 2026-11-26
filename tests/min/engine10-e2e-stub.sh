@@ -987,10 +987,51 @@ const out = JSON.stringify({ result: ["VERDICT: BLOCK", ...spec, ...unmet, "", "
 const r = x.parseReview("claude", out), back = x.handBackReasons(r);
 const old = r.notes.filter((n) => /^cross-review (block|flag) /.test(n) || x.isUnmetNote(n)).slice(0, 8); // what reviewRound handed back before this change
 const long = x.handBackReasons({ provider: "claude", level: "flag", notes: [], reasons: Array.from({ length: 20 }, () => "y".repeat(2000)) });
-console.log([r.notes.length, x.isUnmetNote(r.notes[0]), old.filter((n) => !x.isUnmetNote(n)).length, back.length, back.slice(0, 8).every((b, i) => b === `finding ${i + 1}: the check at step ${i + 1} can be bypassed`), back[8] === "The change does not deliver the acceptance lines above." && back.slice(9).length === 3 && back.slice(9).every((b) => b.startsWith("UNMET: ")), x.handBackReasons(x.parseReview("claude", JSON.stringify({ result: "VERDICT: PASS" }))).length, long.length, Math.max(...long.map((l) => l.length)) <= 520].join(" | "));
+console.log([r.notes.length, x.isUnmetNote(r.notes[0]), old.filter((n) => !x.isUnmetNote(n)).length, back.length, back.slice(0, 8).every((b, i) => b === `finding ${i + 1}: the check at step ${i + 1} can be bypassed`), back[8] === "The change does not deliver the acceptance lines above." && back.slice(9).length === 6 && back.slice(9).every((b) => b.startsWith("UNMET: ")), x.handBackReasons(x.parseReview("claude", JSON.stringify({ result: "VERDICT: PASS" }))).length, long.length, Math.max(...long.map((l) => l.length)) <= 900 && long.slice(0, 13).reduce((n, l) => n + l.length, 0) <= 12000 && long[13] === "(7 more reviewer findings are in the receipt)"].join(" | "));
 ' 2>&1)"
-[ "$ERR" = '5 | true | 0 | 12 | true | true | 0 | 12 | true' ] \
-    && ok "EARLY-REVIEW-REASONS unit: the old hand-back held 0 specific findings; the new one lists the 8 findings and the closing paragraph first then the UNMET lines (12 max, each clipped); the receipt notes stay 5 with UNMET first; a PASS hands back nothing" || bad "EARLY-REVIEW-REASONS unit gave: $ERR"
+[ "$ERR" = '5 | true | 0 | 15 | true | true | 0 | 14 | true' ] \
+    && ok "EARLY-REVIEW-REASONS unit: the old hand-back held 0 specific findings; the new one lists the 8 findings and the closing paragraph first then all 6 UNMET lines (each clipped to 900); 20 reasons of 2000 characters keep 13 whole entries (12,000 character budget) and a last entry counts the 7 left; the receipt notes stay 5 with UNMET first; a PASS hands back nothing" || bad "EARLY-REVIEW-REASONS unit gave: $ERR"
+
+# REVIEW-FIRST (FireLater#17, loki-mode#684): the review now reads first and the session hears each reader once. Cells 1 and 2: the reviewer's findings reach the session whole (a finding
+# keeps its sub-bullets, an UNMET item its reason) and are bounded by a character budget, never a count. Cell 3: a reviewer gap on a line with a passing check is handed back once per
+# line. Cell 4: the one resume text carries the review's findings and the unmet lines. The stub-run leg (review.early before the first -pf session) is below, next to RW-02 proved.
+# Plant RF-1: xreview.ts handBackReasons cuts at 12 items again (`.slice(0, 12)` before the budget loop): cell 1 reads 12 entries, not 17, and goes red.
+RF1="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const x = await import("./src/engine10/stages/xreview.ts");
+const subs = ["sub alpha detail", "sub beta detail", "sub gamma detail"], finds = Array.from({ length: 9 }, (_, i) => `- finding ${i + 2}: step ${i + 2} can be bypassed`), unmet = Array.from({ length: 6 }, (_, i) => `- UNMET: acceptance line ${i + 1}\n  - reason ${i + 1} is not proved by running`);
+const text = ["VERDICT: BLOCK", "This review read only the diff shown to it.", "- finding 1: the first check can be bypassed", ...subs.map((t) => `  - ${t}`), ...finds, ...unmet].join("\n");
+const r = x.parseReview("claude", JSON.stringify({ result: text })), back = x.handBackReasons(r);
+const bare = [...subs, ...Array.from({ length: 6 }, (_, i) => `reason ${i + 1} is not proved by running`)];
+console.log([r.notes.length === 5, r.notes.every(x.isUnmetNote), back.length, subs.every((t) => back[1].includes(t)), Array.from({ length: 6 }, (_, i) => back[11 + i]).every((b, i) => (b ?? "").startsWith(`UNMET: acceptance line ${i + 1}`) && b.includes(`reason ${i + 1} is not proved by running`)), back.every((b) => !bare.includes(b)), back[0], back[1].startsWith("finding 1: the first check can be bypassed Details: ")].join(" | "));
+' 2>&1)"
+[ "$RF1" = 'true | true | 17 | true | true | true | This review read only the diff shown to it. | true' ] \
+    && ok "REVIEW-FIRST unit 1: 17 whole items (disclaimer, a finding with its 3 sub-bullets folded in, 9 findings, 6 UNMET items each with its reason); no bare sub-bullet; the receipt notes stay 5 and all UNMET" || bad "REVIEW-FIRST unit 1 gave: $RF1"
+RF2="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const x = await import("./src/engine10/stages/xreview.ts");
+const words = (i) => Array.from({ length: 330 }, (_, j) => `w${i}x${j}`).join(" ");
+const out = x.handBackReasons({ provider: "claude", level: "flag", notes: [], reasons: Array.from({ length: 60 }, (_, i) => words(i).slice(0, 2000)) });
+const kept = out.slice(0, -1), total = kept.reduce((n, l) => n + l.length, 0), last = out[out.length - 1];
+console.log([total <= 12000, kept.length, kept.every((k) => k.endsWith("...") || /w\d+x\d+$/.test(k)), kept.every((k) => k.length <= 900), last, kept.length + 47 === 60].join(" | "));
+' 2>&1)"
+[ "$RF2" = 'true | 13 | true | true | (47 more reviewer findings are in the receipt) | true' ] \
+    && ok "REVIEW-FIRST unit 2: 60 findings of 2000 characters hand back 13 whole entries within 12,000 characters (each ends on a whole word or the ellipsis) and a last entry names the 47 left out" || bad "REVIEW-FIRST unit 2 gave: $RF2"
+RF3="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const x = await import("./src/engine10/stages/implement.ts");
+const g = (n) => ({ n, line: `${n}. line ${n}`, reason: `gap on ${n}` }), handed = new Set();
+const a = x.gapOnce(handed, [g(2), g(7)], 1), b = x.gapOnce(handed, [g(7)], 2), c = x.gapOnce(handed, [g(2), g(7)], 3);
+console.log([a.handBack.map((h) => h.n).join(","), a.disputes.length, b.handBack.length, b.disputes.map((d) => `${d.line.split(".")[0]}@${d.round}`).join(","), c.handBack.length, c.disputes.map((d) => `${d.line.split(".")[0]}@${d.round}`).join(","), [...handed].sort().join(",")].join(" | "));
+' 2>&1)"
+[ "$RF3" = '2,7 | 0 | 0 | 7@2 | 0 | 2@3,7@3 | 2,7' ] \
+    && ok "REVIEW-FIRST unit 3: a reviewer gap on a line with a passing check is handed back once (round 1: lines 2 and 7; round 2: none, line 7 disputed; round 3: none, lines 2 and 7 disputed)" || bad "REVIEW-FIRST unit 3 gave: $RF3"
+RF4="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const x = await import("./src/engine10/stages/implement.ts");
+const rev = x.combinedHandBack(["a"], ""), un = x.combinedHandBack([], "x"), both = x.combinedHandBack(["a"], "x");
+console.log([rev.startsWith("An independent reviewer read your whole change and found 1 problem:\n\n1. a\n"), rev.split("\n").includes("x"), un, both === `${rev}\n\nx`, JSON.stringify(x.combinedHandBack([], ""))].join(" | "));
+' 2>&1)"
+[ "$RF4" = 'true | false | x | true | ""' ] \
+    && ok "REVIEW-FIRST unit 4: the one hand-back is the review's findings only, the unmet text only, both in that order, or empty" || bad "REVIEW-FIRST unit 4 gave: $RF4"
+grep -q 'gapOnce(' "$ROOT/loki-ts/src/engine10/stages/implement.ts" && [ "$(grep -c 'combinedHandBack(' "$ROOT/loki-ts/src/engine10/stages/implement.ts")" -ge 2 ] \
+    && ok "REVIEW-FIRST: the proof loop calls gapOnce and combinedHandBack" || bad "REVIEW-FIRST: implement.ts does not call gapOnce and combinedHandBack"
 
 # G5 SKIP-NOTE end to end (oc63960): a full suite red only on base ids must seal without the "fix round skipped" note holding it; the same run with one
 # new failing id in that suite is held by it. Plant G5-10: util/check_result.ts suiteSkipHolds always false: the new-id run seals without the note.
@@ -2290,8 +2331,22 @@ rw_proof 'grep -q "export function multiply" calc.ts' 'grep -q "export function 
 rw_engine proved "$RWD/list.md"; RWF="$(rw_facts)"
 # STAGE-A (not yet run): expected string derived by reading the code on 2026-11-22. R2-5: the proof script only reads calc.ts (a change to code), so the run reads PARTIAL.
 [ "$RWF" = "PARTIAL road=work source=text lines=2 receipt=met,met own=2 reruns=yes noscript=no plan=skipped src=issue cap=2400" ] \
-&& [ "$RWSTAGES" = "implement linecheck review implement linecheck " ] \
+&& [ "$(sed 's/review linecheck/linecheck review/' <<< "$RWSTAGES")" = "implement linecheck review implement linecheck " ] \
     && ok "RW-02 proved: the same text task with a proof script that passes in Loki's own run is PARTIAL (the script only reads calc.ts), both lines met by Loki's own count; 5 model calls ($RWSTAGES)" || bad "RW-02 proved gave: $RWF; sessions '$RWSTAGES' ($(grep -E '^(Outcome|NOT PROVEN)' <<< "$RWOUT" | tr '\n' ' ' | cut -c1-600))"
+# REVIEW-FIRST stub-run leg (written, not run by its author; the lead runs it after the bundle is rebuilt on the merged tree): with a review that flags something, the independent review
+# finishes (review.early) before the first hand-back session (an iteration id ending in -pf) starts, and no -pf session ran before it.
+rw_proof 'grep -q "export function multiply" calc.ts' 'grep -q "export function multiply" calc.ts'
+rw_engine reviewfirst "$RWD/list.md" LOKI_RISK_TIER=medium LOKI_REVIEW_DEFAULT=1 E2E_STUB_REVIEW=FLAG
+RFS="$(python3 -I - "$RWRUN" <<'RFPY'
+import json, os, sys
+try: ev = [json.loads(l) for l in open(os.path.join(sys.argv[1], "events.jsonl"))]
+except Exception: print("no events"); sys.exit(0)
+early = next((i for i, e in enumerate(ev) if e["type"] == "review.early"), None)
+pf = next((i for i, e in enumerate(ev) if e["type"] == "session.started" and str(e["data"].get("session_id", "")).endswith("-pf")), None)
+print("early=" + ("yes" if early is not None else "no"), "pf=" + ("yes" if pf is not None else "no"), "order=" + ("ok" if early is not None and pf is not None and early < pf else "bad"))
+RFPY
+)"
+[ "$RFS" = "early=yes pf=yes order=ok" ] && ok "REVIEW-FIRST stub run: review.early comes before the first -pf hand-back session" || bad "REVIEW-FIRST stub run gave: $RFS (sessions '$RWSTAGES')"
 rw_proof 'grep -q "export function multiply" calc.ts' 'grep -q "export function multiply" calc.ts' 'false' # line 2 has one passing and one failing check
 rw_engine failing "$RWD/list.md"; RWF="$(rw_facts)"
 [ "$RWF" = "PARTIAL road=work source=text lines=2 receipt=met,unmet own=1 reruns=yes noscript=no plan=skipped src=issue cap=2400" ] \
