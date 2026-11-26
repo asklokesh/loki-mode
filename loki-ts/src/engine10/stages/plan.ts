@@ -14,7 +14,7 @@ import { assumptionsBlock } from "../../features/spec_ambiguity.ts";
 import { loadTaskText } from "./wall.ts";
 import { fastTierModel } from "../../runner/model_downgrades.ts";
 import { planFallbackModel, planRoute, PRESET_PLAN_INSTRUCTION, ROUTER_UNITS_INSTRUCTION } from "../../runner/router/plan_route.ts";
-import { applyIntent, confirmRequested, intentCardEnabled, INTENT_CARD_INSTRUCTION, issueAcceptanceOf } from "../../util/intent_card.ts";
+import { applyIntent, confirmRequested, intentCardEnabled, intentCardInstruction, issueAcceptanceOf } from "../../util/intent_card.ts";
 import { loadProjectApi } from "../../project_model/resolve.ts";
 import { behaviorChangeInstruction, mutationStrict, readBehaviorChange } from "../../util/mutation_proof.ts";
 import { reviewerBriefEnabled } from "../../util/reviewer_brief.ts";
@@ -38,7 +38,7 @@ export function truncatePlan(raw: string, max: number = MAX_PLAN_LINES): string 
   return lines.slice(0, max).join("\n");
 }
 
-export function buildPlanBrief(task: string, relevantFiles: string[], outputPath: string, scopePath: string = outputPath.replace(PLAN_OUTPUT_FILENAME, PLAN_SCOPE_FILE), router: boolean = false, intentCard: boolean = false, behaviorChange: boolean = false, riskDecl: boolean = false, assumptions: unknown = undefined): string {
+export function buildPlanBrief(task: string, relevantFiles: string[], outputPath: string, scopePath: string = outputPath.replace(PLAN_OUTPUT_FILENAME, PLAN_SCOPE_FILE), router: boolean = false, intentCard: boolean = false, behaviorChange: boolean = false, riskDecl: boolean = false, assumptions: unknown = undefined, hasIssueLines: boolean = false): string {
   return withStagePrefix([
     "You are the Loki 10 plan stage.",
     ...taskBlock(task),
@@ -49,7 +49,7 @@ export function buildPlanBrief(task: string, relevantFiles: string[], outputPath
     `Write a plan of at most ${MAX_PLAN_LINES} short lines, no other prose, to this exact file path: ${outputPath}`,
     `Also write a JSON object {"files":["<repo-relative path>", ...]} naming every file your plan changes or creates, to this exact file path: ${scopePath}`,
     ...(router ? [ROUTER_UNITS_INSTRUCTION.replace("<scope>", scopePath)] : []),
-    ...(intentCard ? [INTENT_CARD_INSTRUCTION] : []),
+    ...(intentCard ? [intentCardInstruction(hasIssueLines)] : []),
     ...(behaviorChange ? [behaviorChangeInstruction(scopePath)] : []), // T2: strict only
     ...(riskDecl ? [`In the same JSON object (${scopePath}) also add "risky_hunks": up to 3 objects {"path":"<repo-relative path>","risk":<1 to 3, 3 highest>,"why":"<one short sentence>"} naming where a reviewer should look first.`] : []), // REVIEWER-BRIEF-V2
     outOfRepoInstruction(scopePath), "Do not edit any other file. Do not run tests. Do not commit.",
@@ -90,7 +90,7 @@ export const planStage: Stage = {
     const cardOn = intentCardEnabled(process.env);
     const runPlan = (onSonnet: boolean) => ctx.sessions.run({
       stage: "plan",
-      brief: buildPlanBrief(task, relevantFiles, outputPath, join(ctx.runDir, PLAN_SCOPE_FILE), pr.routed && !pr.preset, cardOn, mutationStrict(), reviewerBriefEnabled(), prior.intake?.assumptions) + (pr.preset ? `\n\n${PRESET_PLAN_INSTRUCTION}` : ""),
+      brief: buildPlanBrief(task, relevantFiles, outputPath, join(ctx.runDir, PLAN_SCOPE_FILE), pr.routed && !pr.preset, cardOn, mutationStrict(), reviewerBriefEnabled(), prior.intake?.assumptions, issueAcceptanceOf(prior.intake).length > 0) + (pr.preset ? `\n\n${PRESET_PLAN_INSTRUCTION}` : ""),
       tier: "fast",
       iterationId,
       limitS: planStage.limitS,

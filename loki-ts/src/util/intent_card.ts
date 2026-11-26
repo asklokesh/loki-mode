@@ -22,6 +22,12 @@ export function confirmRequested(env: NodeJS.ProcessEnv = process.env): boolean 
 /** Extra brief paragraph, appended only when the card is on. */
 export const INTENT_CARD_INSTRUCTION = `After the plan lines, append an intent card of ${CARD_MIN_LINES} to ${CARD_MAX_LINES} lines: a first line starting "${INTENT_HEADER}" with one sentence on what you think the user wants, then ${CARD_MIN_LINES - 1} to ${CARD_MAX_LINES - 1} lines each starting "Acceptance:" naming one check you will hold yourself to. You may add one optional line starting "Out of scope:" naming what you will NOT do; it counts toward the ${CARD_MAX_LINES} lines.`;
 
+const OOS_SENTENCE = ` You may add one optional line starting "Out of scope:" naming what you will NOT do; it counts toward the ${CARD_MAX_LINES} lines.`;
+const ISSUE_SCOPE_SENTENCE = " The issue has its own acceptance lines and they are the scope: plan every one of them, and do not write an Out of scope line. If one line cannot be delivered in this run, plan the rest and name that line and the reason in the plan.";
+
+/** The brief paragraph for the card. With the issue's own acceptance lines the optional "Out of scope:" permission is replaced: those lines are the scope and the plan may not exclude one. False returns INTENT_CARD_INSTRUCTION unchanged. */
+export function intentCardInstruction(hasIssueLines: boolean): string { return hasIssueLines ? INTENT_CARD_INSTRUCTION.replace(OOS_SENTENCE, ISSUE_SCOPE_SENTENCE) : INTENT_CARD_INSTRUCTION; }
+
 export interface ParsedPlan { card: string[] | null; rest: string }
 
 /** Splits the raw plan output into the intent card (null when absent, too short, or malformed) and the remaining plan text. An over-long card keeps its first CARD_MAX_LINES lines. */
@@ -98,10 +104,13 @@ export async function workerConfirm(card: string[] | null, runDir: string, env: 
 export async function applyIntent(raw: string, on: boolean, runDir: string, emit: (data: Record<string, unknown>) => void, issueLines: string[] = []): Promise<{ rest: string; data: Record<string, unknown> }> {
   if (on && raw.trim() === "" && issueLines.length) { process.stderr.write(`${stderrIsTty() ? "\r\x1b[2K" : ""}${renderIntent(issueLines.map((l) => `Acceptance: ${l}`))}\n`); return { rest: raw, data: {} }; } // Q1 ISSUE-ACCEPTANCE: no card, but the issue's own lines are still shown
   if (!on || raw.trim() === "") return { rest: raw, data: {} };
-  const { card, rest } = parseIntentCard(raw), shown = cardWithIssueLines(card, issueLines); // Q1 ISSUE-ACCEPTANCE: the printed Acceptance lines are the issue's own, verbatim, then the card's additions
+  const parsed = parseIntentCard(raw), rest = parsed.rest;
+  // An issue with its own acceptance lines has no room for a plan-written "Out of scope:" line: dropped from the printed and stored card, kept as scope_narrowed.
+  const oos = issueLines.length && parsed.card ? parsed.card.filter((l) => OOS_RE.test(l)) : [];
+  const card = oos.length && parsed.card ? parsed.card.filter((l) => !OOS_RE.test(l)) : parsed.card, shown = cardWithIssueLines(card, issueLines); // Q1 ISSUE-ACCEPTANCE: the printed Acceptance lines are the issue's own, verbatim, then the card's additions
   process.stderr.write(`${stderrIsTty() ? "\r\x1b[2K" : ""}${renderIntent(shown)}\n`); // the supervisor's live line holds the cursor on this terminal; clear it first so the card starts its own line
   const declined = await workerConfirm(shown, runDir, process.env, emit, (l) => process.stderr.write(`${l}\n`));
-  return { rest, data: { intent_enabled: true, intent_card: card, ...(declined ? { intent_declined: true } : {}) } };
+  return { rest, data: { intent_enabled: true, intent_card: card, ...(oos.length ? { scope_narrowed: oos.map((l) => l.replace(OOS_RE, "").trim()).join("; ") } : {}), ...(declined ? { intent_declined: true } : {}) } };
 }
 
 /** The Acceptance lines of a recorded plan output's intent card (what the user asked), cleaned and bounded; empty when there is no card. */
