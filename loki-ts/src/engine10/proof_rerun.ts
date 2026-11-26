@@ -518,6 +518,23 @@ export function itemSplit(head: ProofCheck[], control: ProofCheck[], without: Pr
   }
   return out;
 }
+/** Whether a step's command names a file the change added: the path itself (stepNamesFile), a directory that holds one, or a glob that matches one. A passing
+ *  step that does so passes because the change put that file there, and the copy without the change keeps added files, so it says nothing about the code
+ *  before the change. Pure. */
+export function namesAddedPath(cmd: string, added: readonly string[]): boolean {
+  if (added.some((f) => stepNamesFile(cmd, f))) return true;
+  const words = cmd.split(/[\s"'`=:;|&()<>]+/).filter(Boolean).map((t) => t.replace(/^\.\//, "").replace(/\/+$/, "")).filter((w) => w.includes("/") || /[*?]/.test(w));
+  return words.some((w) => {
+    const re = /[*?]/.test(w) ? new RegExp(`(^|/)${w.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]")}$`) : null;
+    return added.some((f) => (re ? re.test(f) : f.startsWith(`${w}/`) || f.includes(`/${w}/`)));
+  });
+}
+/** A line reads "already met before this change" only when its passing steps do not depend on a file the change added (#679). True when any passing step of the
+ *  item that counts (not inert) names an added path in its command. A step with no recorded command (a request to the app) names none. */
+export const lineDependsOnAdded = (head: readonly ProofCheck[] | undefined, item: string, added: readonly string[]): boolean => added.length > 0 && !!head?.some((c) => c.ok && c.item === item && c.kind !== "inert" && !!c.cmd && namesAddedPath(c.cmd, added));
+/** How a met line is told apart on the receipt: "change" when one of its checks fails without the change; "before" when every counting check also passes without it
+ *  and none of them depends on an added file; otherwise undefined (plain "met", not compared with the code before the change). The verdict never reads it. */
+export const rowBasis = (s: { change: number; before: number } | undefined, counted: number, dependsOnAdded: boolean): "change" | "before" | undefined => (s && s.change > 0 ? "change" : s && counted > 0 && s.before >= counted && !dependsOnAdded ? "before" : undefined);
 export interface OwnProof { ok: boolean; steps: string[]; cmds: string[] /* the counted steps' commands: which changed test file a step ran (never written to the receipt) */; why?: string; seconds: number; built?: true; checks_without: number; checks_control: number; by_item?: Record<string, { change: number; before: number }>; before?: { step: string; lines: string[] }[] }
 /** Runs the kept proof script in a copy of the checkout without the change (see the block comment above). `revert`: the change's non-test files, each with
  *  whether the change added it. An added file STAYS in the copy: removing it would make any step that touches it fail, which shows that the file exists

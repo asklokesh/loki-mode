@@ -429,6 +429,7 @@
 # 305. verify.ts runCheck: spread unmeasuredTail into the check itself (the event-only leg finds the tail on the check).
 # INERT1. proof_rerun.ts ruleStatus: drop the `counted === 0` branch (the INERT-CHECK cell reads "mm"); or stepKind: drop the FILE_TEST and "/" test from inertWords (the last kind reads "inert": a file test outside the repository is dropped).
 # BTC1. pr.ts acceptanceHead: count ch as met (the BY-THIS-CHANGE headline reads "3 of 4"); or proof_rerun.ts itemSplit: drop the own.has test (item 1 reads change 0, before 1 and a FAILED step is lost).
+# BS1. proof_rerun.ts rowBasis: drop the `!dependsOnAdded` test (the BEFORE-STATUS cell reads before for the file, directory and glob lines); or namesAddedPath: drop the directory or glob branch (lines 2 and 5 read before); or lineDependsOnAdded: ignore the item (the true before line reads plain).
 # BC1. seal.ts baseProofRunner: PROOF_RUN_ENV back to {} (the PROOF-NO-BYTECODE cell counts 1 or more .pyc files).
 # KD1. util/mutation_proof.ts proofTestSideOn: make it opt-out (the KNOB-DEFAULTS cell reads true in the fourth place).
 
@@ -1403,6 +1404,25 @@ const rows = [{ line: "A", status: "met", evidence: "e1", by: "change" }, { line
 const l = acceptanceHead("PARTIAL", { issue_acceptance: rows }).split("\n"), old = acceptanceHead("VERIFIED", { issue_acceptance: [{ line: "A", status: "met", evidence: "e1" }] }).split("\n")[1];
 console.log([JSON.stringify(split), l[1], l[5], l[6], l[7], l[8], old].join(" ## "));' 2>&1)"
 [ "$BTC" = '{"1":{"change":1,"before":1},"2":{"change":0,"before":1},"3":{"change":0,"before":1}} ## 1 of 4 acceptance lines is met by this change; 1 already met before it; 1 met, not compared with the code before the change; 1 not met (each says why). ## | A | met by this change | e1 | ## | B | already met before this change | e2 | ## | C | met | e3 | ## | D | NOT MET | r4 | ## Every acceptance line is met (1 of 1), each with what proved it.' ] && ok "BY-THIS-CHANGE: lines and headline tell this change from what the code already did" || bad "BY-THIS-CHANGE gave: $BTC"
+
+# BEFORE-STATUS (#679; proof_rerun.ts rowBasis, lineDependsOnAdded, namesAddedPath; seal.ts issueRows): a line reads "already met before this change" only when
+# its passing steps do not depend on a file the change added. A change that only adds files, with proof steps that read them, passes in the copy without the
+# change (added files stay there by design), so itemSplit counts those steps as before; the row must read plain "met" and the headline "met, not compared with
+# the code before the change". A true before step (an existing test, no added path named) still reads "already met before this change". The split itself,
+# the verdict, held_by and not_proven are not read here: only the row's basis. Plants: rowBasis drops the dependsOnAdded test (the file, dir and glob legs read
+# before); namesAddedPath drops the dir or glob branch (that leg reads before); lineDependsOnAdded ignores the item (the true-before leg reads met).
+BS="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const { itemSplit, rowBasis, lineDependsOnAdded } = await import("./src/engine10/proof_rerun.ts"); const { acceptanceHead } = await import("./src/engine10/stages/pr.ts");
+const ok = (item, what, cmd) => ({ item, what, ok: true, real: true, cmd, kind: "reader" });
+const added = ["backend/docs/GUIDE.md", "backend/src/schemas/index.ts", "backend/src/schemas/a.routes.ts", "backend/tests/unit/schemas/coverage.test.ts"];
+const head = [ok("1", "doc", "cd /r && grep -q Policy backend/docs/GUIDE.md"), ok("2", "registry", "cd /r && grep -q export backend/src/schemas/index.ts && [ \"$(ls backend/src/schemas/*.routes.ts | wc -l)\" -ge 1 ]"),
+  ok("3", "added test", "cd /r/backend && npx vitest run tests/unit/schemas/coverage.test.ts"), ok("4", "existing test", "cd /r/backend && npx vitest run tests/unit/app.test.ts"), ok("5", "dir", "ls backend/src/schemas"), ok("6", "mixed", "grep -q x README.md"), ok("6", "mixed2", "grep -q y backend/docs/GUIDE.md")];
+const split = itemSplit(head, head, head), basis = (i) => rowBasis(split[i], head.filter((c) => c.item === i).length, lineDependsOnAdded(head, i, added)) ?? "plain";
+const noAdd = rowBasis(split["1"], 1, lineDependsOnAdded(head, "1", [])) ?? "plain";
+const rows = [1, 2, 3, 4, 5, 6].map((i) => ({ line: "L" + i, status: "met", evidence: "e", ...(basis(String(i)) === "plain" ? {} : { by: basis(String(i)) }) }));
+const l = acceptanceHead("PARTIAL", { issue_acceptance: rows }).split("\n");
+console.log([[1, 2, 3, 4, 5, 6].map((i) => basis(String(i))).join(","), noAdd, l[1]].join(" ## "));' 2>&1)"
+[ "$BS" = 'plain,plain,plain,before,plain,plain ## before ## 0 of 6 acceptance lines are met by this change; 1 already met before it; 5 met, not compared with the code before the change.' ] && ok "BEFORE-STATUS: a line whose steps read a file the change added is plain met; a true before line keeps its words" || bad "BEFORE-STATUS gave: $BS"
 
 # ---------------------------------------------------------------- spec choice evidence (features/spec_ambiguity.ts resolveChoices)
 cat > "$T/spec-choice.ts" <<'TS'
