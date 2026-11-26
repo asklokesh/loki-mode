@@ -429,7 +429,7 @@
 # 305. verify.ts runCheck: spread unmeasuredTail into the check itself (the event-only leg finds the tail on the check).
 # INERT1. proof_rerun.ts ruleStatus: drop the `counted === 0` branch (the INERT-CHECK cell reads "mm"); or stepKind: drop the FILE_TEST and "/" test from inertWords (the last kind reads "inert": a file test outside the repository is dropped).
 # BTC1. pr.ts acceptanceHead: count ch as met (the BY-THIS-CHANGE headline reads "3 of 4"); or proof_rerun.ts itemSplit: drop the own.has test (item 1 reads change 0, before 1 and a FAILED step is lost).
-# BS1. proof_rerun.ts rowBasis: drop the `!dependsOnAdded` test (the BEFORE-STATUS cell reads before for the file, directory and glob lines); or namesAddedPath: drop the directory or glob branch (lines 2 and 5 read before); or lineDependsOnAdded: ignore the item (the true before line reads plain).
+# BS1. proof_rerun.ts issueRowBasis: drop the `added.some(non-test)` test (the BEFORE-STATUS cell reads before for line 4 and the helper leg); or rowBasis: drop the `!dependsOnAdded` test (the BEFORE-STATUS cell reads before for the file, directory and glob lines); or namesAddedPath: drop the directory or glob branch (lines 2 and 5 read before); or lineDependsOnAdded: ignore the item (the true before line reads plain).
 # BC1. seal.ts baseProofRunner: PROOF_RUN_ENV back to {} (the PROOF-NO-BYTECODE cell counts 1 or more .pyc files).
 # KD1. util/mutation_proof.ts proofTestSideOn: make it opt-out (the KNOB-DEFAULTS cell reads true in the fourth place).
 
@@ -1405,24 +1405,70 @@ const l = acceptanceHead("PARTIAL", { issue_acceptance: rows }).split("\n"), old
 console.log([JSON.stringify(split), l[1], l[5], l[6], l[7], l[8], old].join(" ## "));' 2>&1)"
 [ "$BTC" = '{"1":{"change":1,"before":1},"2":{"change":0,"before":1},"3":{"change":0,"before":1}} ## 1 of 4 acceptance lines is met by this change; 1 already met before it; 1 met, not compared with the code before the change; 1 not met (each says why). ## | A | met by this change | e1 | ## | B | already met before this change | e2 | ## | C | met | e3 | ## | D | NOT MET | r4 | ## Every acceptance line is met (1 of 1), each with what proved it.' ] && ok "BY-THIS-CHANGE: lines and headline tell this change from what the code already did" || bad "BY-THIS-CHANGE gave: $BTC"
 
-# BEFORE-STATUS (#679; proof_rerun.ts rowBasis, lineDependsOnAdded, namesAddedPath; seal.ts issueRows): a line reads "already met before this change" only when
-# its passing steps do not depend on a file the change added. A change that only adds files, with proof steps that read them, passes in the copy without the
-# change (added files stay there by design), so itemSplit counts those steps as before; the row must read plain "met" and the headline "met, not compared with
-# the code before the change". A true before step (an existing test, no added path named) still reads "already met before this change". The split itself,
-# the verdict, held_by and not_proven are not read here: only the row's basis. Plants: rowBasis drops the dependsOnAdded test (the file, dir and glob legs read
-# before); namesAddedPath drops the dir or glob branch (that leg reads before); lineDependsOnAdded ignores the item (the true-before leg reads met).
+# RECEIPT-TRUTH part 1 (#685; proof_rerun.ts issueRowBasis, seal.ts issueRows): a change that ADDED a non-test file has no run without it (the copy keeps added
+# files), so no line of it reads "already met before this change", whatever its checks' commands name (a helper outside the repository that imports the added
+# file is the FireLater case). A change that adds only a test file, or only modifies files, can still read before. Plant: issueRowBasis drops the added.some(non
+# test) test (the first leg reads before on line 4 and the helper leg reads before).
 BS="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
-const { itemSplit, rowBasis, lineDependsOnAdded } = await import("./src/engine10/proof_rerun.ts"); const { acceptanceHead } = await import("./src/engine10/stages/pr.ts");
+const { itemSplit, issueRowBasis } = await import("./src/engine10/proof_rerun.ts"); const { acceptanceHead } = await import("./src/engine10/stages/pr.ts"); const { isTestFile } = await import("./src/engine10/testmap.ts");
 const ok = (item, what, cmd) => ({ item, what, ok: true, real: true, cmd, kind: "reader" });
 const added = ["backend/docs/GUIDE.md", "backend/src/schemas/index.ts", "backend/src/schemas/a.routes.ts", "backend/tests/unit/schemas/coverage.test.ts"];
 const head = [ok("1", "doc", "cd /r && grep -q Policy backend/docs/GUIDE.md"), ok("2", "registry", "cd /r && grep -q export backend/src/schemas/index.ts && [ \"$(ls backend/src/schemas/*.routes.ts | wc -l)\" -ge 1 ]"),
-  ok("3", "added test", "cd /r/backend && npx vitest run tests/unit/schemas/coverage.test.ts"), ok("4", "existing test", "cd /r/backend && npx vitest run tests/unit/app.test.ts"), ok("5", "dir", "ls backend/src/schemas"), ok("6", "mixed", "grep -q x README.md"), ok("6", "mixed2", "grep -q y backend/docs/GUIDE.md")];
-const split = itemSplit(head, head, head), basis = (i) => rowBasis(split[i], head.filter((c) => c.item === i).length, lineDependsOnAdded(head, i, added)) ?? "plain";
-const noAdd = rowBasis(split["1"], 1, lineDependsOnAdded(head, "1", [])) ?? "plain";
+  ok("3", "added test", "cd /r/backend && npx vitest run tests/unit/schemas/coverage.test.ts"), ok("4", "existing test", "cd /r/backend && npx vitest run tests/unit/app.test.ts"), ok("5", "dir", "ls backend/src/schemas"), ok("6", "mixed", "grep -q x README.md"), ok("6", "mixed2", "grep -q y backend/docs/GUIDE.md"), ok("7", "helper outside the repository", "node /var/tmp/check-registry.mjs")];
+const split = itemSplit(head, head, head), basis = (i, add = added) => issueRowBasis(split[i], head.filter((c) => c.item === i).length, head, i, add, isTestFile) ?? "plain";
 const rows = [1, 2, 3, 4, 5, 6].map((i) => ({ line: "L" + i, status: "met", evidence: "e", ...(basis(String(i)) === "plain" ? {} : { by: basis(String(i)) }) }));
-const l = acceptanceHead("PARTIAL", { issue_acceptance: rows }).split("\n");
-console.log([[1, 2, 3, 4, 5, 6].map((i) => basis(String(i))).join(","), noAdd, l[1]].join(" ## "));' 2>&1)"
-[ "$BS" = 'plain,plain,plain,before,plain,plain ## before ## 0 of 6 acceptance lines are met by this change; 1 already met before it; 5 met, not compared with the code before the change.' ] && ok "BEFORE-STATUS: a line whose steps read a file the change added is plain met; a true before line keeps its words" || bad "BEFORE-STATUS gave: $BS"
+const l = acceptanceHead("PARTIAL", { issue_acceptance: [...rows, { line: "L7", status: "met", evidence: "e", by: basis("4", []) }] }).split("\n");
+console.log([[1, 2, 3, 4, 5, 6].map((i) => basis(String(i))).join(","), "helper " + basis("7", ["src/registry.ts"]), "testOnly " + basis("4", ["tests/new.test.ts"]), "modOnly " + basis("4", []) + "," + basis("7", []), l[1]].join(" ## "));' 2>&1)"
+[ "$BS" = 'plain,plain,plain,plain,plain,plain ## helper plain ## testOnly before ## modOnly before,before ## 0 of 7 acceptance lines are met by this change; 1 already met before it; 6 met, not compared with the code before the change.' ] && ok "BEFORE-STATUS: a change that added a product file never reads already met before it; a modify-only or test-only change still can" || bad "BEFORE-STATUS gave: $BS"
+
+# RECEIPT-TRUTH part 2 (#685; proof_rerun.ts ownProofOf, withoutOutcomes, withoutWhy): the own proof keeps one record per passing check of the change (without_checks) and
+# a fallback "why" built from the counts, never the fixed "every step also passes" unless that is the count. ok, steps and by_item are as before. Plant: withoutWhy
+# returns the fixed sentence whenever it is called (the second assertion reads it).
+OW="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const { ownProofOf } = await import("./src/engine10/proof_rerun.ts");
+const ok = (what) => ({ item: "1", what, ok: true, real: true, cmd: "npm test", kind: "runner" });
+const head = ["a", "b", "c", "d"].map(ok), control = head.map((c) => ({ ...c }));
+const bad = (what, exit, out, printed) => ({ item: "1", what, ok: false, exit, out, printed });
+const w1 = [ok("a"), bad("b", 1, "npm test | boom", "boom"), bad("c", 127, "npm test | command not found", "")];
+const p1 = ownProofOf(head, control, w1, false, 5, true), p2 = ownProofOf(head, control, w1.filter((c) => c.what !== "b"), false, 5, true);
+console.log([p1.without_checks.map((x) => x.outcome).join(","), p1.ok, p1.steps.join("+"), p2.ok, p2.why].join(" ## "));' 2>&1)"
+[ "$OW" = 'passed without the change,failed without the change,start failure,not reached ## true ## b ## false ## 1 of 4 checks also pass without the change; 3 did not pass there but do not count: 2 not reached, 1 start failure' ] && ok "OWN-PROOF-RECORD: each passing check keeps its outcome and the why is built from the counts" || bad "OWN-PROOF-RECORD gave: $OW"
+
+# RECEIPT-TRUTH part 3 (#685; seal.ts markDisputed, pr.ts acceptanceHead): a line Loki's checks call met that the reviewer's open UNMET note names never reads plain met.
+# Rows met, met, unmet with one UNMET note naming row 1: row 1 reads disputed, the headline counts the undisputed ones; the same rows with no note render as before.
+# Plant: markDisputed returns the rows unchanged (row 1 reads met).
+DP="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const { markDisputed } = await import("./src/engine10/stages/seal.ts"); const { acceptanceHead } = await import("./src/engine10/stages/pr.ts");
+const rows = [{ line: "Add the registry", status: "met", evidence: "e1" }, { line: "Document it", status: "met", evidence: "e2" }, { line: "Wire the route", status: "unmet", reason: "r3" }];
+const note = "cross-review block (claude): UNMET: add the  registry ";
+const withNote = acceptanceHead("PARTIAL", { issue_acceptance: markDisputed(rows, [note]) }).split("\n"), plain = acceptanceHead("PARTIAL", { issue_acceptance: markDisputed(rows, []) }), today = acceptanceHead("PARTIAL", { issue_acceptance: rows });
+const cell = (i) => withNote[i].split("|")[2].trim();
+console.log([withNote[1], cell(5), cell(6), cell(7), plain === today].join(" ## "));' 2>&1)"
+[ "$DP" = '1 of 3 acceptance lines is met and undisputed; 1 disputed by the reviewer; 1 not met (each says why). ## met by Loki'"'"'s checks; the reviewer says not met ## met ## NOT MET ## true' ] && ok "DISPUTED-LINE: a met line the reviewer marks UNMET reads disputed; undisputed rows render as before" || bad "DISPUTED-LINE gave: $DP"
+
+# RECEIPT-TRUTH part 4 (#685; seal.ts reviewFindings, pr.ts reviewFindingsSection): what the reviewer found reaches the receipt (every non-UNMET reason, at most 20, cut to 600)
+# and the PR body (at most 12, then how many more). 25 reasons, 6 of them UNMET: 19 on the receipt, 12 shown, "(+7 more in the receipt)". Plant: reviewFindings keeps the
+# UNMET lines (the count reads 20).
+RF="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const { reviewFindings } = await import("./src/engine10/stages/seal.ts"); const { reviewFindingsSection } = await import("./src/engine10/stages/pr.ts");
+const reasons = Array.from({ length: 25 }, (_, i) => (i < 6 ? "UNMET: line " + i : "finding " + i + " " + "x".repeat(i === 7 ? 900 : 5)));
+const f = reviewFindings(reasons), sec = reviewFindingsSection({ review: { findings: f } }).split("\n"), none = reviewFindingsSection({ review: {} });
+console.log([f.length, Math.max(...f.map((x) => x.length)), sec.filter((l) => l.startsWith("- finding")).length, sec[0], sec.find((l) => l.includes("more in the receipt")), JSON.stringify(none)].join(" ## "));' 2>&1)"
+[ "$RF" = '19 ## 600 ## 12 ## ## What the reviewer found ## - (+7 more in the receipt) ## ""' ] && ok "REVIEW-FINDINGS: the reviewer's findings are on the receipt and in the PR body, capped and counted" || bad "REVIEW-FINDINGS gave: $RF"
+
+# RECEIPT-TRUTH part 5 (#685; proof_rerun.ts proofFacts): the facts handed to the acceptance check list every PROVED and FAILED line before the 8000 character tail, and say
+# when the script was cut. A 60 line run of 20000 characters: every PROVED line's first 40 characters occur in the facts; a 13000 character script yields the cut note.
+# Plant: proofFacts drops the listing (the first lines are missing) or the cut note.
+PF="$(cd "$ROOT/loki-ts" && T="$T" bun --no-env-file --config=/dev/null -e '
+const { proofFacts, PROOF_SCRIPT } = await import("./src/engine10/proof_rerun.ts"); const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs"); const { join } = await import("node:path"); const { tmpdir } = await import("node:os");
+const dir = mkdtempSync(join(process.env.T ?? tmpdir(), "pf.")); writeFileSync(join(dir, PROOF_SCRIPT), "echo hi\n".repeat(1625));
+const checks = Array.from({ length: 60 }, (_, i) => ({ item: String(i % 20 + 1), what: "check number " + i + " " + "w".repeat(50), ok: i % 15 !== 14 }));
+const tail = checks.map((c, i) => "LOKI-PROOF " + (c.ok ? "PROVED " : "FAILED ") + c.item + ": " + c.what + " | " + "y".repeat(250)).join("\n").slice(-8000);
+const r = { exit: 0, seconds: 3, proved: 56, failed: 4, tail, script_chars: 13000, stopped: 0, left: 0, lines: {}, checks };
+const facts = proofFacts(dir, r, true).join("\n"), all = checks.filter((c) => c.ok).every((c) => facts.includes(("PROVED " + c.item + ": " + c.what).slice(0, 40)));
+rmSync(dir, { recursive: true, force: true });
+console.log([all, facts.includes("(script cut: 1000 more characters not shown)"), tail.length].join(" ## "));' 2>&1)"
+[ "$PF" = 'true ## true ## 8000' ] && ok "PROOF-FACTS-WHOLE: every PROVED line is in the facts, and a cut script says so" || bad "PROOF-FACTS-WHOLE gave: $PF"
 
 # ---------------------------------------------------------------- spec choice evidence (features/spec_ambiguity.ts resolveChoices)
 cat > "$T/spec-choice.ts" <<'TS'
