@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## v11.185.0 (2026-11-26)
+
+### Changed
+
+- Bash guard fix (#709): a session working in its own scratch directory is no longer refused every later command, a `cd` back into the repository is allowed, and quoted heredocs to an interpreter pass. On FireLater#14 (11.184.0) the guard stopped the implement session twice ($3.25 of turns ended unfinished) after the brief sent it to its scratch directory.
+- Issue runs whose issue brings its own acceptance list no longer get the ranked file list, signature digest, context pack and impacted-test list in the first brief (#703); Haiku runs keep them, and LOKI_E10_ISSUE_PACK=1 restores them. On FireLater#14 the brief was 28,796 characters against plain's 1,846, and the pack's precision against the files the change touched was 0.15. The proof block asks for one check that runs the change over a record written the old way (#705).
+- Seal reuses the implement loop's last review when that review blocked exactly the tree being sealed, instead of a second whole-diff review and line check (#702); LOKI_E10_SEAL_REVIEW_REUSE=0 turns it off. It can only keep or lower a label. On FireLater#14 it saves about $1.03 and 85 s.
+- Measured before this release, two same-hour pairs against plain Claude Code on Sonnet with the user's settings off: Loki merge-ready 0 of 2, plain 2 of 2; Loki cost 3.32 times and took 2.86 times as long. Replaying these defaults on the stored runs predicts 2.71 times plain, not a win; the next pair measures it (#711).
+- Release checks: hc2 calibration n 32, right 28, verifier right 29, false VERIFIED 0 (unchanged; it cannot reach the seal reuse rule). typecheck, host-guard, context-pack, engine10-e2e-stub, decompose-and-intake, receipt-roundtrip and run-safety pass; scope-and-fix 1010 passed, 4 failed, the same four that fail on 11.179.0 (#652). Not measured on a real user run yet.
+
 ## v11.184.0 (2026-11-26)
 
 ### Changed
