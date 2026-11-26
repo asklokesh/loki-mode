@@ -1131,6 +1131,43 @@ console.log([holds.length > 0, p.lokiLabelFor("PARTIAL").name].join(" | "));
 [ "$RH8" = 'true | loki: needs you' ] \
     && ok "REVIEW-HOLDS unit 8: the FireLater#21 end state (a block, then a turn that changed the code and no review read it) is held and its pull request label is 'loki: needs you'" || bad "REVIEW-HOLDS unit 8 gave: $RH8"
 
+# SEAL-REUSE (#702, #691; FireLater#14 run bb59): the implement loop's closing read blocked the tree being sealed (12 findings, 6 "review open" holds), and the seal then paid for its own whole-diff review (77.2 s, $0.77) and the acceptance line check (8 s, $0.26) that cannot change the label. When the last read saw the sealed tree and said block, seal reuses it (LOKI_E10_SEAL_REVIEW_REUSE=0 turns that off). seal.ts is a label file; the reuse can only keep or lower a label.
+# Pure cells 1, 2, 3 and 5; the stub-run legs (4a, 4b) are further down and are written, not run by their author.
+# Plants: seal.ts sealReuse returns true for level "flag" (cell 1 goes red); the tree comparison removed from sealReuse (cells 1 and 3 go red).
+SR1="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const s = await import("./src/engine10/stages/seal.ts"), f = s.sealReuse;
+const T = "a".repeat(40), st = { level: "block", findings: 12, follow: true, still_open: [], changed_unread: false, tree: T, read: { notes: ["n1"], reasons: ["r1"], provider: "claude", reviewed_by: "model", reviewer_model: "sonnet" } };
+console.log([f(st, T, {}), f({ ...st, level: "flag" }, T, {}), f({ ...st, level: "pass" }, T, {}), f({ ...st, changed_unread: true }, T, {}), f(st, "b".repeat(40), {}), f({ ...st, read: { ...st.read, notes: [] } }, T, {}), f(undefined, T, {}), f(null, T, {}), f("x", T, {}), f({}, T, {}), f({ ...st, tree: "" }, "", {}), f({ ...st, read: undefined }, T, {}), f({ ...st, read: { notes: "x" } }, T, {}), f({ ...st, changed_unread: undefined }, T, {}), f(st, T, { LOKI_E10_SEAL_REVIEW_REUSE: "0" }), f(st, T, { LOKI_E10_SEAL_REVIEW_REUSE: "off" }), f(st, T, { LOKI_E10_SEAL_REVIEW_REUSE: "1" })].join(" "));
+' 2>&1)"
+[ "$SR1" = "true false false false false false false false false false false false false false false false true" ] \
+    && ok "SEAL-REUSE unit 1: sealReuse is true only for a block, unchanged since the read, on the sealed tree, with notes; any other level, a changed or different tree, empty notes, a missing or mistyped field, or the switch at 0 or off is false" || bad "SEAL-REUSE unit 1 gave: $SR1"
+SR2="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const s = await import("./src/engine10/stages/seal.ts"), x = await import("./src/engine10/stages/xreview.ts"), c = await import("./src/engine10/closure.ts");
+const T = "c".repeat(40), five = ["f1", "f2", "f3", "f4", "f5"], twelve = Array.from({ length: 12 }, (_, i) => "finding " + (i + 1));
+const st = { level: "block", findings: 12, follow: true, still_open: five, changed_unread: false, tree: T, read: { notes: five, reasons: twelve, provider: "claude", reviewed_by: "model", reviewer_model: "sonnet" } };
+const xr = s.reusedReview(st.read), rec = x.reviewReceipt("claude", xr).review;
+console.log([s.sealReuse(st, T, {}), x.minVerdict("VERIFIED", xr), x.modelReviewRan(xr), xr.notes.length, xr.reasons.length, xr.reused, rec.ran, c.reviewHolds(st).length].join(" | "));
+' 2>&1)"
+[ "$SR2" = "true | PARTIAL | true | 5 | 12 | implement loop | reviewer (sonnet), read during the run | 6" ] \
+    && ok "SEAL-REUSE unit 2: the FireLater#14 state as stored is reused, the rebuilt review is a model review that turns VERIFIED into PARTIAL, keeps the 5 notes and 12 reasons, reads 'reviewer (sonnet), read during the run' on the receipt, and the state still gives its 6 review-open holds" || bad "SEAL-REUSE unit 2 gave: $SR2"
+SR3="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const s = await import("./src/engine10/stages/seal.ts");
+const T = "d".repeat(40), H = "e".repeat(40);
+const st = { level: "block", findings: 11, follow: true, still_open: ["x"], changed_unread: false, tree: T, read: { notes: ["n"], reasons: ["r"], provider: "claude", reviewed_by: "model", reviewer_model: "sonnet" } };
+console.log([s.sealReuse(st, H, {}), s.sealReuse(st, T, {})].join(" | "));
+' 2>&1)"
+[ "$SR3" = "false | true" ] \
+    && ok "SEAL-REUSE unit 3: the FireLater#21 case (a lint fix round changed two files after the last read, so the sealed tree is not the tree the read saw) is not reused, and the same state on the read tree is" || bad "SEAL-REUSE unit 3 gave: $SR3"
+SR5="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const c = await import("./src/engine10/closure.ts"), j = JSON.stringify;
+const base = { level: "block", findings: 12, follow: true, still_open: ["a", "b"], changed_unread: false };
+const withRead = { ...base, tree: "f".repeat(40), read: { notes: ["n"], reasons: ["r"], provider: "claude", reviewed_by: "model", reviewer_model: "sonnet" } };
+const a = j(c.reviewHolds(base)), b = j(c.reviewHolds(withRead));
+console.log([a === b, c.reviewHolds(base).length].join(" | "));
+' 2>&1)"
+[ "$SR5" = "true | 3" ] \
+    && ok "SEAL-REUSE unit 5: reviewHolds gives the same lines for a block state with and without tree and read" || bad "SEAL-REUSE unit 5 gave: $SR5"
+
 # G5 SKIP-NOTE end to end (oc63960): a full suite red only on base ids must seal without the "fix round skipped" note holding it; the same run with one
 # new failing id in that suite is held by it. Plant G5-10: util/check_result.ts suiteSkipHolds always false: the new-id run seals without the note.
 snote() { python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); print(r.get("verdict"), any(str(n).startswith("fix round skipped: only full-suite failures remained") for n in r.get("not_proven", [])))' "$RUNDIR/receipt.json" 2>/dev/null || echo no-receipt; }
@@ -2449,7 +2486,7 @@ RFPY
 # sequence), so with BLOCK the first review is handed back once (LOKI_E10_REVIEW_FOLLOW_MAX, default 1) and the fix is read once: exactly two review.early events, with follow 0, 1, and no line check
 # before the second of them (REVIEW-HOLDS: findings of the follow-up are not handed back). The stub also changes the tree in the -rv self review turn, so a third read, the closing one (closing true, follow 2), follows by rule 1(b). Needs a stub that changes the tree in the -pf hand-back session; if it does not, the second review.early never appears and this leg reads fewer than three.
 rw_proof 'grep -q "export function multiply" calc.ts' 'grep -q "export function multiply" calc.ts'
-rw_engine reviewcloses "$RWD/list.md" LOKI_RISK_TIER=medium LOKI_REVIEW_DEFAULT=1 E2E_STUB_REVIEW=BLOCK
+rw_engine reviewcloses "$RWD/list.md" LOKI_RISK_TIER=medium LOKI_REVIEW_DEFAULT=1 E2E_STUB_REVIEW=BLOCK LOKI_E10_SEAL_REVIEW_REUSE=0 # SEAL-REUSE off: this leg pins the seal that runs its own review and line check (the reuse legs follow the REVIEW-HOLDS legs)
 RCS="$(python3 -I - "$RWRUN" <<'RCPY'
 import json, os, sys
 try: ev = [json.loads(l) for l in open(os.path.join(sys.argv[1], "events.jsonl"))]
@@ -2479,6 +2516,36 @@ RHPY
 )"
 RHPRE="${RWSTAGES%%linecheck*}"
 [ "$RHS" = "early=3 follow=0,1,2 closing=2 pf=1 PARTIAL held=open" ] && [ "$(grep -o review <<< "$RHPRE" | wc -l | tr -d ' ')" = 4 ] && ok "REVIEW-HOLDS stub run (a): a flag still open after the one fix is read twice, hands back once, the -rv self review turn the stub changes the tree in gets its closing read (#698 rule 1b, handed back nowhere), no loop line check, and seals PARTIAL held by review open" || bad "REVIEW-HOLDS stub run (a) gave: $RHS (sessions '$RWSTAGES')"
+# SEAL-REUSE stub-run legs (written, not run by their author; the lead runs them after the bundle is rebuilt on the merged tree). The stub reviewer blocks on every call, so the loop reads three times (as in REVIEW-CLOSES) and the last read, the closing one, saw the tree that is sealed.
+# (a) Reuse on: the seal makes no review session and no acceptance line check (the stub log has three review sessions in all and no linecheck), the seal.steps event carries one "cross review" step with reused true and no "acceptance line check" step, and the receipt is PARTIAL held by "review open" and "review block". Needs the sealed commit's tree to equal the tree the closing read saw; if the commit step drops a file the loop saw, the reuse does not fire and this leg reads reused=no (the safe direction).
+rw_proof 'grep -q "export function multiply" calc.ts' 'grep -q "export function multiply" calc.ts'
+rw_engine sealreuse "$RWD/list.md" LOKI_RISK_TIER=medium LOKI_REVIEW_DEFAULT=1 E2E_STUB_REVIEW=BLOCK
+SRS="$(python3 -I - "$RWRUN" <<'SRPY'
+import json, os, sys
+try: ev = [json.loads(l) for l in open(os.path.join(sys.argv[1], "events.jsonl"))]
+except Exception: print("no events"); sys.exit(0)
+try: r = json.load(open(os.path.join(sys.argv[1], "receipt.json")))
+except Exception: r = {}
+steps = [s for e in ev if e["type"] == "seal.steps" for s in (e["data"].get("steps") or [])]
+cr = [s for s in steps if s.get("step") == "cross review"]
+kinds = [h.get("kind") for h in r.get("held_by") or []]
+print("cross=" + str(len(cr)), "reused=" + ("yes" if cr and cr[0].get("reused") is True else "no"), "linecheck=" + ("yes" if any(s.get("step") == "acceptance line check" for s in steps) else "no"), r.get("verdict"), "open=" + ("yes" if "review open" in kinds else "no"), "block=" + ("yes" if "review block" in kinds else "no"))
+SRPY
+)"
+[ "$SRS" = "cross=1 reused=yes linecheck=no PARTIAL open=yes block=yes" ] && [ "$(grep -o review <<< "$RWSTAGES" | wc -l | tr -d ' ')" = 3 ] && ! grep -q linecheck <<< "$RWSTAGES" && ok "SEAL-REUSE stub run (a): the loop's last read blocked the sealed tree, so the seal records one reused cross review step, makes no review session and no line check, and seals PARTIAL held by review open and review block" || bad "SEAL-REUSE stub run (a) gave: $SRS (sessions '$RWSTAGES')"
+# (b) A verify fix round changes a file after the loop's last read: the sealed tree is not the read tree, so the seal review runs as today (its step has no reused flag).
+rw_proof 'grep -q "export function multiply" calc.ts' 'grep -q "export function multiply" calc.ts'
+rw_engine sealreuse-fix "$RWD/list.md" LOKI_RISK_TIER=medium LOKI_REVIEW_DEFAULT=1 E2E_STUB_REVIEW=BLOCK E2E_STUB_MODE=wrong E2E_STUB_FIX=fixit
+SRS2="$(python3 -I - "$RWRUN" <<'SRPY2'
+import json, os, sys
+try: ev = [json.loads(l) for l in open(os.path.join(sys.argv[1], "events.jsonl"))]
+except Exception: print("no events"); sys.exit(0)
+steps = [s for e in ev if e["type"] == "seal.steps" for s in (e["data"].get("steps") or [])]
+cr = [s for s in steps if s.get("step") == "cross review"]
+print("cross=" + str(len(cr)), "reused=" + ("yes" if any(s.get("reused") is True for s in cr) else "no"))
+SRPY2
+)"
+[ "$SRS2" = "cross=1 reused=no" ] && ok "SEAL-REUSE stub run (b): a verify fix round that changes a file after the last read leaves the seal's own review in place (one cross review step, not reused)" || bad "SEAL-REUSE stub run (b) gave: $SRS2 (sessions '$RWSTAGES')"
 # Leg (b) (a session turn after the review that changes no file: one review.early, no follow-up, not held by review open) is not written: the stub's -pf session always changes the tree and the stub fixture is not in this lane's files. Unit 7 covers its rule (a flag with still_open [] and nothing changed gives no hold).
 rw_proof 'grep -q "export function multiply" calc.ts' 'grep -q "export function multiply" calc.ts' 'false' # line 2 has one passing and one failing check
 rw_engine failing "$RWD/list.md"; RWF="$(rw_facts)"
