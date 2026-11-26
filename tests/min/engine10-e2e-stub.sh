@@ -977,6 +977,21 @@ console.log([r6.notes.length, r6.notes[0], r6.notes.filter(x.isUnmetNote).length
 [ "$U3" = '5 | cross-review flag (claude): UNMET: Acceptance: six is cut today | 1 | ["cross-review flag (claude): one","cross-review flag (claude): two"] | true | false' ] \
     && ok "F3 unit: an UNMET reason written sixth is kept (sorted first, the cap stays 5); a review with no UNMET keeps its order; bold UNMET counts, the word inside a reason does not" || bad "F3 unit gave: $U3"
 
+# EARLY-REVIEW-REASONS (FireLater#17, loki-mode#680): the early review round handed the session five bare UNMET lines and none of the eight specific findings, because the receipt's
+# cap of 5 puts UNMET first. The round now reads the full ordered list (findings, then UNMET, bounded by handBackReasons); the receipt notes stay 5 and UNMET first.
+# Plant ERR-1: xreview.ts parseReview builds reasonsAll with the UNMET lines first: the hand-back leads with UNMET and the unit cell fails.
+ERR="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const x = await import("./src/engine10/stages/xreview.ts");
+const spec = Array.from({ length: 8 }, (_, i) => `- finding ${i + 1}: the check at step ${i + 1} can be bypassed`), unmet = Array.from({ length: 6 }, (_, i) => `- UNMET: acceptance line ${i + 1}`);
+const out = JSON.stringify({ result: ["VERDICT: BLOCK", ...spec, ...unmet, "", "The change does not deliver the acceptance lines above."].join("\n") });
+const r = x.parseReview("claude", out), back = x.handBackReasons(r);
+const old = r.notes.filter((n) => /^cross-review (block|flag) /.test(n) || x.isUnmetNote(n)).slice(0, 8); // what reviewRound handed back before this change
+const long = x.handBackReasons({ provider: "claude", level: "flag", notes: [], reasons: Array.from({ length: 20 }, () => "y".repeat(2000)) });
+console.log([r.notes.length, x.isUnmetNote(r.notes[0]), old.filter((n) => !x.isUnmetNote(n)).length, back.length, back.slice(0, 8).every((b, i) => b === `finding ${i + 1}: the check at step ${i + 1} can be bypassed`), back[8] === "The change does not deliver the acceptance lines above." && back.slice(9).length === 3 && back.slice(9).every((b) => b.startsWith("UNMET: ")), x.handBackReasons(x.parseReview("claude", JSON.stringify({ result: "VERDICT: PASS" }))).length, long.length, Math.max(...long.map((l) => l.length)) <= 520].join(" | "));
+' 2>&1)"
+[ "$ERR" = '5 | true | 0 | 12 | true | true | 0 | 12 | true' ] \
+    && ok "EARLY-REVIEW-REASONS unit: the old hand-back held 0 specific findings; the new one lists the 8 findings and the closing paragraph first then the UNMET lines (12 max, each clipped); the receipt notes stay 5 with UNMET first; a PASS hands back nothing" || bad "EARLY-REVIEW-REASONS unit gave: $ERR"
+
 # G5 SKIP-NOTE end to end (oc63960): a full suite red only on base ids must seal without the "fix round skipped" note holding it; the same run with one
 # new failing id in that suite is held by it. Plant G5-10: util/check_result.ts suiteSkipHolds always false: the new-id run seals without the note.
 snote() { python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); print(r.get("verdict"), any(str(n).startswith("fix round skipped: only full-suite failures remained") for n in r.get("not_proven", [])))' "$RUNDIR/receipt.json" 2>/dev/null || echo no-receipt; }
