@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## v11.181.0 (2026-11-25)
+
+### Changed
+
+### Changed
+- The early review now hands the session the reviewer's specific findings first, then its UNMET lines, up to 12 items, instead of the first five of a list that put UNMET lines first (FireLater#17: the session got five bare UNMET lines and none of eight findings, one a security bypass). The receipt is unchanged: its notes still keep 5 reasons with UNMET first. Not measured: no real run.
+- A pull request no longer says an acceptance line was already met before the change when the steps that prove it only read files the change added (#679). On FireLater#17 three of four such lines were proved by reading a new schema folder, two new test files and a new guide, which exist only because of the change. A line now reads already met before this change only when none of its passing steps names an added file, a folder that holds one, or a pattern that matches one; otherwise it reads plain met and the headline counts it as met, not compared with the code before the change. Only the wording of the rows changes; the label, what held it and the not proven list are untouched. Not measured: no real run.
+- Verified mode now does what it says: with --verified, a run that would stop at PARTIAL keeps working (#647). Between commit and seal, each closure round reads the label, and while something closable holds it and nothing only a person can close does, runs one more session on exactly those items (for example "no test shown to fail on the base commit and pass on the change"), a complete verify and a commit, then reads the label again. A round that closes nothing is reverted and ends the loop, so the result is never worse than the PARTIAL it started from; holds only a person can close are disclosed and never retried. Rounds stop at your LOKI_VERIFIED_ROUNDS, LOKI_VERIFIED_MAX_S, LOKI_VERIFIED_MAX_USD and LOKI_VERIFIED_MAX_TOKENS when set. The receipt lists each round under verified_mode.rounds. A run without --verified is unchanged. Not measured: no run; how many PARTIAL runs this moves to VERIFIED is unknown (#674).
+- Code scanning fixes in the check that reads test results and in the verify and seal stages (#657). A function or symbol name taken from your diff is now fully escaped before it goes into a search pattern, where before only the dollar sign was escaped, so a name with other pattern characters can no longer change what the pattern matches. Two patterns that could take very long on crafted input, the one that recognizes a script-run test command and the one that reads the pytest summary line, are rewritten to match the same text without that cost. What changes for you: nothing you would see on normal repositories. Not measured: the patterns were not timed against hostile input in a real run, and the calibration run does not exercise them directly.
+- Release checks: hc2 calibration on this tree n 32, label right 28, verifier right 29, false VERIFIED 0 (previous 32/28/29/0); hc2 is a tuning set. Full local gate on 11.180.0: 25 of 31 suites pass; issue-action, trigger-server and run-safety are fixed here; hygiene, scope-and-fix and h2h-harness also fail on 11.179.0 (#652). Closure rounds are not measured (#674).
+
 ## v11.180.0 (2026-11-25)
 
 ### Changed
