@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## v11.182.0 (2026-11-25)
+
+### Changed
+
+- The independent review now runs as soon as the change's proof passes, before any acceptance hand-back spends a turn, and its findings reach the session whole in one hand-back; a reviewer gap on a line whose check passes is handed back once (#684). On FireLater#17 (11.181.0) the review ran 25 minutes into a 33-minute run after three hand-backs; a replay of that run predicts it about 17 minutes earlier. Prediction, not a measurement.
+- The receipt no longer says a line was already met before the change when the change added product files, keeps a record of why each check did or did not fail without the change, and shows reviewer findings instead of bare UNMET lines (#685).
+- The start quote now counts PARTIAL runs, not only passing ones, so a costly PARTIAL raises the estimate; a run piped to a file or a log prints a progress line at least once a minute (#686). The 11.181.0 run of FireLater#17 printed nothing for 29 minutes.
+- Known and filed: a draft from an earlier run cannot be continued, so a rerun opens a second draft (#687); code that handles hostile input needs adversarial run inputs, since no reviewer caught the tab-in-scheme bypass in FireLater PRs 74 and 75 (#689); a finding closed only by a fail-before, pass-after check (#690).
+- Release checks: hc2 calibration on this tree n 32, right 28, verifier right 29, false VERIFIED 0 (unchanged). engine10-e2e-stub, receipt-roundtrip, outcome-metrics, run-safety, issue-action and trigger-server pass; scope-and-fix 1010 passed, 4 failed, the same four that fail on 11.179.0 (#652). Not measured on a real user run yet.
+
 ## v11.181.0 (2026-11-25)
 
 ### Changed
