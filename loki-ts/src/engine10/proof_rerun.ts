@@ -535,7 +535,36 @@ export const lineDependsOnAdded = (head: readonly ProofCheck[] | undefined, item
 /** How a met line is told apart on the receipt: "change" when one of its checks fails without the change; "before" when every counting check also passes without it
  *  and none of them depends on an added file; otherwise undefined (plain "met", not compared with the code before the change). The verdict never reads it. */
 export const rowBasis = (s: { change: number; before: number } | undefined, counted: number, dependsOnAdded: boolean): "change" | "before" | undefined => (s && s.change > 0 ? "change" : s && counted > 0 && s.before >= counted && !dependsOnAdded ? "before" : undefined);
-export interface OwnProof { ok: boolean; steps: string[]; cmds: string[] /* the counted steps' commands: which changed test file a step ran (never written to the receipt) */; why?: string; seconds: number; built?: true; checks_without: number; checks_control: number; by_item?: Record<string, { change: number; before: number }>; before?: { step: string; lines: string[] }[] }
+/** The basis of one met row (seal.ts). A change that added a product file (a non-test one) has no run without it: the copy keeps added files, so a step that
+ *  passes there says nothing about the code before the change, whatever its command names (a helper outside the repository can import the added file). Only a
+ *  change that adds no product file can read "before". The verdict never reads it. */
+export const issueRowBasis = (s: { change: number; before: number } | undefined, counted: number, head: readonly ProofCheck[] | undefined, item: string, added: readonly string[], isTest: (p: string) => boolean): "change" | "before" | undefined => rowBasis(s, counted, added.some((p) => !isTest(p)) || lineDependsOnAdded(head, item, added));
+export interface OwnProof { ok: boolean; steps: string[]; cmds: string[] /* the counted steps' commands: which changed test file a step ran (never written to the receipt) */; why?: string; seconds: number; built?: true; checks_without: number; checks_control: number; by_item?: Record<string, { change: number; before: number }>; before?: { step: string; lines: string[] }[]; without_checks?: WithoutCheck[] }
+/** What happened to one passing check of the change when the script ran without it (the own proof's record, so the receipt never says less than the counts). */
+export type WithoutOutcome = "passed without the change" | "failed without the change" | "start failure" | "silent failure" | "failed in the untouched copy" | "not reached" | "reads a file only";
+export interface WithoutCheck { item: string; what: string; outcome: WithoutOutcome }
+/** One outcome per passing check of the change, with the same predicates failsWithoutChange uses ("failed without the change" is exactly the counted kind). Pure. */
+export function withoutOutcomes(head: ProofCheck[], control: ProofCheck[], without: ProofCheck[], readersCount = true): { c: ProofCheck; outcome: WithoutOutcome }[] {
+  const k = (c: ProofCheck): string => `${c.item}\u0001${c.what}`, set = (cs: ProofCheck[], ok: boolean): Set<string> => new Set(cs.filter((c) => c.ok === ok).map(k));
+  const cOk = set(control, true), cBad = set(control, false), wOk = set(without, true), wBad = set(without, false), wStart = new Set(without.filter(stepStartFailure).map(k)), wSaid = new Set(without.filter((c) => !c.ok && (c.printed ?? "").trim() !== "").map(k));
+  const counts = (c: ProofCheck, readers: boolean): boolean => c.real === true && cOk.has(k(c)) && !cBad.has(k(c)) && wBad.has(k(c)) && !wOk.has(k(c)) && !wStart.has(k(c)) && wSaid.has(k(c)) && (readers || c.kind !== "reader");
+  return head.filter((c) => c.ok).map((c) => {
+    const outcome: WithoutOutcome = counts(c, readersCount) ? "failed without the change" : counts(c, true) ? "reads a file only" : !cOk.has(k(c)) || cBad.has(k(c)) ? "failed in the untouched copy" : wOk.has(k(c)) ? "passed without the change" : wStart.has(k(c)) ? "start failure" : wBad.has(k(c)) ? (wSaid.has(k(c)) ? "reads a file only" : "silent failure") : "not reached";
+    return { c, outcome };
+  });
+}
+/** The sentence for an own proof that counted nothing, built from the counts. The old fixed sentence stays only when every passing check passed without the change. */
+export function withoutWhy(rows: readonly { outcome: WithoutOutcome }[]): string {
+  const n = rows.length, pass = rows.filter((r) => r.outcome === "passed without the change").length;
+  if (pass === n) return "every step that passes on the change also passes without it, so the proof does not tell the change from no change";
+  const by = new Map<string, number>(); for (const r of rows) if (r.outcome !== "passed without the change") by.set(r.outcome, (by.get(r.outcome) ?? 0) + 1);
+  return `${pass} of ${n} checks also pass without the change; ${n - pass} did not pass there but do not count: ${[...by].map(([o, c]) => `${c} ${o}`).join(", ")}`;
+}
+/** The own proof for one run without the change, built from the three runs' checks. Pure. */
+export function ownProofOf(head: ProofCheck[], control: ProofCheck[], without: ProofCheck[], built: boolean, total: number, readersCount: boolean): OwnProof {
+  const steps = failsWithoutChange(head, control, without, readersCount), rows = withoutOutcomes(head, control, without, readersCount);
+  return { ok: steps.length > 0, steps, cmds: head.filter((c) => c.ok && c.real && steps.includes(c.what)).map((c) => c.cmd ?? ""), seconds: total, checks_without: without.length, checks_control: control.length, by_item: itemSplit(head, control, without, readersCount), without_checks: rows.slice(0, 80).map((r) => ({ item: r.c.item, what: r.c.what.slice(0, 120), outcome: r.outcome })), ...(steps.length ? { before: steps.slice(0, 5).map((st) => ({ step: st, lines: [(without.find((c) => !c.ok && c.what === st)?.printed ?? "").slice(0, 300)].filter(Boolean) })) } : {}), ...(built ? { built: true as const } : {}), ...(steps.length ? {} : { why: without.length === 0 ? "the proof script printed no check when run without the change" : !readersCount && failsWithoutChange(head, control, without, true).length > 0 ? "the only steps that fail without the change read a file, which does not show that a change to code works" : withoutWhy(rows) }) };
+}
 /** Runs the kept proof script in a copy of the checkout without the change (see the block comment above). `revert`: the change's non-test files, each with
  *  whether the change added it. An added file STAYS in the copy: removing it would make any step that touches it fail, which shows that the file exists
  *  and nothing about behaviour. Only files the base commit has are put back to their base content (read from the repository's objects, so no git command
@@ -581,7 +610,7 @@ export async function proofWithoutChange(repoDir: string, runDir: string, baseSh
     const control = await once("control"); if (typeof control === "string") return no(control, total);
     const key = (c: ProofCheck): string => `${c.item}\u0001${c.what}`, cOk = new Set(control.filter((c) => c.ok).map(key));
     if (!head.checks!.some((c) => c.ok && c.real && cOk.has(key(c)))) return { ...no("no step of the proof script passes in a copy of the checkout, so a failure there would say nothing about the change", total), checks_control: control.length };
-    const result = (without: ProofCheck[], built: boolean): OwnProof => { const steps = failsWithoutChange(head.checks!, control, without, opts.readersCount !== false); return { ok: steps.length > 0, steps, cmds: head.checks!.filter((c) => c.ok && c.real && steps.includes(c.what)).map((c) => c.cmd ?? ""), seconds: total, checks_without: without.length, checks_control: control.length, by_item: itemSplit(head.checks!, control, without, opts.readersCount !== false), ...(steps.length ? { before: steps.slice(0, 5).map((st) => ({ step: st, lines: [(without.find((c) => !c.ok && c.what === st)?.printed ?? "").slice(0, 300)].filter(Boolean) })) } : {}), ...(built ? { built: true as const } : {}), ...(steps.length ? {} : { why: without.length === 0 ? "the proof script printed no check when run without the change" : opts.readersCount === false && failsWithoutChange(head.checks!, control, without, true).length > 0 ? "the only steps that fail without the change read a file, which does not show that a change to code works" : "every step that passes on the change also passes without it, so the proof does not tell the change from no change" }) }; };
+    const result = (without: ProofCheck[], built: boolean): OwnProof => ownProofOf(head.checks!, control, without, built, total, opts.readersCount !== false);
     const w1 = await once("without"); if (typeof w1 === "string") return { ...no(w1, total), checks_control: control.length };
     const first = result(w1, false);
     if (first.ok || builds.length === 0 || w1.length === 0 || signal?.aborted) return first;
@@ -633,11 +662,14 @@ export const noOwnProofNotes = (source: unknown, listed: number, r: ProofRerun |
 /** The facts for the acceptance line check: what Loki's own run of the script returned, and the script itself (so a script that checks nothing is visible). */
 export function proofFacts(runDir: string, r: ProofRerun | null, expected: boolean): string[] {
   if (!r) return expected ? ["The session left no proof script ($LOKI_SCRATCH/loki-proof.sh), so Loki could not re-run anything itself. Nothing in the reply counts as proof from running."] : [];
-  let script = ""; try { script = readFileSync(join(runDir, PROOF_SCRIPT), "utf8").slice(0, 12000); } catch { /* the facts still say what ran */ }
+  let script = "", cut = 0; try { const full = readFileSync(join(runDir, PROOF_SCRIPT), "utf8"); script = full.slice(0, 12000); cut = Math.max(0, full.length - 12000); } catch { /* the facts still say what ran */ }
+  const all = r.checks && r.checks.length > 0 ? r.checks.map((c) => `${c.ok ? "PROVED" : "FAILED"} ${c.item}: ${c.what}`) : r.tail.split("\n").map((l) => l.trim()).filter((l) => /\b(PROVED|FAILED) \d{1,3}: /.test(l)); // the tail alone loses the first lines of a long run: every result line is listed first, whole or counted as left out
+  const listing = [...all.slice(0, 120).map((l) => (l.length > 160 ? l.slice(0, 160) : l)), ...(all.length > 120 ? [`(${all.length - 120} more lines not shown)`] : [])];
   return [
     `Loki re-ran the session's proof script by itself, after the session and every fix round, in a new empty directory: exit ${r.exit === null ? "none (it did not complete)" : r.exit} after ${r.seconds}s; ${r.proved} passing check(s), ${r.failed} failing check(s), counted by Loki from its own helper functions. Only this run counts as proof from running; what the reply says about earlier runs does not.`,
+    ...(listing.length ? [`Every PROVED and FAILED line of Loki's own run, one per line:\n${listing.join("\n")}`] : []),
     `Output of Loki's own run (real, last ${TAIL_CHARS} characters):\n${r.tail || "(no output)"}`,
-    `The script Loki ran (check that each PROVED line comes from a real request or command and its response, not from an unconditional echo):\n${script || "(unreadable)"}`,
+    `The script Loki ran (check that each PROVED line comes from a real request or command and its response, not from an unconditional echo):\n${script || "(unreadable)"}${cut > 0 ? `\n(script cut: ${cut} more characters not shown)` : ""}`,
   ];
 }
 
