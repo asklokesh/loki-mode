@@ -85,13 +85,44 @@ sys.stdout.write(cwd if isinstance(cwd, str) else "")
 
 if "$HOST_GUARD"; then
     GUARD_ROOT="${LOKI_TARGET_DIR:-$PWD}"
-    if [ -z "$CWD" ] || ! _LOKI_GUARD_CWD="$CWD" _LOKI_GUARD_ROOT="$GUARD_ROOT" python3 -c '
-import os
-cwd = os.path.realpath(os.environ["_LOKI_GUARD_CWD"])
+    # The cwd must be inside the workspace or inside the session's own scratch directory ($LOKI_SCRATCH, used only when
+    # it is absolute, an existing directory, not /, not the home directory and not the workspace or an ancestor of it).
+    # RECOVERY: a call whose cwd is outside both may begin with `cd <absolute path>` into one of them; the rest of the
+    # command goes through every rule below. Anything else is refused with the way back.
+    GUARD_CWD_VERDICT=$(_LOKI_GUARD_CWD="$CWD" _LOKI_GUARD_ROOT="$GUARD_ROOT" _LOKI_GUARD_SCRATCH="${LOKI_SCRATCH:-}" _LOKI_GUARD_COMMAND="$COMMAND" python3 -c '
+import os, re
+
 root = os.path.realpath(os.environ["_LOKI_GUARD_ROOT"])
-raise SystemExit(0 if cwd == root or cwd.startswith(root + os.sep) else 1)
-'; then
-        deny "LOKI_HOST_GUARD: Bash command cwd is outside the assigned workspace."
+
+
+def inside(p, base):
+    return p == base or p.startswith(base + os.sep)
+
+
+roots = [root]
+scratch = os.environ.get("_LOKI_GUARD_SCRATCH", "")
+if scratch and os.path.isabs(scratch) and os.path.isdir(scratch):
+    real = os.path.realpath(scratch)
+    home = os.path.expanduser("~")
+    home = os.path.realpath(home) if home and home != "~" else None
+    if real != os.sep and real != home and not inside(root, real):
+        roots.append(real)
+cwd = os.environ.get("_LOKI_GUARD_CWD", "")
+if cwd and any(inside(os.path.realpath(cwd), r) for r in roots):
+    print("ok")
+    raise SystemExit(0)
+recovery = re.compile(r"^[ \t\n]*cd[ \t]+(?:--[ \t]+)?(?:\"([^\"$`\\\n]+)\"|\x27([^\x27\n]+)\x27|([^\s;&|()<>$`\\\x27\"*?[\]~{}]+))[ \t]*(?:&&|;|\n|\Z)")
+m = recovery.match(os.environ.get("_LOKI_GUARD_COMMAND", "")) if cwd else None
+target = (m.group(1) or m.group(2) or m.group(3)) if m else ""
+if target and os.path.isabs(target) and os.path.isdir(target):
+    real = os.path.realpath(target)
+    if any(inside(real, r) for r in roots):
+        print("ok")
+        raise SystemExit(0)
+print("LOKI_HOST_GUARD: Bash command cwd is outside the assigned workspace. Run `cd " + root + "` first.")
+' 2>/dev/null || true)
+    if [ "$GUARD_CWD_VERDICT" != "ok" ]; then
+        deny "${GUARD_CWD_VERDICT:-LOKI_HOST_GUARD: Bash command cwd is outside the assigned workspace.}"
     fi
 fi
 CWD="${CWD:-${LOKI_TARGET_DIR:-$PWD}}"
@@ -299,16 +330,21 @@ def classify(value, depth=0):
 # Q1 HEREDOC-MASK: the body of a heredoc whose delimiter is quoted (<<'EOF', <<"EOF", <<-'EOF') is data: bash
 # expands nothing in it. Tokenizing it made a file write whose body holds one apostrophe or one double quote
 # unparseable, and the guard refused it ("command text could not be parsed safely"). The masker drops such a body
-# (and its terminator line) only when the body cannot become a command: the command reading it is cat or tee, its
-# output is not piped on, and no command line names a shell, eval, source, ., exec, xargs, ssh or coproc. Every
-# command line and every unquoted body (which expands $(...)) is kept and checked as before. It works on the
+# (and its terminator line) only when the body cannot become a command: the command reading it is not a shell,
+# eval, source, ., exec, xargs, ssh or coproc, not a compound command or a variable-loading builtin (while read,
+# mapfile: a later use of the variable would run it), its output is not piped on, and no command line names one of those words.
+# Any other reader (cat, tee, an interpreter such as python3 - or node -) takes the body as data for itself; the
+# guard has never inspected what an interpreter does with its own program text. Every command line
+# and every unquoted body (which expands $(...)) is kept and checked as before. It works on the
 # command as the tool sent it, before continuations are joined: inside a quoted body a backslash-newline is
 # literal, so a joined copy would end the body at a different line than bash does. On anything it does not model
 # (an unclosed quote, a backtick, $(, ((, <( or >( on a command line, another delimiter form, a body with no
 # terminator line) it gives up and the command is classified exactly as before.
 QUOTED_HEREDOC = re.compile(r"<<(-?)[ \t]*(['\"])([A-Za-z_][A-Za-z0-9_]*)\2(?=[\s;&|()<>]|$)")
 UNQUOTED_HEREDOC = re.compile(r"<<(-?)[ \t]*([A-Za-z_][A-Za-z0-9_]*)(?=[\s;&|()<>]|$)")
-DATA_READERS = {"cat", "tee"}
+NOT_DATA_READERS = {"bash", "dash", "ksh", "sh", "zsh", "eval", "source", ".", "exec", "xargs", "ssh", "coproc",
+                    "read", "mapfile", "readarray", "builtin", "for", "case", "select", "function", "done", "fi", "esac", "}"} | shell_keywords
+PLAIN_COMMAND = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.+-]*$")
 RUNS_TEXT = re.compile(r"(?:^|[\s;&|()/])(?:bash|sh|zsh|dash|ksh|eval|source|exec|xargs|ssh|coproc)(?=$|[\s;&|()])|(?:^|[\s;&|()])\.(?=[ \t])")
 
 
@@ -358,9 +394,8 @@ def mask_quoted_heredocs(raw):
                     head = words(raw[seg_start:i])
                 except ValueError:
                     return None
-                while head and assignment.match(head[0]):
-                    head = head[1:]
-                if not head or basename(head[0]) not in DATA_READERS:
+                reader = first_command(head)[0] if head else ""
+                if not PLAIN_COMMAND.match(reader) or reader in NOT_DATA_READERS:
                     return None
                 pending.append((m.group(3), m.group(1) == "-", False))
                 no_pipe = True

@@ -55,6 +55,10 @@
 #  22. drop comment handling; `cat a # <<'EOF'` masks real lines and is allowed.
 #  23. drop the delimiter lookahead; `<<'EOF'x` ends the body at EOF instead of EOFx and is allowed.
 #  24. mask unquoted bodies too; `cat > a.txt <<EOF\n$(docker ps)` is allowed.
+# #709 SCRATCH CWD / RECOVERY / INTERPRETER HEREDOC planted defects (each reverted afterwards):
+#  30. host_guard.ts validScratch: drop the ancestor check (within(root, real)); a scratch that holds the workspace is honored (scratch cells).
+#  31. host_guard.ts recoveryCd: accept any absolute `cd` target; `cd /etc && ls` is allowed from an outside cwd (recovery cells).
+#  32. validate-bash.sh mask_quoted_heredocs: mask whatever the reader (no reader check, no shell-word check); the shell and `while read` cells are allowed.
 # FENCE-IN-COMMIT planted defect (reverted afterwards):
 #  29. util/config_fence.ts fenceNotes: drop "|| inCommit.length > 0" from capped (the FENCE-IN-COMMIT cell reads false and VERIFIED).
 
@@ -69,8 +73,8 @@ echo "TEST: host guard (in-process verdicts match validate-bash.sh, the script r
 W="$T/ws"
 mkdir -p "$W/sub" "$T/outside"
 cat > "$T/drive.ts" <<'TS'
-import { appendFileSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { appendFileSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { dirname, join } from "node:path";
 const [hostGuard, W, outside, script] = process.argv.slice(2) as [string, string, string, string];
 const { createHostGuardHook, scriptRuleMayApply } = await import(hostGuard);
 
@@ -117,7 +121,7 @@ const norm = (o: any): V => {
   return { verdict: d ?? "none", reason: o?.hookSpecificOutput?.permissionDecisionReason ?? "" };
 };
 async function viaScript(input: unknown, env: Record<string, string>): Promise<V> {
-  const p = Bun.spawn({ cmd: ["bash", script], cwd: W, env: { ...process.env, ...env, LOKI_HOST_GUARD: "1", LOKI_TARGET_DIR: W, PWD: W }, stdin: "pipe", stdout: "pipe", stderr: "ignore" });
+  const p = Bun.spawn({ cmd: ["bash", script], cwd: W, env: { ...process.env, LOKI_SCRATCH: "", ...env, LOKI_HOST_GUARD: "1", LOKI_TARGET_DIR: W, PWD: W }, stdin: "pipe", stdout: "pipe", stderr: "ignore" });
   p.stdin.write(JSON.stringify(input)); p.stdin.end();
   const out = await new Response(p.stdout).text(); await p.exited;
   return out.trim() ? norm(JSON.parse(out)) : { verdict: "none", reason: "" };
@@ -127,7 +131,7 @@ const ok = (c: boolean, m: string) => { if (c) pass++; else fails.push(m); };
 async function compare(command: unknown, cwd: unknown, env: Record<string, string>, expectScript: boolean | null, expect: string | null) {
   const input = { hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command }, cwd, tool_use_id: "t" };
   let ran = "";
-  const hook = createHostGuardHook(W, { ...process.env, ...env }, (r: string) => { ran = r; });
+  const hook = createHostGuardHook(W, { ...process.env, ...env }, (r: string) => { ran = r; }, env["LOKI_SCRATCH"]);
   const saved: Record<string, string | undefined> = {};
   for (const [k, v] of Object.entries(env)) { saved[k] = process.env[k]; process.env[k] = v; }
   const t = norm(await hook(input));
@@ -179,6 +183,75 @@ await compare("ls", W, { LOKI_PERMISSION_POLICY: "legacy" }, false, "allow");
   for (const c of heredocAllowed) await compare(c, W, {}, null, "allow"); // whether the script runs is the in-process rules' call (balanced quotes need not); parity holds either way
   for (const c of heredocDenied) await compare(c, W, {}, true, "deny");
 }
+
+// ---- #709 SCRATCH CWD, RECOVERY and quoted heredocs read by an interpreter ---------------------------------------------------------
+// A session works in its own scratch directory ($LOKI_SCRATCH, the brief puts the proof script there) and a `cd` into it used to end the session's
+// shell: every later call had a cwd outside the workspace and was refused, including the `cd <repo>` that would have returned.
+{
+  const real = realpathSync(W);
+  const T0 = dirname(W);
+  const scratch = join(T0, "scratch");
+  mkdirSync(join(scratch, "deep"), { recursive: true });
+  mkdirSync(join(T0, "home"), { recursive: true });
+  mkdirSync(join(T0, "other"), { recursive: true });
+  const SC = { LOKI_SCRATCH: scratch };
+  const H = { HOME: join(T0, "home") };
+  const verdict = async (command: string, cwd: string, env: Record<string, string>) =>
+    viaScript({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_input: { command }, cwd, tool_use_id: "t" }, env);
+  const way = `Run \`cd ${real}\` first.`;
+  const p0 = pass;
+  const cell = (c: boolean, m: string) => ok(c, m);
+  // (1) cwd inside the scratch: allowed by both, an ordinary command never spawns the script
+  for (const c of ["ls", "bash x.sh", "python3 loki-proof.sh", "echo hi > proof.log", "cat > loki-proof.sh <<'EOF'\necho \"it's\"\nEOF"]) await compare(c, scratch, SC, null, "allow");
+  await compare("ls", join(scratch, "deep"), SC, false, "allow");
+  await compare("go test ./...", scratch, SC, false, "allow");
+  // (2) cwd outside both: refused by both, with the way back named by its real path
+  for (const cwd of [join(T0, "other"), outside]) {
+    await compare("ls", cwd, SC, false, "deny");
+    cell((await verdict("ls", cwd, SC)).reason.endsWith(way), `cwd outside both: reason does not end with ${way}`);
+  }
+  await compare("ls", "", SC, false, "deny");
+  cell((await verdict("ls", "", SC)).reason.endsWith(way), "no cwd: reason does not end with the way back");
+  // (3) recovery: a leading `cd` into the workspace or the scratch is not refused for cwd; anything else outside both is
+  const out3 = join(T0, "other");
+  for (const c of [`cd ${real}/sub && ls`, `cd ${real}`, `cd "${real}/sub"; ls`, `cd '${real}' && ls`, `cd -- ${real}/sub && ls`, `  cd ${real}\nls`, `cd ${scratch}/deep && ls`]) await compare(c, out3, SC, false, "allow");
+  for (const c of ["cd /etc && ls", `cd ${real}/../.. && ls`, `cd ${real}/nosuch && ls`, "ls", `ls && cd ${real}`, `cd ${real} || ls`, `cd ${real} & ls`, `cd ~ && ls`, "cd $HOME && ls", `cd ${real}/$X && ls`, `cd ${real}/* && ls`, "cd .. && ls", "cd sub && ls", `cd ${T0} && ls`, `cd /`, `(cd ${real}; ls)`, `cd ${real}\u0000x && ls`]) {
+    await compare(c, out3, SC, null, "deny");
+   
+  }
+  // (4) a recovered command still meets every other rule: refused by the Docker rule, not by the cwd rule
+  await compare(`cd ${real} && docker ps`, out3, SC, true, "deny");
+  cell((await verdict(`cd ${real} && docker ps`, out3, SC)).reason.includes("host Docker access"), "cd <workspace> && docker ps is not refused by the Docker rule");
+  await compare(`cd ${real}; sudo ls`, out3, SC, true, "deny");
+  await compare(`cd ${scratch} && docker ps`, out3, SC, true, "deny");
+  // (5) a scratch that would open too much is ignored, so a cwd there is refused: `/`, the home directory, an ancestor of the workspace, a relative path, a missing one, a file
+  const file = join(T0, "afile"); appendFileSync(file, "x");
+  for (const [name, sc, cwd] of [["/", "/", outside], ["home", H.HOME, H.HOME], ["ancestor", T0, join(T0, "other")], ["relative", "scratch", outside], ["missing", join(T0, "nope"), outside], ["file", file, outside], ["the workspace's parent via ..", `${real}/..`, join(T0, "other")]] as const) {
+    await compare("ls", cwd, { ...H, LOKI_SCRATCH: sc }, false, "deny");
+    cell((await verdict("ls", cwd, { ...H, LOKI_SCRATCH: sc })).verdict === "deny", `scratch ${name} was honored`);
+  }
+  await compare("ls", scratch, { ...H, LOKI_SCRATCH: "" }, false, "deny"); // no scratch given: its directory is outside
+  // (6) the four commands refused as "command text could not be parsed safely" in FireLater#14, shortened to their shape (the quote characters that broke tokenizing kept)
+  const stored = [
+    `cd ${real}/sub; \ncat > a.ts <<'EOF'\n/** Maps backend error codes. Technical messages from the server are never shown. */\nexport const E: Record<string, string> = {\n  BAD: 'The request could not be processed.',\n};\nEOF\nsed -n 1,3p a.ts`,
+    `cd ${real}; python3 -I - <<'EOF'\np='docs/E.md'; s=open(p).read()\ns=s.replace("Every API error is produced by the central handler (\`x.ts\`):","Errors thrown by routes (\`reply.status(404).send({ ... })\`) are enriched:")\nopen(p,'w').write(s)\nEOF`,
+    `mkdir -p src/lib && cat > src/lib/a.ts <<'EOF'\nexport const V =\n  "to_tsvector('simple', coalesce(user_email, '') || ' ' || coalesce(action, ''))";\nEOF\npython3 - <<'EOF'\nimport re\np='src/m.ts'\ns=open(p).read()\nopen(p,'w').write(s)\nEOF\ngrep -n 038 src/m.ts`,
+    `python3 -I - <<'PYEOF'\np='src/services/audit.ts'\ns=open(p).read()\n# ---- log(): replace from "  /**\\n   * Write one audit record."\nnew_log='''  /** Settings if already loaded (never waits). */\n  private peek(): string {\n    return "x";\n  }\n'''\nopen(p,'w').write(s.replace("a", new_log))\nPYEOF`,
+  ];
+  for (const c of stored) await compare(c, W, {}, null, "allow");
+  // an interpreter's heredoc is data for the interpreter, and every command line around it is still checked
+  for (const c of ["python3 -I - <<'EOF'\nprint(\"it's\")\nEOF\ndocker ps", "python3 - <<'EOF' && kill 1\nprint(\"it's\")\nEOF", "node - <<'EOF'\nconsole.log(\"it's\")\nEOF\nsudo ls", "python3 - <<EOF\n$(docker ps)\nit's\nEOF"]) { await compare(c, W, {}, true, "deny"); }
+  // (7) a quoted heredoc whose reader can run it is still inspected: a `docker` line inside is refused
+  const inspected = [
+    "bash <<'EOF'\necho \"it's\"\ndocker ps\nEOF", "sh <<'EOF'\necho \"it's\"\ndocker ps\nEOF", "env zsh <<'EOF'\necho \"it's\"\ndocker ps\nEOF", "/bin/sh <<'EOF'\necho \"it's\"\ndocker ps\nEOF",
+    "cat <<'EOF' | sh\necho \"it's\"\ndocker ps\nEOF", "python3 - <<'EOF' | bash\nprint(\"it's\")\nEOF\ndocker ps", "xargs -I{} sh -c {} <<'EOF'\necho \"it's\"\ndocker ps\nEOF",
+    "read -r l <<'EOF'\nit's\ndocker ps\nEOF\n$l", "while read l; do $l; done <<'EOF'\necho \"it's\"\ndocker ps\nEOF", "{ bash; } <<'EOF'\necho \"it's\"\ndocker ps\nEOF",
+    "source /dev/stdin <<'EOF'\necho \"it's\"\ndocker ps\nEOF", ". /dev/stdin <<'EOF'\necho \"it's\"\ndocker ps\nEOF", "eval \"$(cat <<'EOF'\ndocker ps\nEOF\n)\"", "ssh h <<'EOF'\necho \"it's\"\ndocker ps\nEOF",
+  ];
+  for (const c of inspected) { await compare(c, W, {}, true, "deny"); }
+  console.log(`scratch_cells=${pass - p0}`);
+}
+// ---- #709 end -------------------------------------------------------------------------------------------------------------------
 
 // ---- STASH-GUARD (finished work is never lost) begin -------------------------------------------------------------
 // An engine session (LOKI_E10_STAGE set) never runs `git stash`, alone or inside a compound command: a session stopped
@@ -244,6 +317,11 @@ if grep -q '^stash_denied=28 stash_allowed=11$' <<< "$out" && ! grep -q '^FAIL .
     ok "STASH-GUARD: an engine session's git stash is refused alone and inside a compound command, with the reason and the alternatives (28 shapes); every other git command stays allowed (11)"
 else
     bad "STASH-GUARD: $(printf '%s\n' "$out" | grep -c '^FAIL .*stash') stash case(s) failed, or the block did not run to its end"
+fi
+if grep -q '^scratch_cells=[0-9]' <<< "$out" && ! grep -q '^FAIL .*\(scratch\|cwd\|cd \|Docker\|heredoc\|<<\)' <<< "$out"; then
+    ok "#709: a session may work in its own scratch directory and always return to the workspace; an interpreter's quoted heredoc is no longer refused, a shell's still is ($(printf '%s\n' "$out" | sed -n 's/^scratch_cells=//p') cells)"
+else
+    bad "#709 scratch, recovery and heredoc cells: $(printf '%s\n' "$out" | grep -c '^FAIL ') failure(s) in all, or the block did not run to its end"
 fi
 if [ -n "$checks" ] && [ "$checks" -ge 150 ] && [ "$fails" = "0" ]; then
     ok "in-process hook matches validate-bash.sh on every corpus command ($checks checks)"
@@ -576,14 +654,14 @@ grep -q 'fencedDenyRules(cwd' "$ROOT/loki-ts/src/runner/providers.ts" && ok "CLI
 grep -q 'capFenceVerdict(mutCap' "$ROOT/loki-ts/src/engine10/stages/seal.ts" && ok "seal caps a fence allowlist below VERIFIED" || bad "seal does not read the fence record"
 
 P="$ROOT/loki-ts/src/runner/providers.ts"
-grep -q 'hooks: \[createHostGuardHook(call.cwd)\]' "$P" && ok "SDK route PreToolUse hook is createHostGuardHook" || bad "SDK route does not use createHostGuardHook"
+grep -q 'hooks: \[createHostGuardHook(call.cwd, process.env, undefined, process.env\["LOKI_SCRATCH"\])\]' "$P" && ok "SDK route PreToolUse hook is createHostGuardHook" || bad "SDK route does not use createHostGuardHook"
 grep -q 'runSdkHostGuard\|cmd: \["bash", hookPath\]' "$P" && bad "providers.ts still spawns the guard script per Bash call" || ok "providers.ts no longer spawns the guard script itself"
 
 # Fail closed (SDK 0.3.317 onFailure): the host guard and the config fence matchers each carry onFailure "block", so
 # a hook that throws or returns invalid output blocks the tool call instead of letting it run. The real SDK, driven
 # against the e2e stub binary, starts a session with a "block" matcher when the CLI says it honors the option and
 # refuses the session when it does not (an older CLI would ignore "block").
-n="$(grep -A3 -E 'hooks: \[(createHostGuardHook|createConfigFenceHook)\(call\.cwd\)\]' "$P" | grep -c 'onFailure: "block"')"
+n="$(grep -A3 -E 'hooks: \[(createHostGuardHook\(call\.cwd, process\.env, undefined, process\.env\["LOKI_SCRATCH"\]\)|createConfigFenceHook\(call\.cwd\))\]' "$P" | grep -c 'onFailure: "block"')"
 [ "$n" -eq 2 ] && ok "host guard and config fence matchers both set onFailure \"block\"" || bad "onFailure \"block\" on $n of the 2 safety matchers"
 cat > "$T/block.ts" <<'TS'
 const [sdkPath, exe, cwd] = process.argv.slice(2) as [string, string, string];

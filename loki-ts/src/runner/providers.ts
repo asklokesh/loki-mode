@@ -1012,7 +1012,7 @@ export function sdkQueryProvider(): ProviderInvoker {
                           PreToolUse: [
                             ...(hostGuardRequired(call.cwd) ? [{
                               matcher: "Bash",
-                              hooks: [createHostGuardHook(call.cwd)], // in-process; validate-bash.sh runs only for a command one of its rules could deny
+                              hooks: [createHostGuardHook(call.cwd, process.env, undefined, process.env["LOKI_SCRATCH"])], // in-process; the session's own scratch ($LOKI_SCRATCH, the child env copies it) is a working directory too; validate-bash.sh runs only for a command one of its rules could deny
                               onFailure: "block", // SDK 0.3.317: a guard that throws or returns invalid output blocks the call (SDK default lets it run)
                             }] : []),
                             ...(process.env["LOKI_E10_STAGE"] ? [{
