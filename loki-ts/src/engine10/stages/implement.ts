@@ -25,6 +25,18 @@ import { isTestFile } from "../../util/test_file_text.ts";
 import { type FinishRecord, guardReviewTurn, type ReviewItem, reviewTurnGuardOn, selfReviewBrief, verifiedFinishBrief, verifiedFinishMaxTurns, verifiedFinishOn, selfReviewChecks, selfReviewMaxTurns, selfReviewMode, selfReviewWanted, settleItems, stripInventedReleaseRefs, treeStaged, type TurnGuardRecord } from "../../features/self_review.ts";
 import { type DiffEntry, snapshotDiff } from "../../e10ext/treeswap.ts";
 
+/** A reviewer's gap on a line that already has a passing check is handed back once per line: `handed` holds the numbers already handed back (and is added to here); a line seen again is a dispute, recorded and not handed back. */
+export function gapOnce(handed: Set<number>, gaps: { n: number; line: string; reason: string }[], round: number): { handBack: { n: number; line: string; reason: string }[]; disputes: { line: string; reason: string; round: number }[] } {
+  const handBack: { n: number; line: string; reason: string }[] = [], disputes: { line: string; reason: string; round: number }[] = [];
+  for (const g of gaps) { if (handed.has(g.n)) disputes.push({ line: g.line, reason: g.reason, round }); else { handed.add(g.n); handBack.push(g); } }
+  return { handBack, disputes };
+}
+/** The one resume text of a proof-loop round: the independent reviewer's whole findings first, then Loki's unmet acceptance lines. "" when both are empty. */
+export function combinedHandBack(found: string[], unmetText: string): string {
+  const review = found.length ? [`An independent reviewer read your whole change and found ${found.length} problem${found.length === 1 ? "" : "s"}:`, "", ...found.map((n, i) => `${i + 1}. ${n}`), "", "Check each one against the code. Where the reviewer is right, fix the product (and the documentation when the two disagree), add a check for it to $LOKI_SCRATCH/loki-proof.sh under the acceptance item it belongs to, and run the proof again until it passes. Where the reviewer is wrong, say why in one line and change nothing for it. Do not remove or loosen an existing check. End with the same finish line as before."].join("\n") : "";
+  return [review, unmetText].filter(Boolean).join("\n\n");
+}
+
 /** A test file (a sealed Wall test) the implement session must not change: path is absolute, in the repo working tree; content is what to restore if it no longer matches. */
 export interface ReadOnlyFile { path: string; content: string; }
 
@@ -288,20 +300,27 @@ export const implementStage: Stage = {
     // checks, or fewer acceptance lines are unmet, than the best round so far; noProgressRounds() rounds in a row without either end the loop.
     const noBudget = !defaultBudgetsOn(); let proofBest = { failed: Infinity, unmet: Infinity }, proofStill = 0;
     const proofStep = (failed: number, unmet: number): void => { if (failed < proofBest.failed || unmet < proofBest.unmet) { proofBest = { failed: Math.min(failed, proofBest.failed), unmet: Math.min(unmet, proofBest.unmet) }; proofStill = 0; } else proofStill++; }; // the acceptance check has its own two turns: a session that used every proof turn to get the script passing (Haiku did) used to get no acceptance feedback at all
-    // One independent review during the run, with its findings handed back; true when the session was resumed and the proof must run again.
-    const reviewRound = async (tree: string): Promise<boolean> => {
-      // REVIEW-THEN-FIX: every item is met by count and by the acceptance check. One independent review now, while the session can still act on it.
-      if (reviewedEarly || !reviewFixOn()) return false;
+    // One independent review during the run (a read-only call): returns the findings to hand back, [] when it found none, was off or already ran.
+    const reviewFound = async (tree: string): Promise<string[]> => {
+      // REVIEW-THEN-FIX: the review is read first, with the first passing proof run, so the session hears the reviewer and the acceptance check in one turn.
+      if (reviewedEarly || !reviewFixOn()) return [];
       reviewedEarly = true;
       const xr = await crossReview(ctx, "VERIFIED", tree, signal, true); if (xr?.cost_iteration) earlyReviewCost = xr.cost_iteration;
-      const found = handBackReasons(xr); // flags too: a reviewer filed "the default search page fails with a 400 on first load" as a flag, and the session can fix or rebut a flag in one turn; the reviewer's specific findings come first, then its UNMET lines, bounded by handBackReasons and not by the receipt's cap of 5
+      const found = handBackReasons(xr); // flags too: a reviewer filed "the default search page fails with a 400 on first load" as a flag, and the session can fix or rebut a flag in one turn; the reviewer's whole findings come first, then its UNMET items, bounded by handBackReasons and not by the receipt's cap of 5
       ctx.emit("review.early", "implement", { level: xr?.level ?? "not_run", findings: found.length });
-      if (!found.length) return false;
-      const r3 = await resumeForProofScript(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session, [`An independent reviewer read your whole change and found ${found.length} problem${found.length === 1 ? "" : "s"}:`, "", ...found.map((n, i) => `${i + 1}. ${n}`), "", "Check each one against the code. Where the reviewer is right, fix the product (and the documentation when the two disagree), add a check for it to $LOKI_SCRATCH/loki-proof.sh under the acceptance item it belongs to, and run the proof again until it passes. Where the reviewer is wrong, say why in one line and change nothing for it. Do not remove or loosen an existing check. End with the same finish line as before."].join("\n"));
+      return found;
+    };
+    // The one hand-back resume: the review's findings and any unmet acceptance lines together; true when the session was resumed and the proof must run again.
+    const handBackTurn = async (found: string[], unmetText: string, round: number): Promise<boolean> => {
+      const text = combinedHandBack(found, unmetText); if (!text) return false;
+      const r3 = await resumeForProofScript(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session, text);
       if (r3.iterationId !== ids[ids.length - 1]) ids.push(r3.iterationId); else return false;
-      if (r3.session.summary) session = { ...session, summary: `${session.summary ?? ""}\n\n[after the independent review]\n${r3.session.summary}` };
+      const tag = found.length && unmetText ? `after the independent review and Loki's acceptance check, round ${round + 1}` : unmetText ? `after Loki's acceptance check, round ${round + 1}` : "after the independent review";
+      if (r3.session.summary) session = { ...session, summary: `${session.summary ?? ""}\n\n[${tag}]\n${r3.session.summary}` };
       return true;
     };
+    const reviewRound = async (tree: string): Promise<boolean> => handBackTurn(await reviewFound(tree), "", 0); // the later call sites (turns used up, no unmet line): nothing when the review already ran
+    const handedGaps = new Set<number>(), disputes: { line: string; reason: string; round: number }[] = []; // a reviewer gap on a line with a passing check is handed back once per line
     for (let round = 0; (noBudget ? proofStill < noProgressRounds() : proofFails < proofLoopMax()) && scratch && proofRerunOn() && existsSync(join(scratch.dir, PROOF_SCRIPT)) && !signal.aborted && !session.killed && session.exit === 0 && !session.markers.specConflict && !session.markers.alreadyDone; round++) {
       if (!keepProofScript(scratch.dir, ctx.runDir)) break;
       const pr = await rerunProof(ctx.repoDir, ctx.runDir, signal); if (!pr) break;
@@ -311,18 +330,20 @@ export const implementStage: Stage = {
       if (pr.exit === 0 && pr.failed === 0) { // the proof passes when Loki runs it: now check it against every acceptance line, and hand unmet lines back with the reason
         const la = labelAsks(ctx.provider, prior.intake, prior.plan, ctx.repoDir); if (!la.asks.length) break; if (noBudget ? proofStill >= noProgressRounds() : lineTurns >= LINE_TURNS_MAX) { const t = await worktreeTree(ctx.repoDir); if (t && await reviewRound(t)) continue; break; } // the acceptance turns are used up: the review still gets its one round (a run that spent both turns never reached it)
         const tree = await worktreeTree(ctx.repoDir); if (!tree) break;
-        const lc = await issueLineCheck(ctx, la.asks, tree, [], session.summary ?? "", [...(la.needs.length ? [`This repository needs: ${la.needs.join(", ")}.`] : []), "Loki's verify stage has not run yet at this point, so the check list is empty: a line about tests is met when the output of Loki's own run shows those tests passing.", ...proofFacts(ctx.runDir, pr, true), ...baseFacts(la.asks, pr, pb)]);
-        const byRule = ruleStatus(la.asks, pr), empty = new Set(provesNothing(la.asks, pr, pb)), unmet = la.asks.flatMap((line, i) => { if (optionalAsk(line)) return []; if (byRule[i]!.status !== "met") return [{ line: `${i + 1}. ${line}`, reason: byRule[i]!.reason ?? "" }]; if (empty.has(i + 1)) return [{ line: `${i + 1}. ${line}`, reason: `${provesNothingReason(pb!, i + 1)}. ${PROVES_NOTHING_FIX}` }]; return lc.marks && !lc.marks.met.includes(i + 1) ? [{ line: `${i + 1}. ${line}`, reason: `it has a passing check, but a reviewer found a gap: ${lc.reasons?.[String(i + 1)] ?? "not stated"}` }] : []; }); // the count decides; the reviewer's gaps are handed back too, as advice the session should close
-        const lineUnmet = unmet.length; // the acceptance count is about the lines only
+        const reviewP = reviewFixOn() && !reviewedEarly ? reviewFound(tree) : Promise.resolve([] as string[]); // review first: both reads start together (read-only) and the session hears each once
+        const lcP = issueLineCheck(ctx, la.asks, tree, [], session.summary ?? "", [...(la.needs.length ? [`This repository needs: ${la.needs.join(", ")}.`] : []), "Loki's verify stage has not run yet at this point, so the check list is empty: a line about tests is met when the output of Loki's own run shows those tests passing.", ...proofFacts(ctx.runDir, pr, true), ...baseFacts(la.asks, pr, pb)]);
+        const [lc, found] = await Promise.all([lcP, reviewP]);
+        const byRule = ruleStatus(la.asks, pr), empty = new Set(provesNothing(la.asks, pr, pb)), unmetAll = la.asks.flatMap<{ line: string; reason: string; gap?: number; raw?: string }>((line, i) => { if (optionalAsk(line)) return []; if (byRule[i]!.status !== "met") return [{ line: `${i + 1}. ${line}`, reason: byRule[i]!.reason ?? "" }]; if (empty.has(i + 1)) return [{ line: `${i + 1}. ${line}`, reason: `${provesNothingReason(pb!, i + 1)}. ${PROVES_NOTHING_FIX}` }]; return lc.marks && !lc.marks.met.includes(i + 1) ? [{ line: `${i + 1}. ${line}`, reason: `it has a passing check, but a reviewer found a gap: ${lc.reasons?.[String(i + 1)] ?? "not stated"}`, gap: i + 1, raw: lc.reasons?.[String(i + 1)] ?? "not stated" }] : []; }); // the count decides; the reviewer's gaps are handed back too, as advice the session should close
+        const go = gapOnce(handedGaps, unmetAll.filter((u) => u.gap !== undefined).map((u) => ({ n: u.gap!, line: u.line, reason: u.raw! })), round + 1), again = new Set(go.handBack.map((g) => g.n)); disputes.push(...go.disputes); // the second time a reviewer names the same line it is recorded, not handed back
+        const unmet: { line: string; reason: string }[] = unmetAll.filter((u) => u.gap === undefined || again.has(u.gap)).map((u) => ({ line: u.line, reason: u.reason }));
+        const lineUnmet = unmet.length; // the acceptance count is about the lines actually handed back
         proofStep(pr.failed, lineUnmet);
         for (const f of await unusedNewFiles(ctx.repoDir, ctx.baseSha, tree)) unmet.push({ line: `(not an acceptance line) ${f}`, reason: "no other file in the repository imports or names this new file, so a user cannot reach what it does. Mount it where it belongs (a page, a route, a registry, a menu) and prove that path, or remove it" });
-        lineRounds.push({ met: lc.marks?.met.length ?? 0, unmet: unmet.length, usd: lc.usd }); ctx.emit("acceptance.round", "implement", { round: round + 1, met: la.asks.length - lineUnmet, unmet: lineUnmet, ...(empty.size ? { pass_on_base_too: empty.size } : {}), ...(unmet.length > lineUnmet ? { unused_new_files: unmet.length - lineUnmet } : {}) });
-        if (!unmet.length) { if (await reviewRound(tree)) continue; break; } // REVIEW-THEN-FIX, then the proof again on the fixed tree
+        lineRounds.push({ met: lc.marks?.met.length ?? 0, unmet: unmet.length, usd: lc.usd }); ctx.emit("acceptance.round", "implement", { round: round + 1, met: la.asks.length - lineUnmet, unmet: lineUnmet, ...(empty.size ? { pass_on_base_too: empty.size } : {}), ...(unmet.length > lineUnmet ? { unused_new_files: unmet.length - lineUnmet } : {}), ...(go.disputes.length ? { disputed: go.disputes.length } : {}) });
+        if (!unmet.length) { if (await handBackTurn(found, "", round)) continue; break; } // REVIEW-THEN-FIX, then the proof again on the fixed tree
         const stray = Object.keys(pr.lines).filter((k) => Number(k) > la.asks.length || Number(k) < 1); // checks filed under a number that is no acceptance item
-        const r2 = await resumeForProofScript(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session, unmetBrief(unmet, stray.length ? `Your proof script passes, but ${stray.length} of its check numbers (${stray.slice(0, 6).join(", ")}) are not acceptance item numbers, so those checks count for no item. The first argument of loki_http and loki_cmd is the item's number in $LOKI_SCRATCH/acceptance.txt (1 to ${la.asks.length}), never a line number of the script. Renumber them.` : ""));
-        if (r2.iterationId !== ids[ids.length - 1]) ids.push(r2.iterationId); else break;
-        lineTurns++;
-        if (r2.session.summary) session = { ...session, summary: `${session.summary ?? ""}\n\n[after Loki's acceptance check, round ${round + 1}]\n${r2.session.summary}` };
+        if (!await handBackTurn(found, unmetBrief(unmet, stray.length ? `Your proof script passes, but ${stray.length} of its check numbers (${stray.slice(0, 6).join(", ")}) are not acceptance item numbers, so those checks count for no item. The first argument of loki_http and loki_cmd is the item's number in $LOKI_SCRATCH/acceptance.txt (1 to ${la.asks.length}), never a line number of the script. Renumber them.` : ""), round)) break;
+        lineTurns++; // only a hand-back that carried unmet lines counts toward the acceptance turns
         continue;
       }
       proofStep(Math.max(1, pr.failed), Infinity); if (noBudget && proofStill >= noProgressRounds()) break; // the proof keeps failing the same number of checks
@@ -382,7 +403,7 @@ export const implementStage: Stage = {
       ...(planChainMode ? { plan_chain: planChainMode } : {}),
       ...(sessionResume ? { session_resume: sessionResume } : {}),
       ...(finish ? { finish: { ...finish, compactions: compactionsOf(ctx, ids) } } : {}),
-      ...(proofRounds.length ? { proof_rounds: proofRounds } : {}), ...(lineRounds.length ? { acceptance_rounds: lineRounds } : {}), ...(scratchRec && (scratchRec.stopped.length || scratchRec.left.length || !scratchRec.removed) ? { scratch_cleanup: scratchRec } : {}), // RUN-SCRATCH: recorded only when the harness had to stop something or could not remove the directory // S1b: only when it fired, so an unchanged run's receipt keys stay as they were; compactions are seen on the SDK route only (null on the CLI route)
+      ...(proofRounds.length ? { proof_rounds: proofRounds } : {}), ...(lineRounds.length ? { acceptance_rounds: lineRounds } : {}), ...(disputes.length ? { acceptance_disputes: disputes } : {}), ...(scratchRec && (scratchRec.stopped.length || scratchRec.left.length || !scratchRec.removed) ? { scratch_cleanup: scratchRec } : {}), // RUN-SCRATCH: recorded only when the harness had to stop something or could not remove the directory // S1b: only when it fired, so an unchanged run's receipt keys stay as they were; compactions are seen on the SDK route only (null on the CLI route)
       ...(coverage ? { coverage_resume: coverage } : {}), ...(rankedRemedyRec ? { ranked_remedy: rankedRemedyRec } : {}), ...(precedenceRec ? { precedence_check: precedenceRec } : {}), ...(namedRec ? { named_sites: namedRec } : {}), ...(memDir && memText ? { task_memory: { bytes: Buffer.byteLength(memText), sha256: sha256(memText) } } : {}), ...(pinConflict ? { pin_conflict: pinConflict } : {}), ...(pinnedUpdates.length ? { pinned_test_updates: pinnedUpdates } : {}), ...(claimAbsent ? { claim_absent: claimAbsent } : {}),
       ...(patch ? { patch: { status: patch.status, seconds: Math.round(patchS * 10) / 10, calls: patch.calls, applied: patch.applied, refused: patch.refused, restored: patch.restored, usd: patch.usd, log: patch.log, ...(patch.check ? { check: patch.check } : {}) } } : {}),
       ...(tournament ? { tournament } : {}),

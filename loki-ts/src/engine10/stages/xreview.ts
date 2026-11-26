@@ -57,6 +57,24 @@ const clean = (s: string): string => capWhole(s.replace(/[\x00-\x1f\x7f`]+/g, " 
  *  seal.ts adds every such note to its open notes, which caps VERIFIED at PARTIAL. Levels, when the review runs and its prompt are unchanged. */
 const UNMET_REASON_RE = /^\s*\**UNMET\b/;
 export const isUnmetNote = (note: string): boolean => /^cross-review \w+ \([^)]*\):\s*\**UNMET\b/.test(note);
+/** The reviewer's text grouped by indentation: a top-level line starts an item and every more-indented line under it is folded into that item ("<parent> Details: <sub>; <sub>", or "UNMET: <line>. Why: <sub>; <sub>" for an UNMET parent). Items that are not UNMET first, then the UNMET items; each is whole up to REVIEW_ITEM_CAP characters. A header ending in ":" with nothing under it is dropped (as reviewFlagLines does). */
+export const REVIEW_ITEM_CAP = 900;
+export function reviewItems(text: string): string[] {
+  const items: { t: string; indent: number; subs: string[] }[] = [];
+  for (const raw of text.split("\n")) {
+    if (raw.trim() === "") continue;
+    const indent = raw.length - raw.trimStart().length, t = raw.replace(/^\s*[-*]\s*/, "").trim(), last = items[items.length - 1];
+    if (last && indent > last.indent) last.subs.push(t); else items.push({ t, indent, subs: [] });
+  }
+  const unmet = (r: string): boolean => UNMET_REASON_RE.test(r), flat = (x: string): string => x.replace(/[\x00-\x1f\x7f`]+/g, " ");
+  const out = items.filter((e) => e.subs.length > 0 || !e.t.endsWith(":")).map((e) => {
+    const u = unmet(e.t);
+    if (!e.subs.length) return { u, s: capWhole(flat(e.t), REVIEW_ITEM_CAP) };
+    const subs = e.subs.join("; ");
+    return { u, s: capWhole(flat(u ? `${e.t.replace(/[.:]+$/, "")}. Why: ${subs}` : `${e.t.replace(/:+$/, "")} Details: ${subs}`), REVIEW_ITEM_CAP) };
+  }).filter((e) => e.s);
+  return [...out.filter((e) => !e.u), ...out.filter((e) => e.u)].map((e) => e.s);
+}
 /** First line `VERDICT: PASS|FLAG|BLOCK`, then `- reason` lines. Anything else is not_run (never PASS). */
 export function parseReview(p: ReviewProvider, out: string): CrossReview {
   if (p === "claude") { try { const j = JSON.parse(out) as { result?: unknown }; out = typeof j?.result === "string" ? j.result : ""; } catch { out = ""; } } // claude runs with --output-format json: the verdict is the result text; anything else is not_run
@@ -66,12 +84,17 @@ export function parseReview(p: ReviewProvider, out: string): CrossReview {
   const all = reviewFlagLines(out.slice(m.index + m[0].length)).map(clean).filter(Boolean), unmet = (r: string): boolean => UNMET_REASON_RE.test(r);
   const reasons = [...all.filter(unmet), ...all.filter((r) => !unmet(r))].slice(0, MAX_NOTES); // F3: UNMET reasons first, so the cap of 5 never cuts one
   const notes = level === "pass" ? [] : (reasons.length ? reasons : ["no reason given"]).map((r) => `cross-review ${level} (${p}): ${r}`);
-  const reasonsAll = level === "pass" ? [] : all.length ? [...all.filter((r) => !unmet(r)), ...all.filter(unmet)] : ["no reason given"]; // the full list in the order a session reads it: specific findings first, the bare UNMET lines after; never cut by MAX_NOTES (only the early review round reads it, reviewRound in implement.ts)
+  const grouped = level === "pass" ? [] : reviewItems(out.slice(m.index + m[0].length)), reasonsAll = level === "pass" ? [] : grouped.length ? grouped : ["no reason given"]; // the whole findings in the order a session reads it: specific findings first, the UNMET items after; a finding keeps its sub-bullets and is never cut by MAX_NOTES (only the early review round reads it, reviewRound in implement.ts)
   return { provider: p, level, notes, ...(reasonsAll.length ? { reasons: reasonsAll } : {}) };
 }
-export const HAND_BACK_MAX = 12, HAND_BACK_CLIP = 500; // the early review's own bound: what is handed back to the session stays small without the receipt's cap of 5 cutting a finding
-/** What the early review round hands back to the session: the reviewer's specific findings first, then its UNMET lines, at most HAND_BACK_MAX, each clipped. The receipt side (notes, held_by, the label) keeps MAX_NOTES and the UNMET-first order. */
-export const handBackReasons = (xr: CrossReview | null | undefined): string[] => (xr && (xr.level === "block" || xr.level === "flag") ? (xr.reasons ?? xr.notes.filter((n) => /^cross-review (block|flag) /.test(n) || isUnmetNote(n)).map((n) => n.replace(/^cross-review \w+ \([^)]*\):\s*/, ""))) : []).slice(0, HAND_BACK_MAX).map((r) => capWhole(r, HAND_BACK_CLIP));
+export const HAND_BACK_CLIP = 900, HAND_BACK_TOTAL = 12_000; // the early review's own bound: whole findings up to a total of characters, never a count and never a fragment of one
+/** What the early review round hands back to the session: the reviewer's whole findings (a finding keeps its sub-bullets), specific findings first, then its UNMET items, each clipped to HAND_BACK_CLIP, taken whole until HAND_BACK_TOTAL characters; what is left is counted in a last entry. The receipt side (notes, held_by, the label) keeps MAX_NOTES and the UNMET-first order. */
+export const handBackReasons = (xr: CrossReview | null | undefined): string[] => {
+  const all = (xr && (xr.level === "block" || xr.level === "flag") ? (xr.reasons ?? xr.notes.filter((n) => /^cross-review (block|flag) /.test(n) || isUnmetNote(n)).map((n) => n.replace(/^cross-review \w+ \([^)]*\):\s*/, ""))) : []).map((r) => capWhole(r, HAND_BACK_CLIP));
+  const kept: string[] = []; let total = 0;
+  for (const r of all) { if (total + r.length > HAND_BACK_TOTAL) break; kept.push(r); total += r.length; }
+  return kept.length < all.length ? [...kept, `(${all.length - kept.length} more reviewer findings are in the receipt)`] : kept;
+};
 /** Rule 6 (h2h 2026-11-01, 115 Loki runs): the unconfigured same-vendor review changed no verdict and was 74% of Loki-on-Haiku spend. It stays on by default for the high tier (auth, crypto, payments, migrations, CI, public API: no ready PR there without a review) and is opt-in for medium (LOKI_REVIEW_DEFAULT=1). A configured reviewer (loki.yaml review:, LOKI_REVIEW_PROVIDER, a reviewer agent) always runs. */
 export const reviewDefaultOn = (tier: string, env: NodeJS.ProcessEnv = process.env): boolean => tier === "high" || (tier === "medium" && env["LOKI_REVIEW_DEFAULT"] === "1");
 // Review time box: 300s (real claude reviews often exceed 60s); LOKI_E10_REVIEW_BOX_S overrides (tests). Seal's limit grows by it when a review is planned.
