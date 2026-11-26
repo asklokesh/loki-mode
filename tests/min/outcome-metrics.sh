@@ -427,4 +427,55 @@ rsj .need | grep -q '0 finished runs for shape ts-lib, need 3' && ok "too-few-ru
 [ "$(rsj '.pipe|length')" = "7" ] && [ "$(rsj '.pipe[0]')" = "[implement] implementing  0s  run 0s  spend not measured yet" ] && [ "$(rsj '.pipe[1]|startswith("[implement] turn 2 started  run 2s  spend not measured yet")')" = "true" ] && [ "$(rsj '.pipe[2]')" = "[implement] Loki ran the proof: 30 passed, 0 failed" ] && [ "$(rsj '.pipe[3]')" = "[implement] acceptance check, round 1: 6 of 8 lines met" ] && [ "$(rsj '.pipe[4]')" = "[implement] independent review: block, 12 findings" ] && [ "$(rsj '[.pipe[5],.pipe[6]]|map(startswith("[implement] implementing"))|all')" = "true" ] && ok "piped LiveLine: one stage line, a line per turn, proof, acceptance round and review, two repeats in 130 s of silence" || bad "piped LiveLine: $rs"
 [ "$(rsj '.tty_events|length')" = "0" ] && [ "$(rsj .tty_newline)" = "false" ] && ok "terminal LiveLine: the same events add no line" || bad "terminal LiveLine: $rs"
 
+# #694 quote-size. A quote is drawn from finished runs of the same size, says so when it has none, and is restated once the run has
+# sized the task. (1) three PARTIAL large runs give the median/range line; (2) another size has none and says so with the largest
+# finished run; (3) FAILED, no-receipt, NOT RECORDED and zero-time directories are skipped without a throw; (4) the released start
+# line is byte-identical on ten pass rows; (5) the supervisor's decision prints nothing with the preview off, under --json, with no
+# size, after the first print or on another event. Planted defects: mean in place of the median (cell 1); FAILED receipts counted (cell 3).
+QSJS="$T/quote-size.ts"
+cat > "$QSJS" <<'TS'
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+const SRC = process.argv[2]!, base = process.argv[3]!;
+const cp = await import(`${SRC}/runner/router/cost_preview.ts`);
+const hist = await import(`${SRC}/runner/router/history.ts`);
+const out: Record<string, unknown> = {};
+const mk = (dir: string, id: string, receipt: unknown, size: string | null) => {
+  const d = join(dir, id); mkdirSync(d, { recursive: true });
+  if (receipt !== null) writeFileSync(join(d, "receipt.json"), JSON.stringify(receipt));
+  if (size !== null) writeFileSync(join(d, "events.jsonl"), `{"type":"run.started","data":{}}\n{"type":"variant","data":{"size":"${size}"}}\n`);
+};
+const rc = (verdict: string, usd: unknown, total_s: number) => ({ verdict, cost: { usd }, time: { total_s } });
+const runs = join(base, "runs"); mkdirSync(runs, { recursive: true });
+mk(runs, "r1", rc("PARTIAL", 4.65, 1270), "large"); mk(runs, "r2", rc("PARTIAL", 5.42, 1972), "large"); mk(runs, "r3", rc("PARTIAL", 7.22, 2511), "large");
+const rows = cp.rowsFromReceipts(runs);
+out.large = cp.sizedText(rows, "large");
+out.small = cp.sizedText(rows, "small");
+out.none = cp.sizedText([], "large");
+const skipDir = join(base, "skip"); mkdirSync(skipDir, { recursive: true });
+mk(skipDir, "b1", rc("FAILED", 3, 100), "large"); mk(skipDir, "b2", null, "large"); mk(skipDir, "b3", rc("VERIFIED", "NOT RECORDED", 100), "large"); mk(skipDir, "b4", rc("PARTIAL", 2, 0), "large");
+let threw = false, skipRows: unknown[] = [];
+try { skipRows = cp.rowsFromReceipts(skipDir); } catch { threw = true; }
+out.skip_rows = skipRows.length; out.skip_threw = threw; out.missing_dir = cp.rowsFromReceipts(join(base, "nope")).length;
+const cache = join(base, "cache");
+for (const u of [0.16, 0.25, 0.31, 0.40, 0.47, 0.55, 0.62, 0.70, 0.78, 0.86]) hist.appendRunOutcome("k-ten", { shape: "ts-lib", executor: "sonnet", verdict: "pass", owner: null, escalated: false, usd: u, wallS: 100, wallKind: hist.WALL_KIND }, cache);
+out.start = cp.startText(cp.estimateFromHistory("ts-lib", "k-ten", cache, { env: {} }));
+const line = (env: Record<string, string>, json: boolean, printed: boolean, type: unknown, size: unknown) => cp.sizedQuoteLine(env, json, printed, type, size, runs);
+out.off = line({ LOKI_COST_PREVIEW: "0" }, false, false, "variant", "large");
+out.nosize = line({}, false, false, "variant", undefined);
+out.json = line({}, true, false, "variant", "large");
+out.again = line({}, false, true, "variant", "large");
+out.other = line({}, false, false, "stage.started", "large");
+out.on = line({}, false, false, "variant", "large");
+console.log(JSON.stringify(out));
+TS
+QS="$(cd "$ROOT/loki-ts" && bun "$QSJS" "$ROOT/loki-ts/src" "$T/qs" 2>&1)"
+qsj() { printf '%s' "$QS" | jq -r "$1" 2>/dev/null; }
+[ "$(qsj .large)" = 'sized large: about $5.42 (range $4.65-$7.22), about 33 min, from 3 finished large runs in this repository' ] && ok "sizedText: three finished large runs give the median, range and minutes" || bad "sizedText large: $QS"
+[ "$(qsj .small)" = 'sized small: no estimate yet (0 finished small runs here); the largest finished run in this repository cost $7.22 and took 42 min' ] && ok "sizedText: a size with no finished run says so and names the largest finished run" || bad "sizedText small: $QS"
+[ "$(qsj .none)" = "" ] && ok "sizedText: no finished run on record prints nothing" || bad "sizedText none: $QS"
+[ "$(qsj '[.skip_rows,.skip_threw,.missing_dir]|@json')" = "[0,false,0]" ] && ok "rowsFromReceipts: FAILED, no receipt, NOT RECORDED cost and zero time are skipped; a missing dir reads empty; no throw" || bad "rowsFromReceipts skips: $QS"
+[ "$(qsj .start)" = 'estimate: about $0.51 (range $0.16-$0.86), about 2 min (range 2-2 min), from 10 finished runs of shape ts-lib' ] && ok "start line on ten pass rows is byte-identical to the released text" || bad "start line: $QS"
+[ "$(qsj '[.off,.nosize,.json,.again,.other]|@json')" = '["","","","",""]' ] && [ "$(qsj .on)" = "$(qsj .large)" ] && ok "sizedQuoteLine: nothing with the preview off, no size, --json, a repeat or another event; the sized line otherwise" || bad "sizedQuoteLine: $QS"
+
 finish

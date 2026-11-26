@@ -37,7 +37,7 @@ import { alreadyDoneTextComment, policyGate, prGate, renderMainOutput, runIntent
 
 export { backstopS, BACKSTOP_GRACE_S }; // re-exported: callers import the backstop math from here, its home before r4
 import { createStuckWatch, stuckMinutes } from "../util/slack_events.ts";
-import { encodeEstimate, startText } from "../runner/router/cost_preview.ts";
+import { encodeEstimate, sizedQuoteLine, startText } from "../runner/router/cost_preview.ts";
 export const START_LINE = "Loki 10 engine";
 export const TAMPER_NOT_PROVEN = "event log modified outside the engine";
 async function slackEvent(...a: Parameters<typeof import("../util/slack_events.ts").notifyEvent>): Promise<void> { try { await (await import("../util/slack_events.ts")).notifyEvent(...a); } catch { /* best-effort */ } }
@@ -125,6 +125,7 @@ export interface SupervisorOptions {
   capS?: number; // global cap in seconds (default LOKI_E10_CAP_S, else DEFAULT_CAP_S); the backstop fires at cap minus grace
   graceS?: number; // default BACKSTOP_GRACE_S
   restoreBranch?: string | null; // P12-07i: the user's branch before a resume checkout, restored on stop instead of the run branch
+  sizedQuote?: boolean; // #694: print the second quote once the run is sized; the start line's caller sets it (off under --json and for callers that do not)
   resume?: boolean; // P12-07i: re-enter an interrupted run: appends run.resumed instead of run.started and tells the worker to restore settled stages
 }
 export interface SupervisorResult {
@@ -222,9 +223,11 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   let lastEventMs = Date.now(); const hang = Number.isFinite(ceilingS) ? undefined : { silenceS: hangSilenceS(env), lastEventMs: () => lastEventMs }; // NO-DEFAULT-BUDGET: with no backstop, a worker silent this long with no process of its own is hung
   let spawnArgv: string[] = opts.workerArgv; try { spawnArgv = ulimitArgv(opts.workerArgv, workerEnv); } catch { /* spawnWorker refuses the same input */ } log.append("capability.recorded", null, { stages: workerStages().map((st) => stageCapability(st, envWithPwd(workerEnv, opts.repoDir), spawnArgv)) }); // GAME10-05a: worker stages are read from the env and argv spawnWorker is given; pr is recorded by recordSpawnEnv at its own spawn
   let sealed: Record<string, unknown> | null = null; const origBranch = opts.restoreBranch !== undefined ? opts.restoreBranch : currentBranch(opts.repoDir), sessionGroups = new Set<number>(); // session children are detached (own group), so the worker's group kill misses them
+  let sizedQuoteSaid = false;
   const onWorkerLine = (line: string): void => {
     const e = log.ingest(line); if (e) { lastEventMs = Date.now(); stuck.event(String(e.stage ?? "unknown"), Date.now()); quiet.event(e.stage ?? null, e.type, Date.now()); }
     if (e?.type === "session.started" && typeof e.data.pgid === "number") sessionGroups.add(e.data.pgid); if (e?.type === "receipt.sealed") { sealed = e.data; log.checkpoint(e.data["receipt_sha256"]); }
+    if (e?.type === "variant" && !sizedQuoteSaid) { const sl = sizedQuoteLine(env, opts.sizedQuote !== true, false, e.type, e.data.size, join(opts.repoDir, ".loki", "runs")); if (typeof e.data.size === "string") sizedQuoteSaid = true; if (sl) process.stdout.write(`${sl}\n`); } // #694: once the run has sized its task, a second quote from finished runs of that size
     if (e?.type === "variant" && e.data.intent_confirm === true && workerEnv.LOKI_INTENT_TTY === "1") {
       void askIntent(String(e.data.card ?? ""), join(opts.repoDir, ".loki", "runs", opts.runId));
     }
@@ -525,7 +528,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   const statusStep = noPr || !ISSUE_RE.test(task) ? undefined : (await import("../util/run_outputs.ts")).issueStatusProjector({ pushSh: (await import("./stages/pr.ts")).DEFAULT_PUSH_SH, env, origin: readOriginUrl(repoDir), repoDir, runDir, runId, issueRef: task, eventsPath }), stopPlan = statusStep ? tail(eventsPath, (e) => { if (e.type === "stage.completed" && e.stage === "plan") void statusStep(); }, { intervalMs: 500 }) : () => {};
   let refusedAs: PreflightBlocker = "other"; // AN-08
   const res = await runSupervisor({
-    runId, repoDir, env, capS, capCeilingS: sized?.ceilingS,
+    runId, repoDir, env, capS, capCeilingS: sized?.ceilingS, sizedQuote: !json,
     workerArgv: [process.execPath, ...SAFE_BUN_FLAGS, resolve(process.argv[1]!), "engine10", "worker", runId, provider, model, deep ? "deep" : "fast"], deepArgv: noPr ? undefined : [process.execPath, ...SAFE_BUN_FLAGS, resolve(process.argv[1]!), "engine10", "deep-worker", runId, provider, model], status: statusStep,
     started: {
       task_source: isIssue ? "issue" : "text", issue_ref: isIssue ? task : null, road, provider, model, deep, cap_s: capS, cap_ceiling_s: sized?.ceilingS ?? capS, max_cost_usd: cap.usd,
