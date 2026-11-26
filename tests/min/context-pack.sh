@@ -90,6 +90,7 @@ commit_copy() { # commit_copy <src dir> <dest dir>
 
 for s in maven gradle dotnet go rust; do commit_copy "$STACKS/$s" "$T/stacks/$s"; done
 commit_copy "$CTX/ts-invoice/repo" "$T/inv"
+commit_copy "$CTX/ts-invoice/repo" "$T/invp" # #703: a copy that carries a command profile
 # A generated repo of large files: the pack must stay inside its budget when every candidate is big.
 python3 -I - "$T/big" <<'PY'
 import os, sys
@@ -506,6 +507,24 @@ out.veto = [taskForbidsReleaseNote("Fix x, no changelog entry"), taskForbidsRele
 out.knob = [fragmentWriterOn({}), fragmentWriterOn({ LOKI_E10_SCAFFOLD: "1" }), fragmentWriterOn({ LOKI_E10_SCAFFOLD: "0" })].join(",");
 if (process.env.FW_REAL_CS) { const r = wf(process.env.FW_REAL_CS, ["packages/core/src/a.ts"], TITLE, SUMMARY) as { validated?: string; skipped?: string }; out.fw_real_cs = r.validated ?? `skipped:${r.skipped}`; } else out.fw_real_cs = "offline";
 if (process.env.FW_REAL_TC) { const r = wf(process.env.FW_REAL_TC, ["pkg/mod.py"], TITLE, SUMMARY) as { validated?: string; skipped?: string }; out.fw_real_tc = r.validated ?? `skipped:${r.skipped}`; } else out.fw_real_tc = "offline";
+// ISSUE-PACK (#703, #705): an issue with its own acceptance lines, no plan files and a non-Haiku model is briefed without the ranked list, digest, pack and impacted tests.
+{ const cx = await import(join(SRC, "e10ext/context.ts")), { commandProfilePath } = await import(join(SRC, "runner/repo_profile.ts"));
+  const off = cx.issuePackOff;
+  out.ip_gate = [off("issue", 9, 0, "sonnet", {}), off("issue", 9, 0, undefined, {}), off("issue", 9, 0, "haiku", {}), off("issue", 0, 0, "sonnet", {}), off("text", 9, 0, "sonnet", {}), off("issue", 9, 3, "sonnet", {}), off("issue", 9, 0, "sonnet", { LOKI_E10_ISSUE_PACK: "1" })].join(",");
+  const repo = join(T, "invp"); mkdirSync(join(repo, ".loki", "state"), { recursive: true });
+  writeFileSync(commandProfilePath(repo), JSON.stringify({ version: 1, commands: [{ kind: "test", cmd: "bun test", validated: true }], baseline: { attributable: false, failing_ids: [] } }));
+  const map = buildRepoMap(repo), ref = join(repo, ".git", "loki-map.json"); writeFileSync(ref, JSON.stringify(map));
+  const mkctx = (source: string, extra: Record<string, unknown> = {}) => ({ repoDir: repo, outputs: () => ({ intake: { task, repomap_ref: ref, source, issue_acceptance: ["The total is 0 for an invoice with no lines"], testmap: { runners: ["bun"] }, ...extra } }), tests: { impacted: () => [{ runner: "bun", path: "src/invoice.test.ts" }] } });
+  const dps = { select: selectRelevantFiles, cmd: () => ["bun", ["test"]] };
+  const blocks = ["Relevant files:", "Key signatures", "Code that matters", "Impacted test commands:"], profile = "Repo commands (from the repo's manifests, do not rediscover):";
+  const iss = briefRecord(mkctx("issue"), dps, "sonnet"), issUndef = briefRecord(mkctx("issue"), dps, undefined), pinned = briefRecord(mkctx("issue"), dps, "sonnet") && (process.env.LOKI_E10_ISSUE_PACK = "1", briefRecord(mkctx("issue"), dps, "sonnet")); delete process.env.LOKI_E10_ISSUE_PACK;
+  const txt = briefRecord(mkctx("text"), dps, "sonnet"), hk = briefRecord(mkctx("issue"), dps, "haiku"), nolines = briefRecord(mkctx("issue", { issue_acceptance: [] }), dps, "sonnet"), planned = briefRecord({ ...mkctx("issue"), outputs: () => ({ intake: mkctx("issue").outputs().intake, plan: { relevant_files: ["src/invoice.ts"] } }) }, dps, "sonnet");
+  out.ip_off = [blocks.every((b) => !iss.text.includes(b)), iss.text.includes(profile), iss.text.includes("Detected test interpreter"), iss.files.length === 0, iss.pack === null, iss.packText === undefined, issUndef.text === iss.text].join(",");
+  out.ip_on = [blocks.every((b) => pinned.text.includes(b)), pinned.text === txt.text, pinned.text.includes(profile), pinned.files.length > 0, pinned.pack !== null].join(",");
+  out.ip_same = [txt.text === pinned.text, txt.files.join() === pinned.files.join(), hk.text === pinned.text, nolines.text === pinned.text, planned.text.includes("Relevant files:\nsrc/invoice.ts"), planned.text.includes("Impacted test commands:")].join(",");
+  const env = { LOKI_E10_WORK_ROAD: "1" }, count = (s: string, k: string) => s.split(k).length - 1, SENT = "compare every field of that record before and after";
+  out.ip_proof = [count(cx.proveByRunningBlock("claude", "issue", env), SENT), count(cx.proveByRunningBlock("claude", "text", env), SENT), cx.proveByRunningBlock("claude", "issue", env).includes(`${cx.PROVE_BY_RUNNING_BLOCK} When the change reads, moves`), cx.proveByRunningBlock("claude", "text", env).startsWith(cx.PROVE_BY_RUNNING_BLOCK)].join(",");
+}
 console.log(JSON.stringify(out));
 TS
 
@@ -601,6 +620,11 @@ eqv ud_rule yyyyyy "UD the rules ask to update existing docs that list what chan
 eqv stash_rule yyyyyyyy "STASH-GUARD the rules carry one line: never git stash, why (a stopped session loses the change), and git diff, git show HEAD:<file> or a temporary copy instead; issue rules keep it; the legacy block is unchanged"
 eqv plain_effort yyyyyy "PLAIN-FIRST implement has no fixed effort (the provider default; LOKI_E10_IMPLEMENT_EFFORT names one), wall stays medium, the policy off gives none, LOKI_E10_EFFORT still wins"
 eqv plain_rules yyyyyyyy "PLAIN-FIRST an issue run's rules drop 'or a lockfile unless' and 'never npm test' and add the dependency and full-suite sentences once; a non-issue run's rules keep both; a rules text without the process lines is left as it is"
+eqv ip_gate true,true,false,false,false,false,false "ISSUE-PACK issuePackOff: true only for an issue with its own acceptance lines, no plan files, a model that is not Haiku (undefined counts) and no LOKI_E10_ISSUE_PACK=1"
+eqv ip_off true,true,true,true,true,true,true "ISSUE-PACK an issue brief on Sonnet has no Relevant files, Key signatures, Code that matters or Impacted test commands, keeps the profile block, names the detected interpreter, and files [] and pack null"
+eqv ip_on true,true,true,true,true "ISSUE-PACK LOKI_E10_ISSUE_PACK=1 brings all four blocks back and the text equals the text task's"
+eqv ip_same true,true,true,true,true,true "ISSUE-PACK a text task, a Haiku run, an issue without its own list and an issue run with a plan are the unchanged brief"
+eqv ip_proof 1,0,true,true "ISSUE-PACK the proof block of an issue run carries the old-record sentence once, ends the paragraph, and a text task has none"
 eqv rules yyyyy "L5 FIXED_RULES carries the read-whole-function, preferred-fix, targeted-tests and release-note rules"
 eqv fw_path ".changeset/fix-wrong-total-when-the-invoice.md" "FW changeset: a fragment is written next to the repo's own, named from the title"
 eqv fw_front ok "FW changeset: front matter names the workspace package of the changed file (not the private root), double quotes as in the newest example"
