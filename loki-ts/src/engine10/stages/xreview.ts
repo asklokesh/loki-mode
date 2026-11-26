@@ -16,7 +16,7 @@ import { isClaudeModel, noteRoleModel, PROVIDER_DEFAULT_MODEL, roleModel } from 
 import { backstopS, type RunContext, type Verdict } from "../types.ts";
 export type ReviewLevel = "pass" | "flag" | "block" | "not_run";
 export type ReviewedBy = "model" | "deterministic" | "none";
-export interface CrossReview { provider: ReviewProvider; level: ReviewLevel; notes: string[]; same_vendor_default?: boolean; hygiene?: string[]; reviewed_by?: ReviewedBy; reviewer_model?: string; cost_iteration?: string; reasons?: string[]; }
+export interface CrossReview { provider: ReviewProvider; level: ReviewLevel; notes: string[]; same_vendor_default?: boolean; hygiene?: string[]; reviewed_by?: ReviewedBy; reviewer_model?: string; cost_iteration?: string; reasons?: string[]; still_open?: number[] | null; }
 /** True only when a model reviewer really returned a verdict; a deterministic-only result never credits "one reviewer". */
 export const modelReviewRan = (xr: CrossReview | null | undefined): xr is CrossReview => !!xr && xr.level !== "not_run" && xr.reviewed_by !== "deterministic" && xr.reviewed_by !== "none"; // a hygiene flag can lift level off not_run with no model call (reviewed_by none)
 // Compiled or bytecode cache files by extension or dir (generic across stacks). Any other run-added path counts only when the repo's own ignore rules ignore it (it was force-added); legit source such as src/build/index.ts never counts.
@@ -76,8 +76,9 @@ export function reviewItems(text: string): string[] {
   return [...out.filter((e) => !e.u), ...out.filter((e) => e.u)].map((e) => e.s);
 }
 /** First line `VERDICT: PASS|FLAG|BLOCK`, then `- reason` lines. Anything else is not_run (never PASS). */
+const replyText = (p: ReviewProvider, out: string): string => { if (p !== "claude") return out; try { const j = JSON.parse(out) as { result?: unknown }; return typeof j?.result === "string" ? j.result : ""; } catch { return ""; } }; // claude runs with --output-format json: the reply is the result text; anything else is not_run
 export function parseReview(p: ReviewProvider, out: string): CrossReview {
-  if (p === "claude") { try { const j = JSON.parse(out) as { result?: unknown }; out = typeof j?.result === "string" ? j.result : ""; } catch { out = ""; } } // claude runs with --output-format json: the verdict is the result text; anything else is not_run
+  out = replyText(p, out);
   const m = /^\s*VERDICT:\s*(PASS|FLAG|BLOCK)\b/im.exec(out);
   if (!m) return { provider: p, level: "not_run", notes: [`cross-review not run: ${p} returned no VERDICT line`] };
   const level = m[1]!.toLowerCase() as ReviewLevel;
@@ -173,7 +174,15 @@ const reviewChecksBlock = (ctx: RunContext): string[] => { const cs = (ctx.outpu
 export const reviewFixOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_REVIEW_FIX"] ?? "").trim());
 /** The follow-up review's block (loki-mode#692): what the earlier review found, numbered and clipped, and what to report now. Pure. */
 export function followBlock(earlier: string[]): string[] {
-  return ["This is a follow-up review. An earlier review of this change found the problems numbered below, and the author then changed the code. The diff below is only what changed since that review. Say which of the earlier problems are still open in this diff. Then look for new defects in the changed lines, above all in code that was rewritten to answer a finding. Report only what is still open or new; do not restate an UNMET line unless this diff makes it unmet.", "", ...earlier.map((f, i) => `${i + 1}. ${f.length > 300 ? f.slice(0, 300) : f}`)];
+  return ["This is a follow-up review. An earlier review of this change found the problems numbered below, and the author then changed the code. The diff below is only what changed since that review. Say which of the earlier problems are still open in this diff. Then look for new defects in the changed lines, above all in code that was rewritten to answer a finding. Report only what is still open or new; do not restate an UNMET line unless this diff makes it unmet.", "", ...earlier.map((f, i) => `${i + 1}. ${f.length > 300 ? f.slice(0, 300) : f}`), "End your reply with exactly one line: `STILL OPEN: <the numbers of the earlier problems that are still open or only partly fixed, separated by commas>`, or `STILL OPEN: none`."];
+}
+/** The follow-up reviewer's own list of earlier problems still open (1..earlier, ascending, no repeats); the last `STILL OPEN:` line wins; [] for none; null when there is no such line. Pure. */
+export function stillOpen(text: string, earlier: number): number[] | null {
+  let last: string | null = null;
+  for (const line of text.split("\n")) { const m = /^[\s>*_-]*(?:\*\*|__)?\s*STILL OPEN\s*(?:\*\*|__)?\s*:\s*(?:\*\*|__)?\s*(.*)$/i.exec(line); if (m) last = m[1]!; }
+  if (last === null) return null;
+  if (/^\W*none\b/i.test(last)) return [];
+  return [...new Set((last.match(/\d+/g) ?? []).map(Number).filter((n) => n >= 1 && n <= earlier))].sort((a, b) => a - b);
 }
 /** follow (loki-mode#692): a follow-up review of from..head instead of base..head; n numbers its cost file (default 1). An empty diff returns null with no call. */
 export async function crossReview(ctx: RunContext, verdict: Verdict, head: string, signal?: AbortSignal, early = false, follow?: { from: string; earlier: string[]; n?: number }): Promise<CrossReview | null> {
@@ -206,6 +215,6 @@ export async function crossReview(ctx: RunContext, verdict: Verdict, head: strin
     const costId = `${ctx.runId}-xreview-${p}${follow ? `-follow${follow.n ?? 1}` : early ? "-early" : ""}`; // the reviewer's own result-cost file, so seal's cost read includes it
     writeReviewerCost(join(ctx.repoDir, ".loki"), costId, { reviewer: `xreview-${p}`, provider: p, model: p === "claude" ? agent?.model || pin : undefined, stdout: r.stdout, stderr: r.stderr });
     if (r.exitCode !== 0) return { ...tag({ provider: p, level: "not_run", notes: [`cross-review not run: ${p} exited ${r.exitCode}`] }), cost_iteration: costId };
-    return { ...tag(parseReview(p, r.stdout)), cost_iteration: costId };
+    return { ...tag(parseReview(p, r.stdout)), cost_iteration: costId, ...(follow ? { still_open: stillOpen(replyText(p, r.stdout), follow.earlier.length) } : {}) };
   } catch { return tag({ provider: p, level: "not_run", notes: [`cross-review not run: ${p} CLI unavailable`] }); }
 }

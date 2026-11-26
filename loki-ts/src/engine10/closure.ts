@@ -50,8 +50,19 @@ export function closureStop(b: VerifiedBounds, s: { rounds: number; elapsedS: nu
 }
 /** A round moved the run when the next reading is VERIFIED, or still PARTIAL with fewer closable items than before. Anything else is undone. */
 export const closureMoved = (before: number, after: number, verdictAfter: string): boolean => verdictAfter === "VERIFIED" || (verdictAfter === "PARTIAL" && after < before);
-/** The independent reviewer's findings on a receipt's NOT PROVEN list (flags and blocks), in receipt order. The label rule does not read this. */
+/** The independent reviewer's findings on a receipt's NOT PROVEN list (flags and blocks), in receipt order. A first-time flag is still not read by the label rule; the review state of the implement loop is (reviewHolds). */
 export const reviewerFlags = (notProven: readonly unknown[]): string[] => notProven.filter((n): n is string => typeof n === "string" && /^cross-review (flag|block) \(/.test(n));
+/** The review state of the implement loop (implement output `review_state`) read as holds on the label: a change no review read, a last review that blocked, a follow-up that did not say which findings are closed, and each earlier finding the follow-up still lists. Anything that is not that shape gives []. Pure. */
+export function reviewHolds(s: unknown): string[] {
+  if (!s || typeof s !== "object") return [];
+  const o = s as Record<string, unknown>, level = typeof o["level"] === "string" ? o["level"] : "", findings = typeof o["findings"] === "number" ? o["findings"] : 0, open = o["still_open"];
+  if (o["changed_unread"] === true) return [`changed after the last review: the code changed after the ${level || "last"} review and no review read that change`];
+  const out: string[] = [];
+  if (level === "block") out.push("review block open: the last review of this change in the run was a block");
+  if (o["follow"] === true && findings > 0 && open === null) out.push("the follow-up review did not say which earlier findings are closed");
+  if (Array.isArray(open)) for (const t of open) if (typeof t === "string") out.push(`reviewer finding still open after the fix: ${t}`);
+  return out;
+}
 /** Beside the label: ", 5 reviewer flags open", or "" when there are none. */
 export const reviewerFlagsSuffix = (notProven: readonly unknown[]): string => { const n = reviewerFlags(notProven).length; return n ? `, ${n} reviewer flag${n === 1 ? "" : "s"} open` : ""; };
 /** UNRUNNABLE-CHECK: the lead of the receipt line for a check that could not run on the base commit or on the change and so did not hold the label. */
