@@ -708,7 +708,12 @@ export async function runSetupScript(repoDir: string, setup: string, signal?: Ab
  *  done means and was asked for the script. An issue run keeps its measured behavior, and a stand-in title line never holds a label. Off with the re-run
  *  itself (LOKI_E10_PROOF_RERUN=0). */
 export const NO_OWN_PROOF_NOTE = "no proof script: the session left nothing Loki could run itself, so no acceptance line is proved by Loki's own run";
-export const noOwnProofNotes = (source: unknown, listed: number, r: ProofRerun | null, env: NodeJS.ProcessEnv = process.env): string[] => (source === "text" && listed > 0 && !r && proofRerunOn(env) ? [NO_OWN_PROOF_NOTE] : []);
+/** THIN-WRAP (#712): an issue run whose proof was given to an independent proof session (implement output proof_author) and that left no script Loki could
+ *  run is never VERIFIED either: without this note a model reading of the diff and the reply could decide every line. `independent` is false for every other
+ *  issue run, which keeps its measured behavior. LABEL: this can only lower a label. */
+export const NO_INDEPENDENT_PROOF_NOTE = "no proof script: the independent proof session left nothing Loki could run itself, so no acceptance line is proved by Loki's own run";
+export const noOwnProofNotes = (source: unknown, listed: number, r: ProofRerun | null, env: NodeJS.ProcessEnv = process.env, independent = false): string[] =>
+  source === "text" && listed > 0 && !r && proofRerunOn(env) ? [NO_OWN_PROOF_NOTE] : source === "issue" && listed > 0 && !r && proofRerunOn(env) && independent ? [NO_INDEPENDENT_PROOF_NOTE] : [];
 /** The facts for the acceptance line check: what Loki's own run of the script returned, and the script itself (so a script that checks nothing is visible). */
 export function proofFacts(runDir: string, r: ProofRerun | null, expected: boolean): string[] {
   if (!r) return expected ? ["The session left no proof script ($LOKI_SCRATCH/loki-proof.sh), so Loki could not re-run anything itself. Nothing in the reply counts as proof from running."] : [];

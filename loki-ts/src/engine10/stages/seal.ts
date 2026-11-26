@@ -643,7 +643,7 @@ export async function evaluateSeal(ctx: RunContext, signal?: AbortSignal): Promi
     const proofNotes = proofRun && proofRun.exit !== 0 ? [`Loki's own re-run of the session's proof script did not pass (exit ${proofRun.exit === null ? "none" : proofRun.exit}, ${proofRun.failed} FAILED line(s))`] : [];
     const droppedNotes = (proofRun?.dropped ?? []).map((d) => `check not counted: it read nothing of the product or the tree when it ran: ${d} (disclosed, does not cap by itself: a line with no other passing check reads NOT MET)`);
     // ---- RW-02 ONE ROAD (lane rw-02, one line): a text task with its own acceptance list and no run of Loki's own is held below VERIFIED (proof_rerun.ts noOwnProofNotes) ----
-    proofNotes.push(...noOwnProofNotes(o.intake?.source, listed.length, proofRun));
+    proofNotes.push(...noOwnProofNotes(o.intake?.source, listed.length, proofRun, process.env, o.implement?.proof_author != null)); // THIN-WRAP (#712): an issue run proved by an independent session that left no script is held too
     // ---- end RW-02 ----
     // TWO READERS: the count decides, with one exception. A check can pass for a line it does not prove (an API response counted for "build the UI"): when the
     // acceptance check and the independent review, two separate readings, both find the same line not delivered, the label is held and both reasons are shown.

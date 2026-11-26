@@ -4,6 +4,8 @@
 // stage owns a session kept away from the implementer's reply, nor harness-run user-level scripts. FireLater#24: 22 attempts scored blind by starting
 // the product; 13 scored 6 of 9 or less with tests, lint and typecheck green on 21 of 22, and 4 of 7 runs labelled VERIFIED were broken.
 // Static imports stay off seal.ts, machine.ts and implement.ts (seal and pr import this file; implement imports seal): machine.ts loads lazily.
+// THIN-WRAP (#712): runProofAuthor below is the independent proof session of the implement stage's thin route; implement imports it, so the same rule
+// keeps this file from importing implement.ts back.
 import { defaultBudgetsOn, MAX_TIMER_MS } from "../types.ts";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -18,7 +20,10 @@ import { safeGit } from "../../util/safe_git.ts";
 import { missingServices, readEnvCardFile } from "../../util/stack_tools.ts";
 import { checkAsks, listBrief } from "./prove_list.ts";
 import { resumeForProve } from "../../util/conflict_resume.ts";
-import { ISSUE_FINISH_LINE, STAGE_BUDGETS, type Obj, type RunContext, type SessionResult, type SessionRunOptions, type Stage, type StageResult } from "../types.ts";
+import { ISSUE_FINISH_LINE, STAGE_BUDGETS, taskBlock, type Obj, type RunContext, type SessionResult, type SessionRunOptions, type Stage, type StageResult } from "../types.ts";
+import { OLD_RECORD_PROOF_LINE, PROOF_SCRIPT_LINE } from "../../e10ext/context.ts";
+import { repoCardOn, SETUP_FIRST_LINE } from "../../e10ext/repomemory.ts";
+import { PROOF_SCRIPT, PROVES_NOTHING_FIX } from "../proof_rerun.ts";
 
 const off = (v: string | undefined): boolean => /^(0|off|false|no)$/i.test((v ?? "").trim());
 const num = (v: string | undefined, d: number): number => { const n = Number((v ?? "").trim()); return (v ?? "").trim() !== "" && Number.isFinite(n) && n > 0 ? n : d; };
@@ -400,4 +405,49 @@ export function proveTable(prove: unknown): string[] {
   if (!p || !Array.isArray(p.asks) || p.asks.length === 0) return [];
   const cell = (x: unknown, n: number): string => clean(String(x ?? ""), n).replace(/\\/g, "\\\\").replace(/\|/g, "\\|");
   return ["| Ask | Command | Result |", "|---|---|---|", ...p.asks.map((a) => `| ${cell(a.text, 160)} | \`${cell(a.cmd_line || a.command, 100)}\` | ${cell(a.result, 20)}${a.result === "proved" ? "" : `: ${cell(a.reason, 120)}`} |`), ""];
+}
+
+// ---- THIN-WRAP (#712): the independent proof session of the implement stage's thin route --------------------------------------------------------------
+// A fresh session that never saw the author's reply writes the same loki-proof.sh contract the author used to write, so Loki's own re-run, the base
+// comparison, the without-change run and the receipt read it unchanged. It may not change the repository: every path it changed is put back and listed.
+// The prove stage above (LOKI_E10_PROVE) is a different session and stays off.
+export const PROOF_AUTHOR_ROLE = "You did not write this change. Write the checks that decide whether it does what the issue asks.";
+export const PROOF_AUTHOR_RULES = "Take what each check expects from the issue's line and from the code that calls the product, never from what the changed code currently returns. Do not change, add or delete any file in the repository: Loki restores every such change and reports it. Run your script until every failure left is a fault of the product, not of the script. End with one line per such failure: PRODUCT FAILS <item number>: <the command or request> | <what it returned> | <what the issue line requires>. Then finish with LOKI_DONE.";
+export const PROOF_AUTHOR_CHANGE_RULE = "Change a check only when it is wrong against the issue's line or no longer reaches the product after this change; never to make it pass.";
+export const PROOF_AUTHOR_AGAIN_LEAD = "Loki ran your script again by itself. What changed since, and what it found:";
+/** The prover's brief. The first round quotes the issue exactly as the implement brief quotes it; a later round (a resume of the same session) carries what
+ *  changed since (`extra`) and the rule for changing a check. Never the author's reply: the caller passes none. */
+export function proofAuthorBrief(issueText: string, cardLine: string | null, knownText: string | null, firstRound: boolean, extra: string, env: NodeJS.ProcessEnv = process.env): string {
+  if (!firstRound) return [PROOF_AUTHOR_AGAIN_LEAD, extra, PROOF_AUTHOR_CHANGE_RULE, PROOF_AUTHOR_RULES].filter(Boolean).join("\n\n");
+  return [PROOF_AUTHOR_ROLE, taskBlock(issueText).join("\n\n"), PROOF_SCRIPT_LINE, ...(repoCardOn(env) ? [SETUP_FIRST_LINE] : []), OLD_RECORD_PROOF_LINE, PROVES_NOTHING_FIX, cardLine ?? "", knownText ?? "", PROOF_AUTHOR_RULES, extra].filter(Boolean).join("\n\n");
+}
+export interface ProofAuthorOpts {
+  issue: string; cardLine: string | null; knownText: string | null; extra: string;
+  scratch: SessionScratch; model?: string; pathAppend?: string[]; limitS: number; signal: AbortSignal;
+  prior?: { opts: SessionRunOptions; session: SessionResult }; // a later round: one resume of this same prover session, never a new one
+}
+export interface ProofAuthorRun { iterationId: string; ran: boolean; script: boolean; restored: string[]; created: string[]; seconds: number; opts: SessionRunOptions; session: SessionResult }
+/** The paths changed since `pre`, put back: `restored` were edited or deleted (they are there again), `created` were new (they are removed). */
+export function putBackTree(repoDir: string, baseSha: string, pre: ReturnType<typeof snapshotDiff>): { restored: string[]; created: string[] } {
+  try {
+    const paths = turnChangedPaths(pre, snapshotDiff(repoDir, baseSha)); if (paths.length) restoreTurnPaths(repoDir, baseSha, pre, paths);
+    const restored = paths.filter((p) => existsSync(join(repoDir, p))); return { restored, created: paths.filter((p) => !restored.includes(p)) };
+  } catch { return { restored: [], created: [] }; }
+}
+const scriptLeft = (dir: string): boolean => { try { const st = statSync(join(dir, PROOF_SCRIPT)); return st.isFile() && st.size > 0; } catch { return false; } };
+/** One prover round: a fresh session (`${runId}-prv`, stage "prove") in the repository with the author's scratch as LOKI_SCRATCH and TMPDIR, or, with
+ *  o.prior, one resume of that session. Afterwards every repository path it changed is put back. `script`: the scratch holds a non-empty loki-proof.sh. */
+export async function runProofAuthor(ctx: RunContext, o: ProofAuthorOpts): Promise<ProofAuthorRun> {
+  const t0 = Date.now(), pre = snapshotDiff(ctx.repoDir, ctx.baseSha), brief = proofAuthorBrief(o.issue, o.cardLine, o.knownText, !o.prior, o.extra);
+  let opts: SessionRunOptions, session: SessionResult, iterationId: string, ran = true;
+  if (o.prior) {
+    opts = o.prior.opts;
+    const r = o.signal.aborted ? null : await resumeForProve(ctx, o.prior.opts, o.prior.session, brief, "-r");
+    if (r) { iterationId = r.iterationId; session = r.reply; } else { ran = false; iterationId = o.prior.opts.iterationId; session = o.prior.session; }
+  } else {
+    opts = { stage: "prove", brief, tier: "development", iterationId: `${ctx.runId}-prv`, limitS: o.limitS, signal: o.signal, cwd: ctx.repoDir, ...(o.model ? { model: o.model } : {}), ...(o.pathAppend?.length ? { pathAppend: o.pathAppend } : {}), sessionEnv: scratchSessionEnv(o.scratch) };
+    iterationId = opts.iterationId; session = await ctx.sessions.run(opts);
+  }
+  const back = putBackTree(ctx.repoDir, ctx.baseSha, pre);
+  return { iterationId, ran, script: scriptLeft(o.scratch.dir), ...back, seconds: Math.round((Date.now() - t0) / 100) / 10, opts, session };
 }

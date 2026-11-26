@@ -108,6 +108,18 @@ export const DELIVER_EACH_LINE = "This issue lists several things to deliver. De
 /** The per-task issue-run lines (block, take the time, deliver each, and the environment card line when one was made), or "" outside an issue run on claude. */
 export const proveByRunningBlock = (provider: string, source: unknown, env: NodeJS.ProcessEnv = process.env, cardLine: string | null = null): string =>
   issueRunBrief(provider, source, env) ? [source === "text" ? PROVE_BY_RUNNING_BLOCK : `${PROVE_BY_RUNNING_BLOCK} ${OLD_RECORD_PROOF_LINE}`, PROOF_SCRIPT_LINE, ...(repoCardOn(env) ? [SETUP_FIRST_LINE] : []), ...[TAKE_THE_TIME_LINE, DELIVER_EACH_LINE].map((l) => (source === "text" ? taskWording(l) : l)), ...(cardLine ? [cardLine] : [])].join("\n\n") : "";
+/** THIN-WRAP (#712, LOKI_E10_THIN_WRAP, default on; 0/off/false/no restores the 11.185.0 issue route byte for byte): an issue with its own acceptance list, on
+ *  claude, not Haiku, with no plan, runs as a thin wrap. The first session gets the issue, the prove-by-running paragraph, the environment card line and the
+ *  finish line; a separate session that did not write the change writes the proof Loki runs (engine10/stages/prove.ts runProofAuthor). FireLater#14 run bb59:
+ *  the first prompt was 28,796 characters and the proof was written by the session that wrote the change. */
+export const thinWrapOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_THIN_WRAP"] ?? "").trim());
+/** The thin route's scope, pure: the implement stage adds what only it knows (no router, no patch call, a scratch directory, the proof re-run on). */
+export const thinRoute = (provider: string, source: unknown, lines: number, plan: string | null, model: string | undefined, env: NodeJS.ProcessEnv = process.env): boolean =>
+  provider === "claude" && source === "issue" && lines > 0 && plan === null && !/haiku/i.test(model ?? "") && issueRunBrief(provider, source, env) && thinWrapOn(env);
+/** The thin route's first brief: the task block exactly as buildImplementBrief quotes it, the prove-by-running paragraph, the environment card line when one was
+ *  made, and the finish line. No stage prefix, no rules, no proof-script line, no old-record line, no repository card, no lessons and no plan lead. This session
+ *  shares no prefix with any other stage's session, so the cache-stable prefix rule has nothing to keep stable here. */
+export const thinImplementBrief = (quotedTask: string, cardLine: string | null): string => [quotedTask, PROVE_BY_RUNNING_BLOCK, cardLine, ISSUE_FINISH_LINE].filter(Boolean).join("\n\n");
 export const pinnedTestUpdateEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_PINNED_TEST_UPDATE"] ?? "").trim());
 /** The rules block the implement and fix briefs lead with: FIXED_RULES by default, the v11.139.0 text with the knob off. Either way a constant, so the prefix stays cache-stable. */
 export const fixedRules = (env: NodeJS.ProcessEnv = process.env, issue: boolean | "text" = false): string => { const r = pinnedTestUpdateEnabled(env) ? (docUpdateRuleOn(env) ? FIXED_RULES : FIXED_RULES_DOC_V139) : LEGACY_FIXED_RULES; return issue ? issueRules(r, issue === "text") : r; }; // issue: the caller's issueRunBrief(provider, source); each result is a constant, so the prefix stays cache-stable per route

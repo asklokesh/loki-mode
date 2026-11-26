@@ -1,11 +1,11 @@
 // E-08: Implement (ENGINE.md 4, 16). One session; the brief marks Wall tests read-only, names only the impacted tests. Afterwards any changed Wall file is restored (tests_reverted) and the exit is classified.
 import { execSpecBriefOf } from "../../features/exec_spec.ts"; import { recoverTournamentUndo, runTournamentGate, tournamentEnabled } from "../../features/tournament.ts"; import { nrdOverlapOn, runNrdGate, startNrdGate } from "../../features/no_regression.ts";
 import { installOwned } from "../../project_model/install.ts";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { withStagePrefix } from "../../features/lean_prefix.ts"; import { fragmentWriterOn, outOfRepoReask, outOfRepoTests } from "../../project_model/conventions.ts";
 import { learningsBlock, lessonsForBrief, orgKnowledgeBlock } from "../../util/pr_lessons.ts"; export { learningsBlock }; // learningsBlock lives with the other brief-note helpers
-import { FINISH_LINE, fixedRules, briefRecord, ISSUE_FINISH_LINE, TEXT_FINISH_LINE, issueRunBrief, pinnedTestUpdateEnabled, PLAN_HINT_LEAD, planHintsOn, proveByRunningBlock, type BriefRecord } from "../../e10ext/context.ts"; import { pinnedTestUpdates } from "../../util/test_guard.ts";
+import { FINISH_LINE, fixedRules, briefRecord, ISSUE_FINISH_LINE, TEXT_FINISH_LINE, issueRunBrief, pinnedTestUpdateEnabled, PLAN_HINT_LEAD, planHintsOn, proveByRunningBlock, thinImplementBrief, thinRoute, type BriefRecord } from "../../e10ext/context.ts"; import { pinnedTestUpdates } from "../../util/test_guard.ts";
 import { fastTierModel } from "../../runner/model_downgrades.ts"; import { noteRoleSkip, resolveClaudeModel, roleModel } from "../../util/claude_model.ts";
 import { cascadeDowngrade, loadRepoMap, namedFiles, sizeTask } from "../sizing.ts";
 import { attemptModels, attemptsK, type ExtraAttemptsDeps } from "../../features/attempts.ts";
@@ -24,6 +24,7 @@ import { appliedTests, buildPatchBrief, patchCallFor, patchEnabled, runPatchProt
 import { isTestFile } from "../../util/test_file_text.ts";
 import { type FinishRecord, guardReviewTurn, type ReviewItem, reviewTurnGuardOn, selfReviewBrief, verifiedFinishBrief, verifiedFinishMaxTurns, verifiedFinishOn, selfReviewChecks, selfReviewMaxTurns, selfReviewMode, selfReviewWanted, settleItems, stripInventedReleaseRefs, treeStaged, type TurnGuardRecord } from "../../features/self_review.ts";
 import { type DiffEntry, snapshotDiff } from "../../e10ext/treeswap.ts";
+import { restoreTurnPaths, turnChangedPaths } from "../../features/self_review.ts"; import { runProofAuthor, type ProofAuthorRun } from "./prove.ts"; import type { ProofBase, ProofCheck, ProofRerun } from "../proof_rerun.ts"; // THIN-WRAP (#712)
 
 /** A reviewer's gap on a line that already has a passing check is handed back once per line: `handed` holds the numbers already handed back (and is added to here); a line seen again is a dispute, recorded and not handed back. */
 export function gapOnce(handed: Set<number>, gaps: { n: number; line: string; reason: string }[], round: number): { handBack: { n: number; line: string; reason: string }[]; disputes: { line: string; reason: string; round: number }[] } {
@@ -36,6 +37,26 @@ export function combinedHandBack(found: string[], unmetText: string): string {
   const review = found.length ? [`An independent reviewer read your whole change and found ${found.length} problem${found.length === 1 ? "" : "s"}:`, "", ...found.map((n, i) => `${i + 1}. ${n}`), "", "Check each one against the code. Where the reviewer is right, fix the product (and the documentation when the two disagree), add a check for it to $LOKI_SCRATCH/loki-proof.sh under the acceptance item it belongs to, and run the proof again until it passes. Close each finding where the code already is: when a finding says something has no caller, call it at the nearest existing call site or remove it. Add no mechanism the issue does not ask for. When the reviewer gave an input that shows a problem, add that exact input as a test in the repository's own tests, next to the tests for that code, and see it fail before your fix and pass after it. When the code you are fixing reads untrusted input (markup, an address, a query, a path, a file format), use the parser or escaping library this repository already depends on for it; do not replace a library call with matching you wrote yourself, and if the repository has no such dependency, say so in your reply. Where the reviewer is wrong, say why in one line and change nothing for it. Do not remove or loosen an existing check. End with the same finish line as before."].join("\n") : "";
   return [review, unmetText].filter(Boolean).join("\n\n");
 }
+/** THIN-WRAP (#712): on the thin route the author never writes or repairs the proof. The one fix turn's text is combinedHandBack's with the proof sentence taken
+ *  out of the review paragraph and this line after it, so a hand-back of failing checks alone carries it too. "" when there is nothing to hand back. */
+export const THIN_FIX_LINE = "Fix the product. Do not edit $LOKI_SCRATCH/loki-proof.sh and do not add checks to it; Loki runs its own copy. If a check is wrong against the issue, say so on a line starting CHECK WRONG <item number>: and leave it.";
+const HANDBACK_PROOF_CLAUSE = ", add a check for it to $LOKI_SCRATCH/loki-proof.sh under the acceptance item it belongs to, and run the proof again until it passes";
+export function thinHandBack(found: string[], failing: string): string { const t = combinedHandBack(found, failing).replace(HANDBACK_PROOF_CLAUSE, ""); return t ? `${t}\n\n${THIN_FIX_LINE}` : ""; }
+/** The failing checks of Loki's own run of the independent proof script, as the author is told them: item, what the check proves, the end of its output. */
+export function thinFailingText(checks: ProofCheck[]): string {
+  const bad = checks.filter((c) => !c.ok); if (!bad.length) return "";
+  return [`Loki ran the independent proof script by itself, in a new empty directory, and ${bad.length} check${bad.length === 1 ? "" : "s"} failed:`, "", ...bad.slice(0, 12).map((c) => `- item ${c.item}: ${c.what}${(c.printed ?? c.out) ? `\n  output: ${(c.printed ?? c.out ?? "").slice(-600).replace(/\n/g, "\n  ")}` : ""}`), "", "End with the same finish line as before."].join("\n");
+}
+/** THIN-WRAP T6 (#712): the checks that passed in `before` and fail in `after`, keyed by acceptance item and description (proof_rerun.ts checkKey has already
+ *  taken run-specific values out of `what`). A check absent from `after`, one failing in both, and one new in `after` are not listed. Pure. */
+export function regressedChecks(before: ProofCheck[] | undefined, after: ProofCheck[] | undefined): string[] {
+  const key = (c: ProofCheck): string => `${c.item}: ${c.what}`, ok1 = new Map<string, number>(), ok2 = new Map<string, number>(), bad2 = new Set<string>();
+  for (const c of before ?? []) if (c.ok) ok1.set(key(c), (ok1.get(key(c)) ?? 0) + 1);
+  for (const c of after ?? []) { if (c.ok) ok2.set(key(c), (ok2.get(key(c)) ?? 0) + 1); else bad2.add(key(c)); }
+  return [...ok1.keys()].filter((k) => bad2.has(k) && (ok2.get(k) ?? 0) < ok1.get(k)!);
+}
+/** The CHECK WRONG lines of an author reply (THIN_FIX_LINE asks for them), in order. */
+export const checkWrongLines = (reply: string): string[] => reply.split("\n").map((l) => l.trim()).filter((l) => /^CHECK WRONG \d+:/.test(l)).slice(0, 20);
 
 /** Which reader looks at the tree in a passing-proof round (loki-mode#692). "review": the first independent review. "follow": a follow-up review of what the last fix turn changed, while the
  *  last hand-back carried review findings (the caller folds that into changedSinceReview) and fewer than max follow-ups ran. "line-check": the acceptance line check, as before.
@@ -178,6 +199,102 @@ export function patchBrief(ctx: RunContext, task: string, impacted: string[]): s
 let patchCallOverride: PatchCall | null = null;
 export function __setPatchCallForTests(c: PatchCall | null): void { patchCallOverride = c; }
 
+/** THIN-WRAP (#712) T1 to T7: the independent proof, one review and at most one fix turn. `author` is the one author turn after the first session (null when no
+ *  author session exists, as on --seal-existing): it is given the hand-back text and says whether the session was resumed. The caller owns the review closure
+ *  and the closing read (T8). No author turn is ever asked to write or repair the proof. */
+export interface ThinProofDeps {
+  scratch: SessionScratch; issue: string; cardLine: string | null; knownText: string | null; model?: string; pathAppend?: string[]; limitS: number;
+  proofRounds: { exit: number | null; failed: number; seconds: number; base_seconds?: number }[];
+  review: (tree: string) => Promise<string[]>; mayHand: () => boolean;
+  author: ((found: string[], failing: string, text: string) => Promise<boolean>) | null; reply: () => string;
+}
+export interface ThinProofResult {
+  proof_author: { status: "script" | "no script" | "not run"; reason?: string; iteration_ids: string[]; restored: string[]; created: string[]; rounds: number };
+  fix_turn: { undone: boolean; regressed?: string[]; paths: string[] } | null; still_open: string[] | null;
+}
+export const thinNotRun = (reason: string): ThinProofResult => ({ proof_author: { status: "not run", reason, iteration_ids: [], restored: [], created: [], rounds: 0 }, fix_turn: null, still_open: null });
+export async function thinProof(ctx: RunContext, signal: AbortSignal, d: ThinProofDeps): Promise<ThinProofResult> {
+  const sd = d.scratch, o = ctx.outputs();
+  for (const f of [join(sd.dir, PROOF_SCRIPT), join(ctx.runDir, PROOF_SCRIPT)]) rmSync(f, { force: true }); // the proof Loki counts is the prover's: a script the author left never counts here
+  const measure = async (): Promise<{ pr: ProofRerun | null; pb: ProofBase | null }> => { // one run of Loki's own copy, with the same events and round record as the proof loop
+    const round = d.proofRounds.length, pr = await rerunProof(ctx.repoDir, ctx.runDir, signal); if (!pr) return { pr: null, pb: null };
+    const pb = pr.exit === 0 && pr.failed === 0 ? await proofOnBase(ctx.repoDir, ctx.runDir, ctx.baseSha, pr, signal) : null;
+    if (pb) ctx.emit("proof.base", "implement", { round: round + 1, available: pb.available, ...(pb.why ? { why: pb.why } : {}), seconds: pb.seconds, ...(pb.cached ? { cached: true } : {}), base_checks: pb.base_checks, base_proved: pb.base_proved, passing: pb.head_proved, also_pass_on_base: pb.same_total });
+    d.proofRounds.push({ exit: pr.exit, failed: pr.failed, seconds: pr.seconds, ...(pb && !pb.cached ? { base_seconds: pb.seconds } : {}) }); { const la0 = labelAsks(ctx.provider, o.intake, o.plan, ctx.repoDir); ctx.emit("proof.rerun", "implement", { round: round + 1, exit: pr.exit, proved: pr.proved, failed: pr.failed, seconds: pr.seconds, ...(pr.restored?.length ? { restored: pr.restored } : {}), source: la0.source, statuses: ruleStatus(la0.asks, pr, proofBaseCapOn() ? pb : null).map((s, i) => ({ line: s.line, status: s.status, checks: pr.lines[String(i + 1)]?.proved ?? 0, ...(s.reason ? { reason: s.reason } : {}) })) }); }
+    return { pr, pb };
+  };
+  const base = { issue: d.issue, cardLine: d.cardLine, knownText: d.knownText, scratch: sd, ...(d.model ? { model: d.model } : {}), ...(d.pathAppend?.length ? { pathAppend: d.pathAppend } : {}), limitS: d.limitS, signal };
+  const ids: string[] = [], restored: string[] = [], created: string[] = [], note = (r: ProofAuthorRun): void => { ids.push(r.iterationId); restored.push(...r.restored); created.push(...r.created); };
+  // T1: a fresh prover session; it never sees the author's reply and anything it changes in the repository is put back
+  const pa1 = await runProofAuthor(ctx, { ...base, extra: "" }); note(pa1); let rounds = 1;
+  // T2: Loki keeps its own copy of the prover's script and runs it; the base comparison when it passes in full
+  let pr1: ProofRerun | null = null, pb1: ProofBase | null = null;
+  if (pa1.script && !signal.aborted && keepProofScript(sd.dir, ctx.runDir)) ({ pr: pr1, pb: pb1 } = await measure());
+  // T3: the first review, whether or not the proof passed
+  const tree = await worktreeTree(ctx.repoDir), found = tree && !signal.aborted ? await d.review(tree) : [];
+  // T4: what the author hears: the review findings (while they may be handed back) and each failing check. A line with no check, and a line whose every
+  // passing check also passes on base, go to the prover (T7), never to the author.
+  const handFound = d.mayHand() ? found : [], failing = thinFailingText(pr1?.checks ?? []), text = d.author ? thinHandBack(handFound, failing) : "";
+  // T5: the one author turn after the first session; T6: Loki's copy again, and the turn is undone when a check that passed before it fails after it
+  let fix: ThinProofResult["fix_turn"] = null, stillOpen: string[] | null = null, pr2: ProofRerun | null = null, pb2: ProofBase | null = null, wrong: string[] = [];
+  if (text && d.author && !signal.aborted) {
+    const pre = snapshotDiff(ctx.repoDir, ctx.baseSha);
+    if (await d.author(handFound, failing, text)) {
+      const paths = turnChangedPaths(pre, snapshotDiff(ctx.repoDir, ctx.baseSha)); wrong = checkWrongLines(d.reply());
+      if (pr1 && !signal.aborted && existsSync(join(ctx.runDir, PROOF_SCRIPT))) ({ pr: pr2, pb: pb2 } = await measure()); // never keepProofScript here: an author edit to the scratch copy never reaches Loki's
+      const regressed = pr1 && pr2 ? regressedChecks(pr1.checks, pr2.checks) : [];
+      if (regressed.length) { try { restoreTurnPaths(ctx.repoDir, ctx.baseSha, pre, paths); } catch { /* the closing read then reads what is left */ } fix = { undone: true, regressed, paths }; stillOpen = handFound.map((f) => f.slice(0, 300)); }
+      else fix = { undone: false, paths };
+    }
+  }
+  // T7: at most one resume of the prover session (never a new one), with what changed and what Loki found
+  if (pr1 && !fix?.undone && !signal.aborted) {
+    const last = pr2 ?? pr1, lastBase = pr2 ? pb2 : pb1, asks = labelAsks(ctx.provider, o.intake, o.plan, ctx.repoDir).asks;
+    const noCheck = asks.flatMap((l, i) => { const e = last.lines[String(i + 1)]; return optionalAsk(l) || (e && e.proved + e.failed > 0) ? [] : [i + 1]; });
+    const facts = baseFacts(asks, last, lastBase), lastFailing = (last.checks ?? []).filter((c) => !c.ok);
+    const fault = last.refused ? `Loki did not run your script: ${last.refused}.` : last.exit !== 0 && !lastFailing.length ? `Your script did not pass when Loki ran it (exit ${last.exit === null ? "none, it did not finish in time" : last.exit}) and no check failed. The end of its output:\n${last.tail.slice(-2000)}` : "";
+    if (fix || noCheck.length || facts.length || fault) {
+      const extra = [
+        fix && fix.paths.length ? `After your script ran, the author changed: ${fix.paths.slice(0, 30).join(", ")}.` : "",
+        wrong.length ? `The author says these checks are wrong against the issue:\n${wrong.join("\n")}` : "",
+        lastFailing.length ? thinFailingText(lastFailing).replace(/\n\nEnd with the same finish line as before\.$/, "") : "",
+        noCheck.length ? `These acceptance items have no check in your script: ${noCheck.join(", ")}. Give each at least one real check of the product.` : "",
+        ...facts, fault,
+      ].filter(Boolean).join("\n\n");
+      try { copyFileSync(join(ctx.runDir, PROOF_SCRIPT), join(sd.dir, PROOF_SCRIPT)); } catch { /* the prover rewrites it */ } // Loki's own copy back in place of whatever the author left
+      const pa2 = await runProofAuthor(ctx, { ...base, extra, prior: { opts: pa1.opts, session: pa1.session } });
+      if (pa2.ran) { note(pa2); rounds++; if (!signal.aborted && keepProofScript(sd.dir, ctx.runDir)) await measure(); }
+    }
+  }
+  return { proof_author: { status: pa1.script ? "script" : "no script", iteration_ids: ids, restored: [...new Set(restored)], created: [...new Set(created)], rounds }, fix_turn: fix, still_open: stillOpen };
+}
+
+/** THIN-WRAP part 4 (#712): --seal-existing on an issue run (intake gives source "issue" only for an issue reference) goes through the same prover and review
+ *  as a session run, so a sealed patch is measured the way a Loki change is. No author session exists, so nothing is handed back (T4 to T6 never run) and the
+ *  findings reach the receipt only. Off the route the result is applyExternalPatch's, byte for byte. */
+export async function sealExistingThin(ctx: RunContext, signal: AbortSignal, applied: StageResult): Promise<StageResult> {
+  const o = ctx.outputs(), task = (o.intake?.task as string | undefined) ?? "", plan = (o.plan?.plan as string | undefined) ?? null, dev = roleModel("dev");
+  if (!thinRoute(ctx.provider, o.intake?.source, issueAcceptanceOf(o.intake).length, plan, dev ?? ctx.model) || !proofRerunOn() || signal.aborted) return applied;
+  let scratch: SessionScratch; try { scratch = createSessionScratch(ctx.runDir); } catch { return applied; }
+  { const sc = scratch, rd = ctx.runDir; process.once("exit", () => { if (existsSync(sc.dir)) writeExitCleanup(rd, cleanupSessionScratch(sc)); }); }
+  writeProofKit(scratch.dir, labelAsks(ctx.provider, o.intake, o.plan, ctx.repoDir).asks); // the same kit the session path writes
+  const known = repoCardBrief(ctx.repoDir, scratch.dir, process.env, null), card = envCard(ctx);
+  let lastRead: { level: string; findings: number; tree: string; read: ReviewRead } | null = null, cost: string | null = null;
+  const review = async (tree: string): Promise<string[]> => {
+    if (!reviewFixOn()) return [];
+    const xr = await crossReview(ctx, "VERIFIED", tree, signal, true); if (xr?.cost_iteration) cost = xr.cost_iteration;
+    const found = handBackReasons(xr); ctx.emit("review.early", "implement", { level: xr?.level ?? "not_run", findings: found.length });
+    if (modelReviewRan(xr)) lastRead = { level: xr!.level, findings: found.length, tree, read: readOf(xr!) };
+    return found;
+  };
+  const proofRounds: ThinProofDeps["proofRounds"] = [];
+  const rec = await thinProof(ctx, signal, { scratch, issue: task, cardLine: card?.line ?? null, knownText: known?.text ?? null, ...(roleModel("test") || !dev ? {} : { model: dev }), ...(card?.pathAppend.length ? { pathAppend: card.pathAppend } : {}), limitS: implementStage.limitS, proofRounds, review, mayHand: () => false, author: null, reply: () => "" });
+  const endTree = (await worktreeTree(ctx.repoDir)) ?? "", read = lastRead as { level: string; findings: number; tree: string; read: ReviewRead } | null;
+  const reviewState = read ? { level: read.level, findings: read.findings, follow: false, still_open: [], changed_unread: !!endTree && endTree !== read.tree, tree: read.tree, read: read.read } : null;
+  const scratchRec = cleanupSessionScratch(scratch), data = (applied.data ?? {}) as Record<string, unknown>;
+  return { ...applied, data: { ...data, thin: true, proof_author: rec.proof_author, ...(proofRounds.length ? { proof_rounds: proofRounds } : {}), ...(reviewState ? { review_state: reviewState } : {}), ...(scratchRec.stopped.length || scratchRec.left.length || !scratchRec.removed ? { scratch_cleanup: scratchRec } : {}), iteration_ids: [...((data.iteration_ids as string[] | undefined) ?? []), ...rec.proof_author.iteration_ids, ...(cost ? [cost] : [])] } };
+}
+
 export const implementStage: Stage = {
   name: "implement",
   targetS: 180,
@@ -186,7 +303,7 @@ export const implementStage: Stage = {
   async run(ctx: RunContext, signal: AbortSignal): Promise<StageResult> {
     rmSync(join(ctx.repoDir, ".loki", "supply-declared.json"), { force: true }); // T10 B3: never judge this run by a stale declaration
     try { recoverTournamentUndo(ctx.repoDir, ctx.runDir); } catch { /* an unreadable record is left for a person */ } // a displacement a kill cut short is undone before any session can write newer edits
-    if (ctx.externalPatch) return applyExternalPatch(ctx, ctx.externalPatch);
+    if (ctx.externalPatch) { const applied = applyExternalPatch(ctx, ctx.externalPatch); return applied.status === "completed" && applied.data?.exit === "external" ? sealExistingThin(ctx, signal, applied) : applied; } // THIN-WRAP part 4: an applied patch on the thin route gets the same prover and review
     const prior = ctx.outputs();
     const task = (prior.intake?.task as string | undefined) ?? "";
     const plan = (prior.plan?.plan as string | undefined) ?? null;
@@ -197,8 +314,7 @@ export const implementStage: Stage = {
     const downgrade = routed || devPin ? null : cascadeDowngrade(ctx.model); // the router (LOKI_ROUTER=auto for Haiku first) replaces the opt-in downgrade list
     const cascade = downgrade !== null;
     if (downgrade) process.stderr.write(`${downgrade.note}\n`);
-    const lessons = lessonsForBrief(ctx.repoDir, ctx.runId, task, [...((prior.plan?.relevant_files as string[] | undefined) ?? []), ...impacted], ctx.runDir, ctx.baseSha); // R3: a proposed lesson is read only once approved, approval by merged guidance read from ctx.baseSha. T6: reviewer lessons plus run lessons on the relevant files or their impacted tests (util/pr_lessons.ts), tagged as used by this run and recorded in lessons-injected.json
-    const bc = briefCtx(ctx, routed ? undefined : devPin ?? downgrade?.to ?? ctx.model), repoMap = bc.text + lessons + learningsBlock(ctx.repoDir) + orgKnowledgeBlock(ctx.repoDir, task, ctx.runDir); // S41-10: up to 20 relevant files + impacted test commands, not the first 200 paths; FR06 org block is off unless LOKI_ORG_GRAPH=1
+    const bc = briefCtx(ctx, routed ? undefined : devPin ?? downgrade?.to ?? ctx.model);
 
     const spec = specFor(ctx);
     // CH-03: resume plan's session on the same model (never when routed: per-unit models differ). Wall, verify and seal never join the chain. planChain owns eligibility; `!plan` here only keeps plan_chain out of the data when plan was skipped.
@@ -208,24 +324,30 @@ export const implementStage: Stage = {
     const resumeId = ownId ?? (chain && "id" in chain ? chain.id : undefined);
     let planChainMode: string | undefined = ownId ? "resumed (interrupted session)" : chain ? (resumeId ? "resumed" : `fresh (${(chain as { why: string }).why})`) : undefined;
     let sessionResume: string | undefined = own ? (ownId ? "resumed" : `fresh (${(own as { why: string }).why})`) : undefined;
-    const picked = (Array.isArray(prior.intake?.assumptions) ? (prior.intake!.assumptions as unknown[]) : []).filter((a): a is string => typeof a === "string" && runPickedChoice(a)); // LOKI_E10_OPUS_CONSULT trigger open-choice: an either/or the run would settle by itself
-    const choiceAdvice = picked.length && consultEnabled() && !ownId && !signal.aborted ? await runConsult({ runDir: ctx.runDir, repoDir: ctx.repoDir, stage: "implement", trigger: "open-choice", task, evidence: picked.join("\n"), diff: null, code: bc.packText ?? bc.text }) : null;
+    const patchModel = devPin ?? downgrade?.to ?? ctx.model ?? resolveModel(ctx.provider); // a named model only: "claude (provider default)" names none for a tool-less call
+    const patchOn = patchEnabled() && !plan && !routed && !resumeId && ctx.provider === "claude" && /^[\w.:@/-]+$/.test(patchModel);
     const issue = issueRunBrief(ctx.provider, prior.intake?.source); // candidate 1: issue-run rules, block, lines and card; a text goal and opencode keep today's brief
     let scratch: SessionScratch | null = null; try { scratch = issue ? createSessionScratch(ctx.runDir) : null; } catch { scratch = null; } // Q1 RUN-SCRATCH: the session's own short scratch directory; any error means none
+    const attemptsNamed = (process.env.LOKI_E10_ATTEMPT_MODELS ?? "").trim() !== "", firstAttemptModel = attemptsK(devPin ?? ctx.model) > 0 && (!devPin || attemptsNamed) ? attemptModels()[0] : undefined; // ROLE-MODELS: under a dev pin only an explicit LOKI_E10_ATTEMPT_MODELS list (the narrower setting) names attempt 1, never the cascade default // LOKI_E10_ATTEMPT_MODELS entry 1: the first of the best-of-N attempts (a downgrade still wins)
+    const implModel = downgrade?.to ?? firstAttemptModel ?? devPin; // the model the first session runs on when one is named (else the run model)
+    const thin = thinRoute(ctx.provider, prior.intake?.source, issueAcceptanceOf(prior.intake).length, plan, implModel ?? ctx.model) && !routed && !patchOn && scratch !== null && proofRerunOn(); // THIN-WRAP (#712): LOKI_E10_THIN_WRAP=0 restores the 11.185.0 route
+    const lessons = thin ? "" : lessonsForBrief(ctx.repoDir, ctx.runId, task, [...((prior.plan?.relevant_files as string[] | undefined) ?? []), ...impacted], ctx.runDir, ctx.baseSha); // R3: a proposed lesson is read only once approved, approval by merged guidance read from ctx.baseSha. T6: reviewer lessons plus run lessons on the relevant files or their impacted tests (util/pr_lessons.ts), tagged as used by this run and recorded in lessons-injected.json // THIN-WRAP: not sent on the thin route, so not read and not recorded as used
+    const repoMap = thin ? "" : bc.text + lessons + learningsBlock(ctx.repoDir) + orgKnowledgeBlock(ctx.repoDir, task, ctx.runDir); // S41-10: up to 20 relevant files + impacted test commands, not the first 200 paths; FR06 org block is off unless LOKI_ORG_GRAPH=1
+    const picked = (Array.isArray(prior.intake?.assumptions) ? (prior.intake!.assumptions as unknown[]) : []).filter((a): a is string => typeof a === "string" && runPickedChoice(a)); // LOKI_E10_OPUS_CONSULT trigger open-choice: an either/or the run would settle by itself
+    const choiceAdvice = picked.length && !thin && consultEnabled() && !ownId && !signal.aborted ? await runConsult({ runDir: ctx.runDir, repoDir: ctx.repoDir, stage: "implement", trigger: "open-choice", task, evidence: picked.join("\n"), diff: null, code: bc.packText ?? bc.text }) : null;
     const kitAsks = scratch ? labelAsks(ctx.provider, prior.intake, prior.plan, ctx.repoDir).asks : [];
     if (scratch) writeProofKit(scratch.dir, kitAsks); // the check functions and the numbered acceptance lines the proof script must use
-    const memText = scratch && ctx.provider === "claude" && taskMemoryOn() ? taskMemoryText({ title: task.split("\n").map((l) => l.trim()).find(Boolean) ?? "", asks: kitAsks, sites: namedSitesEnabled() ? namedSites(task, ctx.repoDir) : [], ...(namedSitesEnabled() ? { siteRule: NAMED_SITE_LINE } : {}) }) : null;
+    const memText = scratch && !thin && ctx.provider === "claude" && taskMemoryOn() ? taskMemoryText({ title: task.split("\n").map((l) => l.trim()).find(Boolean) ?? "", asks: kitAsks, sites: namedSitesEnabled() ? namedSites(task, ctx.repoDir) : [], ...(namedSitesEnabled() ? { siteRule: NAMED_SITE_LINE } : {}) }) : null;
     const memDir = scratch && memText ? writeTaskMemory(scratch.dir, memText) : null;
-    const cardEnv: Record<string, string> = scratch && ctx.provider === "claude" && compactCardOn() ? { [TASK_CARD_ENV]: taskCardText({ title: task.split("\n").map((l) => l.trim()).find(Boolean) ?? "", asks: kitAsks, sites: namedSitesEnabled() ? namedSites(task, ctx.repoDir) : [], briefPath: join(ctx.runDir, "implement-brief.txt"), finishRule: issue && prior.intake?.source !== "text" ? ISSUE_FINISH_LINE : FINISH_LINE }), [CARD_BASE_ENV]: ctx.baseSha, [CARD_RUN_DIR_ENV]: ctx.runDir } : {}; // COMPACT CARD (runner/compact_card.ts): re-sent with Loki's progress at every compaction, SDK route // TASK MEMORY: read again by Claude Code after each compaction; only a Haiku session loads it (runner/providers.ts taskMemorySettings)
+    const cardEnv: Record<string, string> = scratch && !thin && ctx.provider === "claude" && compactCardOn() ? { [TASK_CARD_ENV]: taskCardText({ title: task.split("\n").map((l) => l.trim()).find(Boolean) ?? "", asks: kitAsks, sites: namedSitesEnabled() ? namedSites(task, ctx.repoDir) : [], briefPath: join(ctx.runDir, "implement-brief.txt"), finishRule: issue && prior.intake?.source !== "text" ? ISSUE_FINISH_LINE : FINISH_LINE }), [CARD_BASE_ENV]: ctx.baseSha, [CARD_RUN_DIR_ENV]: ctx.runDir } : {}; // COMPACT CARD (runner/compact_card.ts): re-sent with Loki's progress at every compaction, SDK route // TASK MEMORY: read again by Claude Code after each compaction; only a Haiku session loads it (runner/providers.ts taskMemorySettings)
     if (scratch) { const sc = scratch, rd = ctx.runDir; process.once("exit", () => { if (existsSync(sc.dir)) writeExitCleanup(rd, cleanupSessionScratch(sc)); }); } // safety net: an aborted stage still leaves nothing running or on disk
     const setupCheck = issue && !ownId && !signal.aborted ? await settleSetupCheck(ctx.repoDir, ctx.runDir, (s) => runSetupScript(ctx.repoDir, s, signal, process.env, ctx.runDir)) : null; // SETUP CHECK: Loki's own run of the stored setup on this checkout (started beside plan), and the one-file edit that gets it through when it stops
     if (setupCheck) ctx.emit("repo.card", "implement", { when: "checked", result: setupCheck.result, seconds: setupCheck.seconds, trials: setupCheck.trials, ...(setupCheck.file ? { file: setupCheck.file } : {}) });
     const known = issue ? repoCardBrief(ctx.repoDir, scratch?.dir ?? null, process.env, setupCheck) : null; // REPO CARD: what earlier runs here verified (e10ext/repomemory.ts), in the brief and as $LOKI_SCRATCH/loki-setup.sh; LOKI_REPO_CARD=0 opts out
     if (known) { try { writeFileSync(join(ctx.runDir, "repo-card.json"), JSON.stringify(known.record) + "\n"); } catch { /* the record is evidence only */ } ctx.emit("repo.card", "implement", { when: "read", ...known.record }); }
     const card = issue ? envCard(ctx) : null; // the small environment card (util/stack_tools.ts envCard): server binaries off PATH that the repository needs
-    const fullBrief = buildImplementBrief(task, plan, impacted, known ? `${repoMap}${repoMap ? "\n\n" : ""}${known.text}` : repoMap, [specBriefBlock(spec), execSpecBriefOf(ctx.runDir), ...adviceBlock(choiceAdvice), proveByRunningBlock(ctx.provider, prior.intake?.source, process.env, card?.line ?? null)].filter(Boolean).join("\n\n") || null, prior.intake?.assumptions, rankedRemedyEnabled() ? prior.intake?.ranked_remedy : undefined, issue && prior.intake?.source === "text" ? "text" : issue); // the advice joins the per-task part of the brief, never the cache-stable prefix // LOKI_E10_EXEC_SPEC: the binding and advisory spec cases the lean Wall stage left
+    const fullBrief = thin ? thinImplementBrief(taskBlock(task).join("\n\n"), card?.line ?? null) : buildImplementBrief(task, plan, impacted, known ? `${repoMap}${repoMap ? "\n\n" : ""}${known.text}` : repoMap, [specBriefBlock(spec), execSpecBriefOf(ctx.runDir), ...adviceBlock(choiceAdvice), proveByRunningBlock(ctx.provider, prior.intake?.source, process.env, card?.line ?? null)].filter(Boolean).join("\n\n") || null, prior.intake?.assumptions, rankedRemedyEnabled() ? prior.intake?.ranked_remedy : undefined, issue && prior.intake?.source === "text" ? "text" : issue); // the advice joins the per-task part of the brief, never the cache-stable prefix // LOKI_E10_EXEC_SPEC: the binding and advisory spec cases the lean Wall stage left
     try { mkdirSync(ctx.runDir, { recursive: true }); writeFileSync(join(ctx.runDir, ATTEMPT_BRIEF_FILE), fullBrief, "utf8"); } catch { /* best effort: without it the machine starts no extra attempt */ } // EXP-0010: the extra attempts after a red verify start from this exact brief
-    const attemptsNamed = (process.env.LOKI_E10_ATTEMPT_MODELS ?? "").trim() !== "", firstAttemptModel = attemptsK(devPin ?? ctx.model) > 0 && (!devPin || attemptsNamed) ? attemptModels()[0] : undefined; // ROLE-MODELS: under a dev pin only an explicit LOKI_E10_ATTEMPT_MODELS list (the narrower setting) names attempt 1, never the cascade default // LOKI_E10_ATTEMPT_MODELS entry 1: the first of the best-of-N attempts (a downgrade still wins)
     const first: SessionRunOptions = {
       stage: "implement",
       brief: ownId ? INTERRUPTED_BRIEF : fullBrief,
@@ -245,8 +367,6 @@ export const implementStage: Stage = {
     const rt = routed ? routeStart(ctx, first, prior.plan, size) : null;
     // LOKI_E10_PATCH (default off): lean path only (no plan, no router, no session to continue). Green skips the agentic session; anything else restored the tree and the session below runs as today.
     let patch: PatchOutcome | undefined, patchS = 0, patchNote = ""; // patchNote: the patch reply's lines before its first edit block (its root cause), the green session's summary
-    const patchModel = devPin ?? downgrade?.to ?? ctx.model ?? resolveModel(ctx.provider); // a named model only: "claude (provider default)" names none for a tool-less call
-    const patchOn = patchEnabled() && !plan && !routed && !resumeId && ctx.provider === "claude" && /^[\w.:@/-]+$/.test(patchModel);
     if (patchEnabled() && ctx.provider !== "claude") noteRoleSkip("implement-patch", `LOKI_E10_PATCH: the patch protocol runs on the claude provider only (this run: ${ctx.provider})`); // recorded in the receipt's tool_calls_skipped
     if (patchOn && !signal.aborted) {
       const started = Date.now();
@@ -297,20 +417,20 @@ export const implementStage: Stage = {
     if (incomplete) session = { ...session, markers: { ...session.markers, done: false } }; // S1b: an unfinished session is never built on or replaced by a follow-up resume (coverage, remedy, precedence, named sites, -rv all require markers.done)
     let coverage: string | undefined; // L4: lean path only; an attempts run owns its own sessions
     let claimAbsent: string[] | undefined; // site-ledger claimed_change_absent: SITE lines naming a line the coverage turn did not change, re-asked once
-    if (coverageResumeEnabled() && !plan) { if (patch?.status !== "green" && !signal.aborted && !session.killed && session.exit === 0 && session.markers.done && !session.markers.specConflict && !session.markers.alreadyDone && !treeIsEmpty(ctx)) { const r = await resumeForCoverage(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session); session = r.session; for (const id of r.iterationIds) if (!ids.includes(id)) ids.push(id); claimAbsent = r.claimAbsent; coverage = "resumed"; } else coverage = patch?.status === "green" ? "skipped (patch green)" : "skipped"; }
-    else if (coverageMode() === "fold" && !plan) { // the brief carried COVERAGE_FOLD (buildImplementBrief), so no separate turn; with LOKI_E10_CLAIM_CHECK on, the session's own SITE lines get the claim check
+    if (coverageResumeEnabled() && !plan && !thin) { if (patch?.status !== "green" && !signal.aborted && !session.killed && session.exit === 0 && session.markers.done && !session.markers.specConflict && !session.markers.alreadyDone && !treeIsEmpty(ctx)) { const r = await resumeForCoverage(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session); session = r.session; for (const id of r.iterationIds) if (!ids.includes(id)) ids.push(id); claimAbsent = r.claimAbsent; coverage = "resumed"; } else coverage = patch?.status === "green" ? "skipped (patch green)" : "skipped"; }
+    else if (coverageMode() === "fold" && !plan && !thin) { // the brief carried COVERAGE_FOLD (buildImplementBrief), so no separate turn; with LOKI_E10_CLAIM_CHECK on, the session's own SITE lines get the claim check
       coverage = patch?.status === "green" ? "skipped (patch green)" : "folded";
       if (patch?.status !== "green" && !signal.aborted && !session.killed && session.exit === 0 && session.markers.done && !session.markers.specConflict && !session.markers.alreadyDone && !treeIsEmpty(ctx)) { const r = await reaskFoldedClaims(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session); session = r.session; for (const id of r.iterationIds) if (!ids.includes(id)) ids.push(id); claimAbsent = r.claimAbsent; }
     }
 
     let rankedRemedyRec: RemedyRecord | undefined; // F1 LOKI_E10_RANKED_REMEDY: one tool-less check of the diff against the issue's first-ranked remedy, at most one "-rr" resume
     const remedy = rankedRemedyEnabled() && typeof prior.intake?.ranked_remedy === "string" ? prior.intake.ranked_remedy as string : null;
-    if (remedy && patch?.status !== "green" && !signal.aborted && !session.killed && session.exit === 0 && session.markers.done && !session.markers.specConflict && !session.markers.alreadyDone && !treeIsEmpty(ctx)) { const r = await resumeForRemedy(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session, remedy, currentDiff(ctx.repoDir, ctx.baseSha, 12000, true) ?? ""); session = r.session; for (const id of r.iterationIds) if (!ids.includes(id)) ids.push(id); rankedRemedyRec = r.record; }
+    if (remedy && !thin && patch?.status !== "green" && !signal.aborted && !session.killed && session.exit === 0 && session.markers.done && !session.markers.specConflict && !session.markers.alreadyDone && !treeIsEmpty(ctx)) { const r = await resumeForRemedy(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session, remedy, currentDiff(ctx.repoDir, ctx.baseSha, 12000, true) ?? ""); session = r.session; for (const id of r.iterationIds) if (!ids.includes(id)) ids.push(id); rankedRemedyRec = r.record; }
     let precedenceRec: { sites: number; resumed: boolean } | undefined; // F3 LOKI_E10_PRECEDENCE_CHECK: one "-pr" follow-up when the diff widened a check whose function holds other checks
-    if (patch?.status !== "green" && !signal.aborted && !session.killed && session.exit === 0 && session.markers.done && !session.markers.specConflict && !session.markers.alreadyDone && !treeIsEmpty(ctx)) { const r = await resumeForPrecedence(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session); if (r.sites > 0) { session = r.session; for (const id of r.iterationIds) if (!ids.includes(id)) ids.push(id); precedenceRec = { sites: r.sites, resumed: r.iterationIds.length > 0 }; } }
+    if (!thin && patch?.status !== "green" && !signal.aborted && !session.killed && session.exit === 0 && session.markers.done && !session.markers.specConflict && !session.markers.alreadyDone && !treeIsEmpty(ctx)) { const r = await resumeForPrecedence(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session); if (r.sites > 0) { session = r.session; for (const id of r.iterationIds) if (!ids.includes(id)) ids.push(id); precedenceRec = { sites: r.sites, resumed: r.iterationIds.length > 0 }; } }
     let namedRec: NamedSitesRecord | null = null; // R2 LOKI_E10_NAMED_SITES: every named site changed or explained; one "-ns" resume for any that is neither, seal judges the final diff
-    if (patch?.status !== "green" && !signal.aborted && !session.killed && session.exit === 0 && session.markers.done && !session.markers.specConflict && !session.markers.alreadyDone && !treeIsEmpty(ctx)) { const r = await resumeForNamedSites(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session, task); session = r.session; for (const id of r.iterationIds) if (!ids.includes(id)) ids.push(id); namedRec = r.record; }
-    if (scratch && proofRerunOn() && !existsSync(join(scratch.dir, PROOF_SCRIPT)) && !signal.aborted && !session.killed && session.exit === 0 && !session.markers.specConflict && !session.markers.alreadyDone && !treeIsEmpty(ctx)) { // PROOF SCRIPT: the session ran the product by hand but left nothing Loki can re-run; one resume asks for the script, the session's own verdict and reply stay
+    if (!thin && patch?.status !== "green" && !signal.aborted && !session.killed && session.exit === 0 && session.markers.done && !session.markers.specConflict && !session.markers.alreadyDone && !treeIsEmpty(ctx)) { const r = await resumeForNamedSites(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session, task); session = r.session; for (const id of r.iterationIds) if (!ids.includes(id)) ids.push(id); namedRec = r.record; }
+    if (!thin && scratch && proofRerunOn() && !existsSync(join(scratch.dir, PROOF_SCRIPT)) && !signal.aborted && !session.killed && session.exit === 0 && !session.markers.specConflict && !session.markers.alreadyDone && !treeIsEmpty(ctx)) { // PROOF SCRIPT: the session ran the product by hand but left nothing Loki can re-run; one resume asks for the script, the session's own verdict and reply stay
       const r = await resumeForProofScript(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session, `Loki found no proof script at $LOKI_SCRATCH/loki-proof.sh, so nothing you ran can count toward the label. Write it now from the commands you already ran in this session. ${PROOF_SCRIPT_LINE} Do not change the product code in this turn unless the script shows a real failure. When it passes, leave it in place and end with the same finish line as before.`);
       if (r.iterationId !== ids[ids.length - 1]) ids.push(r.iterationId);
       if (r.session.summary) session = { ...session, summary: `${session.summary ?? ""}\n\n[proof script turn]\n${r.session.summary}` };
@@ -357,8 +477,8 @@ export const implementStage: Stage = {
       if (modelReviewRan(xr)) { noteFollow(xr, earlier, found, tree); reviewFollow.push({ round: proofRounds.length + 1, level: xr.level, findings: found.length }); }
     };
     // The one hand-back resume: the review's findings and any unmet acceptance lines together; true when the session was resumed and the proof must run again.
-    const handBackTurn = async (found: string[], unmetText: string, round: number): Promise<boolean> => {
-      const text = combinedHandBack(found, unmetText); if (!text) return false;
+    const handBackTurn = async (found: string[], unmetText: string, round: number, given?: string): Promise<boolean> => { // given: the thin route's own text (thinHandBack)
+      const text = given ?? combinedHandBack(found, unmetText); if (!text) return false;
       const r3 = await resumeForProofScript(ctx, { ...unchained(), iterationId: ids[ids.length - 1]! }, session, text);
       if (r3.iterationId !== ids[ids.length - 1]) ids.push(r3.iterationId); else return false;
       if (found.length) { handBacks++; pendingFollow = true; }
@@ -368,7 +488,12 @@ export const implementStage: Stage = {
     };
     const reviewRound = async (tree: string): Promise<boolean> => { const f = await reviewFound(tree); return handBackTurn(mayHandBack({ handBacks, max: followMax() }) ? f : [], "", 0); }; // the later call sites (turns used up, no unmet line): nothing when the review already ran
     const handedGaps = new Set<number>(), disputes: { line: string; reason: string; round: number }[] = []; // a reviewer gap on a line with a passing check is handed back once per line
-    for (let round = 0; (noBudget ? proofStill < noProgressRounds() : proofFails < proofLoopMax()) && scratch && proofRerunOn() && existsSync(join(scratch.dir, PROOF_SCRIPT)) && !signal.aborted && !session.killed && session.exit === 0 && !session.markers.specConflict && !session.markers.alreadyDone; round++) {
+    let thinRec: ThinProofResult | null = null; // THIN-WRAP T1 to T7 in place of the proof loop; the loop below is unchanged for every other route
+    if (thin) thinRec = scratch && !signal.aborted && !session.killed && session.exit === 0 && !session.markers.specConflict && !session.markers.alreadyDone && !treeIsEmpty(ctx)
+      ? await thinProof(ctx, signal, { scratch, issue: task, cardLine: card?.line ?? null, knownText: known?.text ?? null, ...(roleModel("test") || !implModel ? {} : { model: implModel }), ...(card?.pathAppend.length ? { pathAppend: card.pathAppend } : {}), limitS: implementStage.limitS, proofRounds,
+          review: reviewFound, mayHand: () => mayHandBack({ handBacks, max: followMax() }), author: (found, failing, text) => handBackTurn(found, failing, 0, text), reply: () => session.summary ?? "" })
+      : thinNotRun(session.killed ? "the implement session was stopped" : session.exit !== 0 ? "the implement session did not end cleanly" : session.markers.specConflict ? "the implement session ended with a spec conflict" : session.markers.alreadyDone ? "the implement session said the work was already done" : "the change is empty");
+    else for (let round = 0; (noBudget ? proofStill < noProgressRounds() : proofFails < proofLoopMax()) && scratch && proofRerunOn() && existsSync(join(scratch.dir, PROOF_SCRIPT)) && !signal.aborted && !session.killed && session.exit === 0 && !session.markers.specConflict && !session.markers.alreadyDone; round++) {
       if (!keepProofScript(scratch.dir, ctx.runDir)) break;
       const pr = await rerunProof(ctx.repoDir, ctx.runDir, signal); if (!pr) break;
       const pb = pr.exit === 0 && pr.failed === 0 ? await proofOnBase(ctx.repoDir, ctx.runDir, ctx.baseSha, pr, signal) : null; // PROVES THE CHANGE: the same script against the base commit; a check that also passes there proves nothing about this change (proof_rerun.ts proofOnBase)
@@ -407,7 +532,7 @@ export const implementStage: Stage = {
     }
     const preReviewReply = session.summary ?? ""; // the implement session's own last reply, with its per-item proof list; the review turn below replaces session.summary with its checklist answers
     let selfReview: Record<string, unknown> | null = null; // SR LOKI_E10_SELF_REVIEW: deterministic pre-delivery checks, then at most one bounded "-rv" review resume
-    { const mode = selfReviewMode(); if (mode !== "off" && ctx.baseSha && !signal.aborted && !session.killed && session.exit === 0 && session.markers.done && !session.markers.specConflict && !session.markers.alreadyDone && !treeIsEmpty(ctx)) {
+    { const mode = selfReviewMode(); if (mode !== "off" && !thin && ctx.baseSha && !signal.aborted && !session.killed && session.exit === 0 && session.markers.done && !session.markers.specConflict && !session.markers.alreadyDone && !treeIsEmpty(ctx)) {
       const before = selfReviewChecks(ctx.repoDir, ctx.baseSha, treeStaged(ctx.repoDir, ctx.baseSha), task, ctx.outputs(), process.env, ctx.runDir);
       let after: ReviewItem[] | null = null, reply: string | null = null, turn: string | null = null;
       let guard: TurnGuardRecord | null = null, finish: FinishRecord | null = null;
@@ -416,7 +541,7 @@ export const implementStage: Stage = {
     } }
     const refsRemoved = ctx.baseSha && !signal.aborted && !session.killed && session.exit === 0 && session.markers.done ? stripInventedReleaseRefs(ctx.repoDir, ctx.baseSha, treeStaged(ctx.repoDir, ctx.baseSha), task) : []; // CR: a reference the task never gives never ships, whatever the model wrote
     const pinnedUpdates = pinnedTestUpdateEnabled() && ctx.baseSha ? pinnedTestUpdates(ctx.repoDir, ctx.baseSha, session.summary ?? "", task) : []; // Z2: the UPDATED TEST lines of the final reply, each checked against base, head and the task
-    if (process.env.LOKI_E10_REPRO === "1" && !plan && !signal.aborted && !session.killed && session.exit === 0) { let bad: { name: string; why: string }[] = []; try { bad = outOfRepoTests(ctx.repoDir, changedFiles(ctx.repoDir, ctx.baseSha, installOwned(ctx.repoDir, ctx.outputs().intake?.install_created))); } catch { /* unreadable tree: no re-ask */ } if (bad.length) { const redo = `${first.iterationId}-oor`; ids.push(redo); session = await ctx.sessions.run({ ...unchained(), brief: withStagePrefix(outOfRepoReask("Rewrite these new test files in place, keeping the same names and what they reproduce.", bad)), iterationId: redo }); } } // TEN-QUALITY-44: the repro test gets the Wall's out-of-repo check and one re-ask
+    if (process.env.LOKI_E10_REPRO === "1" && !plan && !thin && !signal.aborted && !session.killed && session.exit === 0) { let bad: { name: string; why: string }[] = []; try { bad = outOfRepoTests(ctx.repoDir, changedFiles(ctx.repoDir, ctx.baseSha, installOwned(ctx.repoDir, ctx.outputs().intake?.install_created))); } catch { /* unreadable tree: no re-ask */ } if (bad.length) { const redo = `${first.iterationId}-oor`; ids.push(redo); session = await ctx.sessions.run({ ...unchained(), brief: withStagePrefix(outOfRepoReask("Rewrite these new test files in place, keeping the same names and what they reproduce.", bad)), iterationId: redo }); } } // TEN-QUALITY-44: the repro test gets the Wall's out-of-repo check and one re-ask
     const testsReverted = restoreReadOnly(readOnly);
     const tournament = tournamentEnabled() && !plan ? await runTournamentGate(ctx, signal, session, attemptDeps(ctx, 0, "", 0)) : undefined; // after the Wall files are restored, so candidates are checked against the original Wall and tests; LOKI_E10_TOURNAMENT (Go, lean path, on by default but inert without an exec-spec probe block; =0 opts out): features/tournament.ts
     const overlap = !plan && nrdOverlapOn(); if (overlap) startNrdGate(ctx, signal, session, readOnly.map((f) => relative(ctx.repoDir, f.path))); // SPEED-NRD-OVERLAP: verify (or seal) settles it
@@ -428,10 +553,11 @@ export const implementStage: Stage = {
       if (needsClosingRead({ reviewRan: true, tree: endTree, reviewedTree }) && endTree && !signal.aborted && !session.killed) await closingRead(endTree);
       const final = lastRead as { level: string; findings: number; follow: boolean; still_open: string[] | null; tree: string; read: ReviewRead };
       reviewState = { level: final.level, findings: final.findings, follow: final.follow, still_open: final.still_open, changed_unread: !!endTree && endTree !== reviewedTree, tree: final.tree, read: final.read }; // SEAL-REUSE (#702, #691): the tree the last read saw and what it said, so seal can reuse a block read of the sealed tree
+      if (thinRec?.still_open) reviewState = { ...reviewState, still_open: thinRec.still_open, changed_unread: false }; // THIN-WRAP T6: the fix turn was undone, so every finding handed back to it is still open (closure.ts reviewHolds)
     }
     const iterationId = ids[ids.length - 1]!;
     // E-68 classifies exit codes; a non-killed, marker-less non-zero exit is an error, never "done".
-    if (scratch) keepProofScript(scratch.dir, ctx.runDir); // the session's proof script leaves the scratch before it is removed; seal re-runs it
+    if (scratch && !thin) keepProofScript(scratch.dir, ctx.runDir); // THIN-WRAP: Loki already holds the prover's copy; the session's proof script leaves the scratch before it is removed; seal re-runs it
     const scratchRec = scratch ? cleanupSessionScratch(scratch) : null; // RUN-SCRATCH: implement and its resumes have ended; stop what is left and remove the directory
     if (scratchRec && (scratchRec.stopped.length || scratchRec.left.length || !scratchRec.removed)) ctx.emit("scratch.cleanup", "implement", { when: "after the implement session", stopped: scratchRec.stopped, left: scratchRec.left, removed: scratchRec.removed, ...(scratchRec.kept ? { kept: scratchRec.kept } : {}) }); // Q1 SCRATCH-FINAL: the event on a normal run too; the receipt entry below
     let exit: ImplementExit | "error";
@@ -459,7 +585,7 @@ export const implementStage: Stage = {
       impacted_tests: impacted, ...(known ? { repo_card: known.record } : {}), ...(plan && planHintsOn() ? { plan_hints: true } : {}), brief_files: bc.files, ...(bc.pack ? { context_pack: bc.pack } : {}), // L022: the exact files the brief named; L021: pack paths and line ranges
       cascade,
       ...(downgrade ? { model_downgrade: downgrade.note } : {}),
-      iteration_ids: earlyReviewCost || followCosts.length ? [...ids, ...(earlyReviewCost ? [earlyReviewCost] : []), ...followCosts] : ids, model: rt ? rt.current : downgrade?.to ?? firstAttemptModel ?? devPin ?? ctx.model, ...(rt ? { route_model: rt.current, route_escalations: rt.escalations } : {}), session_id: readSessionId(ctx.repoDir, iterationId), // MW-2
+      iteration_ids: earlyReviewCost || followCosts.length || thinRec?.proof_author.iteration_ids.length ? [...ids, ...(thinRec?.proof_author.iteration_ids ?? []), ...(earlyReviewCost ? [earlyReviewCost] : []), ...followCosts] : ids, // THIN-WRAP: the prover sessions are in the receipt's cost, never in ids (the author's resume chain) model: rt ? rt.current : downgrade?.to ?? firstAttemptModel ?? devPin ?? ctx.model, ...(rt ? { route_model: rt.current, route_escalations: rt.escalations } : {}), session_id: readSessionId(ctx.repoDir, iterationId), // MW-2
       duration_s: session.durationS, ...(session.exit === MAX_TURNS_EXIT && !session.killed ? { stop_cause: "max_turns", owner: "harness", limit_s: implementStage.limitS, elapsed_s: session.durationS, ...(capStopOf(session.summary) ? { session_cap: capStopOf(session.summary) } : {}) } : {}),
       ...(planChainMode ? { plan_chain: planChainMode } : {}),
       ...(sessionResume ? { session_resume: sessionResume } : {}),
@@ -468,6 +594,7 @@ export const implementStage: Stage = {
       ...(coverage ? { coverage_resume: coverage } : {}), ...(rankedRemedyRec ? { ranked_remedy: rankedRemedyRec } : {}), ...(precedenceRec ? { precedence_check: precedenceRec } : {}), ...(namedRec ? { named_sites: namedRec } : {}), ...(memDir && memText ? { task_memory: { bytes: Buffer.byteLength(memText), sha256: sha256(memText) } } : {}), ...(pinConflict ? { pin_conflict: pinConflict } : {}), ...(pinnedUpdates.length ? { pinned_test_updates: pinnedUpdates } : {}), ...(claimAbsent ? { claim_absent: claimAbsent } : {}),
       ...(patch ? { patch: { status: patch.status, seconds: Math.round(patchS * 10) / 10, calls: patch.calls, applied: patch.applied, refused: patch.refused, restored: patch.restored, usd: patch.usd, log: patch.log, ...(patch.check ? { check: patch.check } : {}) } } : {}),
       ...(tournament ? { tournament } : {}),
+      ...(thin ? { thin: true, proof_author: thinRec?.proof_author ?? thinNotRun("not reached").proof_author, ...(thinRec?.fix_turn ? { fix_turn: thinRec.fix_turn } : {}) } : {}), // THIN-WRAP (#712): seal reads proof_author (proof_rerun.ts noOwnProofNotes)
       ...(noRegression ? { no_regression: noRegression } : {}),
       ...(neverStop ? { never_stop: [neverStop] } : {}),
       ...(issueAcceptanceCapOn() && (issueAcceptanceOf(prior.intake).length || issue) && session.summary ? { final_reply: (preReviewReply && preReviewReply !== session.summary ? `${preReviewReply.slice(-12000)}\n\n[then, after the review turn]\n${session.summary.slice(-4000)}` : session.summary.slice(-16000)) } : {}), // Q1 ISSUE-ACCEPTANCE: the final reply the seal's line check reads

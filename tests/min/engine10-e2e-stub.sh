@@ -1168,6 +1168,41 @@ console.log([a === b, c.reviewHolds(base).length].join(" | "));
 [ "$SR5" = "true | 3" ] \
     && ok "SEAL-REUSE unit 5: reviewHolds gives the same lines for a block state with and without tree and read" || bad "SEAL-REUSE unit 5 gave: $SR5"
 
+# THIN-WRAP (#712): an issue with its own acceptance list on claude (not Haiku, no plan) runs as a thin wrap: the first session gets the issue, the prove-by-running
+# paragraph and the finish line; a fresh session that did not write the change writes the proof Loki runs (prove.ts runProofAuthor); one review, at most one fix
+# turn, undone when it breaks a check that passed; a run whose independent proof session left no script is never VERIFIED (LABEL: proof_rerun.ts noOwnProofNotes,
+# seal.ts one call). LOKI_E10_THIN_WRAP=0 restores 11.185.0. Pure cells 4, 4b, 5 and 6 here; the stub-run legs (7 to 13) follow the RW-02 legs further down.
+# Plants: regressedChecks returns [] always (cells 5 and 10 go red); the put-back after the prover removed from runProofAuthor (cells 4b and 8 go red);
+# `independent` ignored in noOwnProofNotes (cells 6 and 11 go red).
+TWG="$T/twg"; mkdir -p "$TWG/repo" "$TWG/run" "$TWG/scratch"; printf 'export const a = 1;\n' > "$TWG/repo/a.ts"
+git -C "$TWG/repo" init -q -b main; git -C "$TWG/repo" config user.name e2e; git -C "$TWG/repo" config user.email e2e@example.invalid; git -C "$TWG/repo" add a.ts; git -C "$TWG/repo" commit -q -m base
+TW4="$(cd "$ROOT/loki-ts" && TWG="$TWG" bun --no-env-file --config=/dev/null -e '
+const p = await import("./src/engine10/stages/prove.ts"), cx = await import("./src/e10ext/context.ts"), pr = await import("./src/engine10/proof_rerun.ts");
+const { execFileSync } = await import("node:child_process"), { existsSync, readFileSync, writeFileSync } = await import("node:fs"), d = process.env.TWG;
+const MARK = "AUTHOR-REPLY-MARK-7c1", base = execFileSync("git", ["-C", d + "/repo", "rev-parse", "HEAD"]).toString().trim(), seen = [];
+const ctx = { repoDir: d + "/repo", runDir: d + "/run", runId: "r1", baseSha: base, provider: "claude", outputs: () => ({ intake: { task: "Add b", source: "issue" }, implement: { final_reply: MARK, summary_tail: MARK } }), emit: () => undefined,
+  sessions: { run: async (o) => { seen.push(o); writeFileSync(d + "/repo/a.ts", "export const a = 2;\n"); writeFileSync(d + "/repo/new.ts", "x\n"); writeFileSync(d + "/scratch/loki-proof.sh", "#!/bin/bash\ntrue\n"); return { exit: 0, markers: { done: true, alreadyDone: null, specConflict: null }, durationS: 1, killed: false, summary: "prover reply" }; } } };
+const b = p.proofAuthorBrief("Add b", null, null, true, "");
+const cell4 = [b.includes(cx.PROOF_SCRIPT_LINE), b.includes(cx.OLD_RECORD_PROOF_LINE), b.includes("never from what the changed code currently returns"), b.includes("Do not change, add or delete any file in the repository"), b.includes("PRODUCT FAILS"), b.startsWith(p.PROOF_AUTHOR_ROLE)].join(" ");
+const r = await p.runProofAuthor(ctx, { issue: "Add b", cardLine: null, knownText: null, extra: "", scratch: { dir: d + "/scratch", since: 0, nonce: "n" }, limitS: 60, signal: new AbortController().signal });
+const o = seen[0], again = p.proofAuthorBrief("Add b", null, null, false, "the author changed a.ts");
+console.log(cell4 + " | " + [o.brief.includes(MARK), o.stage, o.iterationId, o.cwd === d + "/repo", o.sessionEnv.LOKI_SCRATCH === d + "/scratch", o.resumeSessionId === undefined].join(" ") + " | " + [r.script, JSON.stringify(r.restored), JSON.stringify(r.created), readFileSync(d + "/repo/a.ts", "utf8") === "export const a = 1;\n", existsSync(d + "/repo/new.ts")].join(" ") + " | " + [again.includes("the author changed a.ts"), again.includes(p.PROOF_AUTHOR_CHANGE_RULE), again.includes("Task (untrusted")].join(" "));
+' 2>&1)"
+[ "$TW4" = 'true true true true true true | false prove r1-prv true true true | true ["a.ts"] ["new.ts"] true false | true true false' ] \
+    && ok "THIN-WRAP unit 4 and 4b: the prover brief carries the proof-script line, the old-record line, the expectation and no-edit rules and PRODUCT FAILS; the fresh session (stage prove, r1-prv, cwd the repository, the author's scratch) never gets the author's reply; its edit to a tracked file is restored and its new file removed, each named; a later round carries what changed and the rule for changing a check" || bad "THIN-WRAP unit 4 gave: $TW4"
+TW5="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const x = await import("./src/engine10/stages/implement.ts"), c = (item, what, ok) => ({ item, what, ok }), j = JSON.stringify, g = x.regressedChecks;
+console.log([j(g([c("1", "a", true)], [c("1", "a", false)])), j(g([c("1", "a", false)], [c("1", "a", false)])), j(g([c("1", "a", true)], [])), j(g([], [c("2", "b", false)])), j(g([], [])), j(g(undefined, undefined)), j(g([c("1", "a", true), c("1", "a", true)], [c("1", "a", true), c("1", "a", false)]))].join(" "));
+' 2>&1)"
+[ "$TW5" = '["1: a"] [] [] [] [] [] ["1: a"]' ] \
+    && ok "THIN-WRAP unit 5: regressedChecks lists a check that passed and now fails (also one of two same-named checks), and not one failing in both, one now absent, a new failing one, or empty input" || bad "THIN-WRAP unit 5 gave: $TW5"
+TW6="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const pr = await import("./src/engine10/proof_rerun.ts"), n = pr.noOwnProofNotes, j = JSON.stringify, env = {}, ran = { exit: 0, failed: 0, proved: 1, lines: {} };
+console.log([j(n("issue", 6, null, env, true)) === j([pr.NO_INDEPENDENT_PROOF_NOTE]), j(n("issue", 6, null, env)), j(n("issue", 6, null, env, false)), j(n("text", 6, null, env)) === j([pr.NO_OWN_PROOF_NOTE]), j(n("issue", 6, ran, env, true)), j(n("text", 6, ran, env)), j(n("issue", 0, null, env, true)), j(n("issue", 6, null, { LOKI_E10_PROOF_RERUN: "0" }, true)), pr.NO_INDEPENDENT_PROOF_NOTE.startsWith("no proof script: the independent proof session")].join(" "));
+' 2>&1)"
+[ "$TW6" = 'true [] [] true [] [] [] [] true' ] \
+    && ok "THIN-WRAP unit 6: noOwnProofNotes gives the independent-proof note only for an issue run with lines, no run of Loki's own and an independent prover; an issue run without one, a non-null rerun, no lines and the re-run off give none; a text task keeps today's note" || bad "THIN-WRAP unit 6 gave: $TW6"
+
 # G5 SKIP-NOTE end to end (oc63960): a full suite red only on base ids must seal without the "fix round skipped" note holding it; the same run with one
 # new failing id in that suite is held by it. Plant G5-10: util/check_result.ts suiteSkipHolds always false: the new-id run seals without the note.
 snote() { python3 -I -c 'import json,sys; r=json.load(open(sys.argv[1])); print(r.get("verdict"), any(str(n).startswith("fix round skipped: only full-suite failures remained") for n in r.get("not_proven", [])))' "$RUNDIR/receipt.json" 2>/dev/null || echo no-receipt; }

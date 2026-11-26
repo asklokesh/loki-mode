@@ -807,6 +807,34 @@ else
     bad "e2e Loki default model: no run events"; printf '%s\n' "$OUT" | tail -30 | sed 's/^/    | /'
 fi
 
+# THIN-BRIEF (#712): an issue with its own acceptance list, on claude, not Haiku, no plan, gets the thin first brief (implement.ts picks thinImplementBrief when
+# thinRoute holds, buildImplementBrief otherwise). Cell 1: the route's truth table. Cell 2: the thin brief is the four parts in order and nothing else. Cell 3: the
+# brief the other routes get is the 11.185.0 text saved under tests/min/fixtures/thin-wrap/ byte for byte (written from origin/main 05ba77321 before this lane).
+# Plants: thinRoute true for Haiku (cell 1 goes red); PROOF_SCRIPT_LINE added to thinImplementBrief (cell 2 goes red).
+TB1="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const cx = await import("./src/e10ext/context.ts"), r = cx.thinRoute;
+console.log([r("claude", "issue", 6, null, "sonnet", {}), r("claude", "issue", 6, null, undefined, {}), r("claude", "issue", 6, null, "haiku", {}), r("claude", "issue", 0, null, "sonnet", {}), r("claude", "text", 6, null, "sonnet", {}), r("claude", "issue", 6, "1. a plan", "sonnet", {}), r("opencode", "issue", 6, null, "sonnet", {}), r("claude", "issue", 6, null, "sonnet", { LOKI_E10_THIN_WRAP: "0" }), r("claude", "issue", 6, null, "sonnet", { LOKI_E10_PROVE_BY_RUNNING: "0" })].join(" "));
+' 2>&1)"
+[ "$TB1" = "true true false false false false false false false" ] \
+    && ok "THIN-BRIEF unit 1: thinRoute is true for an issue with lines on claude with Sonnet or no named model, and false for Haiku, no lines, a text task, a plan, opencode, LOKI_E10_THIN_WRAP=0 and LOKI_E10_PROVE_BY_RUNNING=0" || bad "THIN-BRIEF unit 1 gave: $TB1"
+TB2="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const cx = await import("./src/e10ext/context.ts"), ty = await import("./src/engine10/types.ts");
+const task = ("Add a report page that lists each invoice with its total. " + "x".repeat(1846)).slice(0, 1846), q = ty.taskBlock(task).join("\n\n"), card = "Server programs this repository needs that are not on PATH: none.";
+const b = cx.thinImplementBrief(q, card), none = cx.thinImplementBrief(q, null);
+const banned = ["You are Loki", "Put your proof in one script", "Relevant files:", "What Loki already knows", "compare every field of that record"];
+console.log([task.length, b === [q, cx.PROVE_BY_RUNNING_BLOCK, card, cx.ISSUE_FINISH_LINE].join("\n\n"), none === [q, cx.PROVE_BY_RUNNING_BLOCK, cx.ISSUE_FINISH_LINE].join("\n\n"), b.startsWith("Task (untrusted, quoted verbatim):\n\n<<<TASK\n\n"), b.endsWith(cx.ISSUE_FINISH_LINE), banned.filter((k) => b.includes(k)).length, b.length < task.length + 2400].join(" "));
+' 2>&1)"
+[ "$TB2" = "1846 true true true true 0 true" ] \
+    && ok "THIN-BRIEF unit 2: the thin brief is the quoted task, the prove-by-running paragraph, the card line and the finish line in that order, holds no stage prefix, proof-script line, file list, repository card or old-record line, and adds under 2,400 characters to a 1,846-character task" || bad "THIN-BRIEF unit 2 gave: $TB2"
+TB3="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const { readFileSync } = await import("node:fs"), dir = "../tests/min/fixtures/thin-wrap", g = await import(dir + "/gen-briefs.ts"), cx = await import("./src/e10ext/context.ts");
+const same = Object.keys(g.briefs).map((f) => g.briefs[f]() === readFileSync(dir + "/" + f, "utf8") ? "same" : "differs:" + f);
+const r = (o) => cx.thinRoute("claude", o.source ?? "issue", 2, o.plan ?? null, o.model ?? "sonnet", o.env ?? {});
+console.log([...same, "off:" + r({ env: { LOKI_E10_THIN_WRAP: "0" } }), "text:" + r({ source: "text", env: { LOKI_E10_WORK_ROAD: "1" } }), "haiku:" + r({ model: "haiku" }), "plan:" + r({ plan: "1. add multiply beside add in calc.ts" }), "on:" + r({})].join(" "));
+' 2>&1)"
+[ "$TB3" = "same same same off:false text:false haiku:false plan:false on:true" ] \
+    && ok "THIN-BRIEF unit 3: the issue, text-task and planned issue briefs buildImplementBrief gives are the 11.185.0 text byte for byte, and the route sends them (not the thin brief) with LOKI_E10_THIN_WRAP=0, for a text task, a Haiku run and a run with a plan" || bad "THIN-BRIEF unit 3 gave: $TB3"
+
 prep_changeset() { # a public package that keeps changesets (the fixture's own manifest is private)
     mkdir -p "$1/.changeset"
     printf '{ "name": "billing", "type": "module" }\n' > "$1/package.json"
