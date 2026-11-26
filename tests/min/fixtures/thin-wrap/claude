@@ -1,0 +1,49 @@
+#!/bin/bash
+# THIN-WRAP stub (tests/min/engine10-e2e-stub.sh, cells 7 to 13). The e2e stub (tests/min/fixtures/e2e/bin/claude) tells a stage by its prompt text; the thin
+# route's first brief and the prover's brief carry none of the phrases it matches, so this wrapper answers the sessions of the thin route by LOKI_E10_STAGE and
+# LOKI_ITERATION and passes every other call (reviews, line checks, version and auth probes) to the e2e stub unchanged. Settings, all optional, in $TW_CFG:
+#   first        the first implement session's change: right (default) or wrong (multiply returns a + b)
+#   author.sh    the first session also leaves this as its own $LOKI_SCRATCH/loki-proof.sh (cell 11: it must never count)
+#   proof.sh     the prover's first round leaves this as $LOKI_SCRATCH/loki-proof.sh; absent: the prover leaves no script
+#   proof2.sh    the prover's resume leaves this instead (absent: the script is left as it is)
+#   prover_edit  the prover edits calc.ts and creates prover-made.txt in the repository (cell 8: both are put back)
+#   fix          the author's one fix turn: fixit (multiply returns a * b), break (renames multiply, adds the docs line), none (default: changes nothing)
+# TW_LOG gets "<LOKI_ITERATION> <kind>" for every -p call this wrapper answers or passes on; TW_PROMPTS gets each prompt as <dir>/<LOKI_ITERATION>.
+real="$(cd "$(dirname "${BASH_SOURCE[0]}")/../e2e/bin" && pwd -P)/claude"
+case " $* " in *" -p "*) ;; *) exec "$real" "$@" ;; esac
+prompt=""; prev=""; for a in "$@"; do [ "$prev" = "-p" ] && prompt="$a"; prev="$a"; done
+it="${LOKI_ITERATION:-none}"; st="${LOKI_E10_STAGE:-none}"; cfg="${TW_CFG:-/nonexistent}"
+[ -n "${TW_PROMPTS:-}" ] && { mkdir -p "$TW_PROMPTS"; printf '%s\n' "$prompt" > "$TW_PROMPTS/$it"; }
+logit() { [ -n "${TW_LOG:-}" ] && echo "$it $1" >> "$TW_LOG"; return 0; }
+mult() { printf '\nexport function multiply(a: number, b: number): number {\n  return a %s b;\n}\n' "$1" >> calc.ts; }
+if [ "$st" = prove ]; then
+  case "$it" in
+    *-prv) logit prover
+      [ -f "$cfg/proof.sh" ] && [ -n "${LOKI_SCRATCH:-}" ] && cp "$cfg/proof.sh" "$LOKI_SCRATCH/loki-proof.sh"
+      if [ -f "$cfg/prover_edit" ]; then printf '// prover was here\n' >> calc.ts; printf 'made by the prover\n' > prover-made.txt; fi ;;
+    *-prv-r) logit prover-resume
+      [ -f "$cfg/proof2.sh" ] && [ -n "${LOKI_SCRATCH:-}" ] && cp "$cfg/proof2.sh" "$LOKI_SCRATCH/loki-proof.sh" ;;
+    *) logit prove-other; exec "$real" "$@" ;;
+  esac
+  echo "LOKI_DONE"; exit 0
+fi
+if [ "$st" = implement ]; then
+  case "$it" in
+    *-impl)
+      case "$prompt" in "Task (untrusted, quoted verbatim):"*) ;; *) logit implement-other; exec "$real" "$@" ;; esac
+      logit author
+      if [ "$(cat "$cfg/first" 2>/dev/null)" = wrong ]; then mult '+'; else mult '*'; fi
+      [ -f "$cfg/author.sh" ] && [ -n "${LOKI_SCRATCH:-}" ] && cp "$cfg/author.sh" "$LOKI_SCRATCH/loki-proof.sh"
+      echo "LOKI_DONE"; exit 0 ;;
+    *-impl-pf)
+      case "$prompt" in *"CHECK WRONG <item number>"*) ;; *) logit implement-other; exec "$real" "$@" ;; esac # only the thin route's fix turn carries this line
+      logit author-fix
+      case "$(cat "$cfg/fix" 2>/dev/null)" in
+        fixit) python3 -I -c 's=open("calc.ts").read(); i=s.rfind("return a + b;"); open("calc.ts","w").write(s[:i]+"return a * b;"+s[i+13:])' ;;
+        break) python3 -I -c 's=open("calc.ts").read(); open("calc.ts","w").write(s.replace("export function multiply", "export function times") + "// multiply-docs\n")' ;;
+      esac
+      echo "LOKI_DONE"; exit 0 ;;
+  esac
+fi
+logit "pass:$st"
+exec "$real" "$@"

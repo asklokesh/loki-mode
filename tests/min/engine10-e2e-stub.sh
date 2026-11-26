@@ -2615,11 +2615,11 @@ case "$RWF" in *" road=text source=text lines=0 receipt=none own=0 reruns=no nos
 rw_engine off "$RWD/list.md" LOKI_E10_ONE_ROAD=0; RWF="$(rw_facts)"
 [ "$RWF" = "VERIFIED road=text source=text lines=0 receipt=none own=0 reruns=no noscript=no plan=skipped src=None cap=none" ] && ok "RW-02 off: LOKI_E10_ONE_ROAD=0 keeps a text task on the plain road" || bad "RW-02 off gave: $RWF"
 rw_proof 'grep -q "export function multiply" calc.ts' 'grep -q "export function multiply" calc.ts'
-rw_engine json-file "$RWD/prose.md" LOKI_E10_ISSUE_JSON="$RWD/issue.json"; RWF="$(rw_facts)"
+rw_engine json-file "$RWD/prose.md" LOKI_E10_ISSUE_JSON="$RWD/issue.json" LOKI_E10_THIN_WRAP=0; RWF="$(rw_facts)" # THIN-WRAP: this leg pins the 11.185.0 issue route (its stub writes the proof in the author session)
 # STAGE-A (not yet run): expected string derived by reading the code on 2026-11-22. R2-5: the proof script only reads calc.ts (a change to code), so the run reads PARTIAL.
 [ "$RWF" = "PARTIAL road=issue source=issue lines=2 receipt=met,met own=2 reruns=yes noscript=no plan=skipped src=issue cap=2400" ] \
     && ok "RW-02 issue json: LOKI_E10_ISSUE_JSON beside a positional file gives the issue's two lines, the issue cap rule, and PARTIAL on Loki's own run (the script only reads calc.ts)" || bad "RW-02 issue json (file) gave: $RWF"
-rw_engine json-short "add multiply to calc.ts" LOKI_E10_ISSUE_JSON="$RWD/issue.json"; RWF="$(rw_facts)"
+rw_engine json-short "add multiply to calc.ts" LOKI_E10_ISSUE_JSON="$RWD/issue.json" LOKI_E10_THIN_WRAP=0; RWF="$(rw_facts)" # THIN-WRAP: this leg pins the 11.185.0 issue route (its stub writes the proof in the author session)
 # STAGE-A (not yet run): expected string derived by reading the code on 2026-11-22. R2-5: the proof script only reads calc.ts (a change to code), so the run reads PARTIAL.
 [ "$RWF" = "PARTIAL road=issue source=issue lines=2 receipt=met,met own=2 reruns=yes noscript=no plan=skipped src=issue cap=2400" ] \
     && ok "RW-02 issue json: the same with a short positional task" || bad "RW-02 issue json (short) gave: $RWF"
@@ -2651,6 +2651,106 @@ RW_REUSE="$RWDIR" rw_engine resume2 "$RWD/list.md" E2E_STUB_LIMIT=implement E2E_
     && ok "RW-02 resume: a road run cut in implement and started again resumes the same run on the road and is PARTIAL on Loki's own count (the script only reads calc.ts)" || bad "RW-02 resume gave: cut '$RWCUT', runs $(ls "$RWDIR"/repo/.loki/runs 2>/dev/null | wc -l | tr -d ' '), $RWF ($(grep -E '^(Outcome|Reason|engine10:)' <<< "$RWOUT" | tr '\n' ' ' | cut -c1-500))"
 rw_proof -
 # ---- end RW-02 ----
+# ---- THIN-WRAP stub-run legs (#712; the pure cells sit beside SEAL-REUSE) ------------------------------------------------------------------------------------
+# An issue (LOKI_E10_ISSUE_JSON, two acceptance lines) on the stub provider through the committed bundle. tests/min/fixtures/thin-wrap/claude answers the thin
+# route's sessions by LOKI_E10_STAGE and LOKI_ITERATION (the e2e stub matches neither brief) and logs "<iteration> <kind>" per call; every other call goes to
+# the e2e stub. The proof scripts read calc.ts only, so no leg here reaches VERIFIED on its checks (R2-5, as in RW-02); the legs read the route, not the label,
+# except cell 11, whose label is the point.
+TWD="$T/thinwrap"; mkdir -p "$TWD"
+tw_cfg() { rm -rf "$TWD/cfg"; mkdir -p "$TWD/cfg"; } # a clean set of wrapper settings for the next leg
+tw_script() { # tw_script <file> <check for item 1> <check for item 2>: a proof script in the shape loki-check.sh expects
+    printf '#!/bin/bash\n. "$LOKI_SCRATCH/loki-check.sh"\nloki_cmd 1 "item one" %s\nloki_cmd 2 "item two" %s\n' "$2" "$3" > "$TWD/cfg/$1"
+}
+tw_engine() { # tw_engine <name> [VAR=value...] [-- <extra loki flags>] -> TWDIR, TWRUN, TWOUT, TWSESS (the wrapper's kinds in call order, reviews and checks left out)
+    local name="$1" d; shift; local flags=()
+    d="$(mktemp -d "$T/tw.$name.XXXXXX")"; cp -R "$FIX/repo" "$d/repo"
+    git -C "$d/repo" init -q -b main; git -C "$d/repo" config user.name e2e; git -C "$d/repo" config user.email e2e@example.invalid
+    git -C "$d/repo" add calc.ts calc.test.ts bunfig.toml; git -C "$d/repo" commit -q -m base
+    local envs=(); while [ $# -gt 0 ]; do if [ "$1" = "--" ]; then shift; flags=("$@"); break; fi; envs+=("$1"); shift; done
+    TWDIR="$d"
+    TWOUT="$(cd "$d/repo" && env -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY -u LOKI_E10_WORK_ROAD -u LOKI_E10_THIN_WRAP LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$ROOT/tests/min/fixtures/thin-wrap/claude" PATH="$FIX/bin:$PATH" \
+        E2E_STUB_MODE=done E2E_STUB_LOG="$d/stub.log" E2E_STUB_LINECHECK_FILE="$RWD/met.txt" LOKI_RECEIPT_SIGNING_KEY_FILE="$d/k.pem" LOKI_E10_ISSUE_JSON="$RWD/issue.json" \
+        TW_CFG="$TWD/cfg" TW_LOG="$d/tw.log" TW_PROMPTS="$d/prompts" ${envs[@]+"${envs[@]}"} \
+        ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" start "$RWD/prose.md" --no-pr ${flags[@]+"${flags[@]}"} </dev/null 2>&1)"
+    TWRUN="$(dirname "$(ls "$d"/repo/.loki/runs/*/events.jsonl 2>/dev/null | head -1)")"
+    TWSESS="$(grep -vE ' pass:' "$d/tw.log" 2>/dev/null | awk '{print $2}' | tr '\n' ' ')"
+    echo "    thin-wrap $name: $(tr '\n' ',' < "$d/tw.log" 2>/dev/null)"
+}
+tw_facts() { python3 -I - "$TWRUN" "$TWDIR" <<'TWPY'
+import json, os, subprocess, sys
+rd, d = sys.argv[1], sys.argv[2]
+try: ev = [json.loads(l) for l in open(os.path.join(rd, "events.jsonl"))]
+except Exception: print("no events"); sys.exit(0)
+try: r = json.load(open(os.path.join(rd, "receipt.json")))
+except Exception: r = {}
+impl = next((e["data"] for e in ev if e["type"] == "stage.completed" and e.get("stage") == "implement"), {})
+pa = impl.get("proof_author") or {}
+ft = impl.get("fix_turn") or {}
+brief = open(os.path.join(rd, "implement-brief.txt")).read() if os.path.exists(os.path.join(rd, "implement-brief.txt")) else ""
+diff = subprocess.run(["git", "-C", os.path.join(d, "repo"), "log", "--all", "-p", "--format="], capture_output=True, text=True).stdout
+kinds = [h.get("kind") for h in r.get("held_by") or []]
+print(" ".join([
+    str(r.get("verdict")), "thin=" + str(impl.get("thin", False)).lower(), "exit=" + str(impl.get("exit")), "pa=" + str(pa.get("status", "none")).replace(" ", "_"), "rounds=" + str(pa.get("rounds", 0)),
+    "restored=" + ",".join(pa.get("restored") or []), "created=" + ",".join(pa.get("created") or []), "undone=" + str(ft.get("undone", "none")).lower(),
+    "early=" + str(sum(1 for e in ev if e["type"] == "review.early")), "reruns=" + str(sum(1 for e in ev if e["type"] == "proof.rerun")),
+    "last=" + next((str(e["data"].get("exit")) + "/" + str(e["data"].get("failed")) for e in reversed(ev) if e["type"] == "proof.rerun"), "none"),
+    "judge=" + str(r.get("issue_acceptance_judge")).replace(" ", "_"), "rerun=" + ("yes" if r.get("proof_rerun") else "no"),
+    "noindep=" + ("yes" if any(str(n).startswith("no proof script: the independent proof session") for n in r.get("not_proven", [])) else "no"),
+    "open=" + ("yes" if "review open" in kinds else "no"), "brief=" + ("thin" if brief.startswith("Task (untrusted, quoted verbatim):") else "full" if brief.startswith("You are Loki") else "none"),
+    "ids=" + str(len([i for i in impl.get("iteration_ids") or [] if "-prv" in str(i)])),
+    "leak=" + ("yes" if any(k in diff for k in ("prover was here", "made by the prover", "multiply-docs", "function times")) else "no"),
+]))
+TWPY
+}
+# Cell 7, happy path: the change is right and the prover's two checks pass; the reviewer passes. Sessions: the author once and the prover once; one read in the
+# loop (the seal reads again on its own); no -pf, no -rv; Loki's own run of the prover's script is the judge.
+tw_cfg; tw_script proof.sh 'grep -q "return a \\* b" calc.ts' 'grep -q "export function multiply" calc.ts'
+tw_engine happy LOKI_RISK_TIER=medium LOKI_REVIEW_DEFAULT=1 E2E_STUB_REVIEW=PASS; TWF="$(tw_facts)"
+case "$TWF" in *" thin=true exit=done pa=script rounds=1 restored= created= undone=none early=1 reruns=1 last=0/0 judge=count_of_Loki-run_checks rerun=yes noindep=no open=no brief=thin ids=1 leak=no")
+    [ "$TWSESS" = "author prover " ] && ! grep -qE -- '-(rv|pf|c|rr|ns|pr)( |$)' "$TWDIR/tw.log" \
+        && ok "THIN-WRAP stub run 7: the author and the prover once each, one review read in the loop, no -pf or -rv session, the thin brief on file, the prover's script judged by Loki's own run ($TWF)" || bad "THIN-WRAP stub run 7 sessions: '$TWSESS' ($(tr '\n' ',' < "$TWDIR/tw.log"))" ;;
+    *) bad "THIN-WRAP stub run 7 gave: $TWF ($(grep -E '^(Outcome|Reason|engine10:)' <<< "$TWOUT" | tr '\n' ' ' | cut -c1-400))" ;; esac
+# Cell 8: the prover edits a tracked file and creates one; both are put back, named, and absent from what the run committed.
+tw_cfg; tw_script proof.sh 'grep -q "return a \\* b" calc.ts' 'grep -q "export function multiply" calc.ts'; : > "$TWD/cfg/prover_edit"
+tw_engine proveredit; TWF="$(tw_facts)"
+case "$TWF" in *" pa=script rounds=1 restored=calc.ts created=prover-made.txt "*" leak=no") ok "THIN-WRAP stub run 8: the prover's edit to calc.ts is restored and its new file removed, both named in proof_author, and neither is in the committed change" ;;
+    *) bad "THIN-WRAP stub run 8 gave: $TWF" ;; esac
+# Cell 9: the first change is wrong, so one check fails. One author turn (told not to edit the proof), then one prover resume, then a passing run; no second author turn.
+tw_cfg; echo wrong > "$TWD/cfg/first"; echo fixit > "$TWD/cfg/fix"; tw_script proof.sh 'grep -q "return a \\* b" calc.ts' 'grep -q "export function multiply" calc.ts'
+tw_engine failing; TWF="$(tw_facts)"; TWFIX="$(ls "$TWDIR/prompts" 2>/dev/null | grep -- '-impl-pf$' | head -1)"
+case "$TWF" in *" pa=script rounds=2 "*" undone=false "*" reruns=3 last=0/0 "*)
+    [ "$TWSESS" = "author prover author-fix prover-resume " ] && [ -n "$TWFIX" ] && grep -qF 'Do not edit $LOKI_SCRATCH/loki-proof.sh' "$TWDIR/prompts/$TWFIX" && grep -qF 'item one' "$TWDIR/prompts/$TWFIX" \
+        && ok "THIN-WRAP stub run 9: a failing check gives one author turn (its text names the check and says not to edit the proof), then one prover resume, then a passing run of Loki's copy; no second author turn" || bad "THIN-WRAP stub run 9 sessions: '$TWSESS', fix prompt '$TWFIX'" ;;
+    *) bad "THIN-WRAP stub run 9 gave: $TWF (sessions '$TWSESS')" ;; esac
+# Cell 10: the author's one fix turn breaks a check that passed. The turn is undone, fix_turn.undone is true, the finding handed back is still open, and the run is PARTIAL held by review open.
+tw_cfg; echo break > "$TWD/cfg/fix"; tw_script proof.sh 'grep -q "export function multiply" calc.ts' 'grep -q "multiply-docs" calc.ts'
+tw_engine undo LOKI_RISK_TIER=medium LOKI_REVIEW_DEFAULT=1 E2E_STUB_REVIEW=FLAG; TWF="$(tw_facts)"
+case "$TWF" in "PARTIAL thin=true "*" rounds=1 "*" undone=true "*" open=yes "*" leak=no")
+    [ "$TWSESS" = "author prover author-fix " ] && ok "THIN-WRAP stub run 10: a fix turn that breaks a passing check is undone (nothing of it is committed), no prover resume follows, and the run is PARTIAL held by review open" || bad "THIN-WRAP stub run 10 sessions: '$TWSESS'" ;;
+    *) bad "THIN-WRAP stub run 10 gave: $TWF (sessions '$TWSESS')" ;; esac
+# Cell 11: the prover leaves no script while the author leaves its own passing one. The author's script never counts; the run is PARTIAL with the new note and
+# never VERIFIED, and no author turn asks for a script. Plant: noOwnProofNotes ignores `independent` and this leg reads VERIFIED (the line check marks both MET).
+tw_cfg; tw_script author.sh 'true' 'true'
+tw_engine noscript; TWF="$(tw_facts)"
+case "$TWF" in "PARTIAL thin=true exit=done pa=no_script rounds=1 "*" reruns=0 last=none "*" rerun=no noindep=yes "*)
+    [ "$TWSESS" = "author prover " ] && ok "THIN-WRAP stub run 11: the prover left no script, the author's own script is not run, and the run is PARTIAL with the independent-proof note; no author turn asks for a script" || bad "THIN-WRAP stub run 11 sessions: '$TWSESS'" ;;
+    *) bad "THIN-WRAP stub run 11 gave: $TWF (sessions '$TWSESS')" ;; esac
+# Cell 12: LOKI_E10_THIN_WRAP=0 is the 11.185.0 route: the full brief on file, no prover, no thin record. (The RW-02 issue json legs above keep their exact
+# 11.185.0 expectations with the same switch.)
+tw_cfg
+tw_engine off LOKI_E10_THIN_WRAP=0; TWF="$(tw_facts)"
+case "$TWF" in *" thin=false exit=done pa=none rounds=0 "*" brief=full ids=0 "*)
+    ! grep -q ' prover' "$TWDIR/tw.log" && grep -qF 'Put your proof in one script' "$TWRUN/implement-brief.txt" && ok "THIN-WRAP stub run 12: LOKI_E10_THIN_WRAP=0 sends the full 11.185.0 brief with the proof-script line, starts no prover and records no thin route" || bad "THIN-WRAP stub run 12: a prover ran or the brief lacks the proof-script line" ;;
+    *) bad "THIN-WRAP stub run 12 gave: $TWF" ;; esac
+# Cell 13 (part 4): --seal-existing on the issue run puts the patch through the same prover and review; no implement session exists.
+tw_cfg; tw_script proof.sh 'grep -q "return a \\* b" calc.ts' 'grep -q "export function multiply" calc.ts'
+mkdir -p "$TWD/patchsrc"; cp "$FIX/repo/calc.ts" "$TWD/patchsrc/calc.ts"; git -C "$TWD/patchsrc" init -q -b main; git -C "$TWD/patchsrc" add calc.ts
+printf '\nexport function multiply(a: number, b: number): number {\n  return a * b;\n}\n' >> "$TWD/patchsrc/calc.ts"; git -C "$TWD/patchsrc" diff > "$TWD/seal.patch"
+tw_engine sealexisting -- --seal-existing "$TWD/seal.patch"; TWF="$(tw_facts)"
+case "$TWF" in *" thin=true exit=external pa=script rounds=1 "*" rerun=yes "*" ids=1 "*)
+    ! grep -q ' author' "$TWDIR/tw.log" && ok "THIN-WRAP stub run 13: --seal-existing on an issue run sends the patch through the prover and Loki's own run; no author session exists" || bad "THIN-WRAP stub run 13: an author session ran ($TWSESS)" ;;
+    *) bad "THIN-WRAP stub run 13 gave: $TWF (sessions '$TWSESS'; $(grep -E '^(Outcome|Reason|engine10:)' <<< "$TWOUT" | tr '\n' ' ' | cut -c1-300))" ;; esac
+# ---- end THIN-WRAP stub-run legs ----
 
 # ---------------------------------------------------------------- NO-DEFAULT-BUDGET (founder 2026-11-18): Loki sets no time, round, turn, test-count or dollar budget
 # by default; a run ends when it is done or makes no progress, always with a draft PR of what is done. Planted defects (each shown red, then reverted):
