@@ -1196,6 +1196,13 @@ console.log([j(g([c("1", "a", true)], [c("1", "a", false)])), j(g([c("1", "a", f
 ' 2>&1)"
 [ "$TW5" = '["1: a"] [] [] [] [] [] ["1: a"]' ] \
     && ok "THIN-WRAP unit 5: regressedChecks lists a check that passed and now fails (also one of two same-named checks), and not one failing in both, one now absent, a new failing one, or empty input" || bad "THIN-WRAP unit 5 gave: $TW5"
+TW5B="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const x = await import("./src/engine10/stages/implement.ts"), clause = "add a check for it to $LOKI_SCRATCH/loki-proof.sh";
+const r = x.thinHandBack(["x"], ""), f = x.thinHandBack([], "Loki ran the independent proof script by itself"), both = x.thinHandBack(["x"], "fail text");
+console.log([x.combinedHandBack(["x"], "").includes(clause), r.includes(clause), r.endsWith(x.THIN_FIX_LINE), r.includes("Where the reviewer is right, fix the product (and the documentation when the two disagree). Close each finding"), f.endsWith(x.THIN_FIX_LINE), both.includes("fail text"), JSON.stringify(x.thinHandBack([], "")), x.checkWrongLines("a\n CHECK WRONG 2: the check reads the old field\nCHECK WRONG x: no").join("|")].join(" "));
+' 2>&1)"
+[ "$TW5B" = 'true false true true true true "" CHECK WRONG 2: the check reads the old field' ] \
+    && ok "THIN-WRAP unit 5b: the thin hand-back drops the add-a-check sentence from the review paragraph and ends with the do-not-edit-the-proof line, also for failing checks alone; empty stays empty; CHECK WRONG lines are read by number" || bad "THIN-WRAP unit 5b gave: $TW5B"
 TW6="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
 const pr = await import("./src/engine10/proof_rerun.ts"), n = pr.noOwnProofNotes, j = JSON.stringify, env = {}, ran = { exit: 0, failed: 0, proved: 1, lines: {} };
 console.log([j(n("issue", 6, null, env, true)) === j([pr.NO_INDEPENDENT_PROOF_NOTE]), j(n("issue", 6, null, env)), j(n("issue", 6, null, env, false)), j(n("text", 6, null, env)) === j([pr.NO_OWN_PROOF_NOTE]), j(n("issue", 6, ran, env, true)), j(n("text", 6, ran, env)), j(n("issue", 0, null, env, true)), j(n("issue", 6, null, { LOKI_E10_PROOF_RERUN: "0" }, true)), pr.NO_INDEPENDENT_PROOF_NOTE.startsWith("no proof script: the independent proof session")].join(" "));
@@ -2726,7 +2733,8 @@ case "$TWF" in *" pa=script rounds=2 "*" undone=false "*" reruns=3 last=0/0 "*)
 tw_cfg; echo break > "$TWD/cfg/fix"; tw_script proof.sh 'grep -q "export function multiply" calc.ts' 'grep -q "multiply-docs" calc.ts'
 tw_engine undo LOKI_RISK_TIER=medium LOKI_REVIEW_DEFAULT=1 E2E_STUB_REVIEW=FLAG; TWF="$(tw_facts)"
 case "$TWF" in "PARTIAL thin=true "*" rounds=1 "*" undone=true "*" open=yes "*" leak=no")
-    [ "$TWSESS" = "author prover author-fix " ] && ok "THIN-WRAP stub run 10: a fix turn that breaks a passing check is undone (nothing of it is committed), no prover resume follows, and the run is PARTIAL held by review open" || bad "THIN-WRAP stub run 10 sessions: '$TWSESS'" ;;
+    TWFIX="$(ls "$TWDIR/prompts" 2>/dev/null | grep -- '-impl-pf$' | head -1)"
+    [ "$TWSESS" = "author prover author-fix " ] && [ -n "$TWFIX" ] && grep -qF 'stub reviewer concern' "$TWDIR/prompts/$TWFIX" && ! grep -qF 'add a check for it to $LOKI_SCRATCH/loki-proof.sh' "$TWDIR/prompts/$TWFIX" && grep -qF 'Do not edit $LOKI_SCRATCH/loki-proof.sh' "$TWDIR/prompts/$TWFIX" && ok "THIN-WRAP stub run 10 (the hand-back carries the reviewer finding, no add-a-check sentence and the do-not-edit line): a fix turn that breaks a passing check is undone (nothing of it is committed), no prover resume follows, and the run is PARTIAL held by review open" || bad "THIN-WRAP stub run 10 sessions: '$TWSESS'" ;;
     *) bad "THIN-WRAP stub run 10 gave: $TWF (sessions '$TWSESS')" ;; esac
 # Cell 11: the prover leaves no script while the author leaves its own passing one. The author's script never counts; the run is PARTIAL with the new note and
 # never VERIFIED, and no author turn asks for a script. Plant: noOwnProofNotes ignores `independent` and this leg reads VERIFIED (the line check marks both MET).
