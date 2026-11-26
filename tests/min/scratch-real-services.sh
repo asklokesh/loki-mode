@@ -32,7 +32,7 @@ try {
   if (TSXDIR) { Bun.spawn(["bash", "-c", `cd "${TSXDIR}" && exec npm exec --no -- tsx -e "setInterval(() => {}, 1000)" > /dev/null 2>&1`], { env, stdout: "ignore", stderr: "ignore", stdin: "ignore" }); await Bun.sleep(4000); }
   const r = w.cleanupSessionScratch(s, { termWaitMs: 5000 });
   for (const [k, pid] of Object.entries(pids)) out[k] = pid ? { stopped: r.stopped.some((x) => x.pid === pid), why: r.stopped.find((x) => x.pid === pid)?.why ?? null, alive: alive(pid) } : "not started";
-  out.tsx_family = TSXDIR ? r.stopped.filter((x) => /node|tsx|npm|esbuild/.test(x.command)).map((x) => x.why) : "not started";
+  out.tsx_family = TSXDIR ? r.stopped.filter((x) => /node|tsx|npm|esbuild/.test(x.name)).map((x) => x.why) : "not started"; // a cleanup record carries the base name, never the command line (b3564afcf)
   out.bare_redis = bare ? { left_reported: r.left.some((x) => x.pid === bare), alive: alive(bare) } : "not started";
   out.removed = r.removed; out.kept = r.kept ?? null;
 } finally { if (bare) { try { process.kill(bare, "SIGTERM"); } catch {} } }

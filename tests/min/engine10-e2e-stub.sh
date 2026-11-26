@@ -2388,8 +2388,8 @@ RFPY
 )"
 [ "$RFS" = "early=yes pf=yes order=ok" ] && ok "REVIEW-FIRST stub run: review.early comes before the first -pf hand-back session" || bad "REVIEW-FIRST stub run gave: $RFS (sessions '$RWSTAGES')"
 # REVIEW-CLOSES stub-run leg (written, not run by its author; the lead runs it after the bundle is rebuilt on the merged tree). The stub reviewer gives one verdict on every call (no block-then-pass
-# sequence), so with BLOCK the first review is followed by follow-up reviews: the events hold at least two review.early events, the second with follow 1, and the line-check stub ran at most once
-# (only after the follow-ups end). Needs a stub that changes the tree in the -pf hand-back session; if it does not, the second review.early never appears and this leg reads "follow=no".
+# sequence), so with BLOCK the first review is followed by follow-up reviews up to the bound (LOKI_E10_REVIEW_FOLLOW_MAX, default 2): exactly three review.early events, with follow 0, 1, 2, and no line check
+# before the last of them. Needs a stub that changes the tree in the -pf hand-back session; if it does not, the second review.early never appears and this leg reads fewer than three.
 rw_proof 'grep -q "export function multiply" calc.ts' 'grep -q "export function multiply" calc.ts'
 rw_engine reviewcloses "$RWD/list.md" LOKI_RISK_TIER=medium LOKI_REVIEW_DEFAULT=1 E2E_STUB_REVIEW=BLOCK
 RCS="$(python3 -I - "$RWRUN" <<'RCPY'
@@ -2397,10 +2397,13 @@ import json, os, sys
 try: ev = [json.loads(l) for l in open(os.path.join(sys.argv[1], "events.jsonl"))]
 except Exception: print("no events"); sys.exit(0)
 early = [e for e in ev if e["type"] == "review.early"]
-print("early=" + ("2+" if len(early) >= 2 else str(len(early))), "follow=" + ("yes" if len(early) >= 2 and early[1]["data"].get("follow") == 1 else "no"))
+print("early=" + str(len(early)), "follow=" + ",".join(str(e["data"].get("follow", 0)) for e in early))
 RCPY
 )"
-[ "$RCS" = "early=2+ follow=yes" ] && [ "$(grep -o linecheck <<< "$RWSTAGES" | wc -l | tr -d ' ')" -le 1 ] && ok "REVIEW-CLOSES stub run: a second review.early with follow 1, and at most one line check" || bad "REVIEW-CLOSES stub run gave: $RCS (sessions '$RWSTAGES')"
+# The seal stage reads the tree itself (its own review and line check), so the whole-run line check count is 2 (measured 2026-11-26: the loop's one after the follow-ups, and the seal's). The bound is in the loop: with the
+# reviewer always blocking and LOKI_E10_REVIEW_FOLLOW_MAX at its default 2, exactly three review.early events (follow 0, 1, 2) and the first line check comes after the third review.
+RCPRE="${RWSTAGES%%linecheck*}"
+[ "$RCS" = "early=3 follow=0,1,2" ] && [ "$(grep -o review <<< "$RCPRE" | wc -l | tr -d ' ')" = 3 ] && ok "REVIEW-CLOSES stub run: three review.early (the first, then follow 1 and 2, the bound), and no line check before the last follow-up" || bad "REVIEW-CLOSES stub run gave: $RCS (sessions '$RWSTAGES')"
 rw_proof 'grep -q "export function multiply" calc.ts' 'grep -q "export function multiply" calc.ts' 'false' # line 2 has one passing and one failing check
 rw_engine failing "$RWD/list.md"; RWF="$(rw_facts)"
 [ "$RWF" = "PARTIAL road=work source=text lines=2 receipt=met,unmet own=1 reruns=yes noscript=no plan=skipped src=issue cap=2400" ] \
