@@ -163,6 +163,51 @@ export function quoteAccuracy(runsDir: string, last = 50): QuoteAccuracy {
   return res;
 }
 
+export interface SizedRow { usd: number; wallS: number; size?: string }
+
+/** Finished runs (VERIFIED or PARTIAL receipts with a metered cost and a reconciled total time) of the newest `last` run directories, each tagged with the size its first `variant` event recorded. Unreadable directories are skipped; never throws. */
+export function rowsFromReceipts(runsDir: string, last = 50): SizedRow[] {
+  let ids: string[];
+  try { ids = readdirSync(runsDir).sort().slice(-last); } catch { return []; }
+  const rows: SizedRow[] = [];
+  for (const id of ids) {
+    try {
+      const r = JSON.parse(readFileSync(join(runsDir, id, "receipt.json"), "utf8")) as { verdict?: unknown; cost?: { usd?: unknown }; time?: { total_s?: unknown } };
+      const usd = r.cost?.usd, wallS = r.time?.total_s;
+      if ((r.verdict !== "VERIFIED" && r.verdict !== "PARTIAL") || typeof usd !== "number" || !(usd > 0) || typeof wallS !== "number" || !(wallS > 0)) continue;
+      rows.push({ usd, wallS, size: sizeOfRun(join(runsDir, id, "events.jsonl")) });
+    } catch { /* unreadable run directory: skipped */ }
+  }
+  return rows;
+}
+
+function sizeOfRun(eventsPath: string): string | undefined {
+  try {
+    for (const line of readFileSync(eventsPath, "utf8").split("\n", 200)) {
+      try { const e = JSON.parse(line) as { type?: unknown; data?: { size?: unknown } }; if (e.type === "variant") return typeof e.data?.size === "string" && e.data.size !== "" ? e.data.size : undefined; } catch { /* not a JSON line */ }
+    }
+  } catch { /* no events file */ }
+  return undefined;
+}
+
+/** The second quote, printed once the run has sized its task: drawn from finished runs of that size in this repository, or an honest statement that there are none. "" when no finished run is on record. */
+export function sizedText(rows: readonly SizedRow[], size: string): string {
+  const same = rows.filter((r) => r.size === size);
+  if (same.length >= MIN_RUNS) {
+    const usd = same.map((r) => r.usd);
+    return `sized ${size}: about ${fmtUsd(median(usd))} (range ${fmtUsd(Math.min(...usd))}-${fmtUsd(Math.max(...usd))}), about ${minOf(median(same.map((r) => r.wallS)))} min, from ${same.length} finished ${size} runs in this repository`;
+  }
+  if (rows.length === 0) return "";
+  const big = rows.reduce((a, b) => (b.usd > a.usd ? b : a));
+  return `sized ${size}: no estimate yet (${same.length} finished ${size} run${same.length === 1 ? "" : "s"} here); the largest finished run in this repository cost ${fmtUsd(big.usd)} and took ${minOf(big.wallS)} min`;
+}
+
+/** The line to print when a worker event is a `variant` carrying a size: once per run, only with the preview on and not under --json, and "" when there is nothing to say. */
+export function sizedQuoteLine(env: Env, json: boolean, alreadyPrinted: boolean, eventType: unknown, size: unknown, runsDir: string): string {
+  if (!previewOn(env) || json || alreadyPrinted || eventType !== "variant" || typeof size !== "string" || size === "") return "";
+  return sizedText(rowsFromReceipts(runsDir), size);
+}
+
 export const ESTIMATE_HELP = `loki estimate - Show what a run is likely to cost
 
 Usage: loki estimate [--model M] [--provider P] [--json]
