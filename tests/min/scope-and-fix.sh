@@ -5275,4 +5275,19 @@ want = ["e2e = ((o.verify?.end_to_end ?? {}) as { ou", "e2e?.observe) observed.p
 sys.exit(0 if sorted(uses) == sorted(want) else 1)
 PY
 
+# ---------------------------------------------------------------- LABEL-TRUST (#717; xreview.ts splitFlags, seal.ts ftpHoldListed): a hold whose own text says the proof exists, or that states no defect, is not listed.
+# Fields: held and disclosed of a FLAG review with kinds UNMET, DEFECT, LIMIT, INFO and an untagged reason (3 held: UNMET, DEFECT, the untagged one; 2 disclosed, each ending in its kind),
+# the same review as a BLOCK (5 held), with LOKI_E10_REVIEW_KINDS=0 (5 held), a failing-test flag about an untouched pre-red page (disclosed 1), the same flag when the diff touches that page (held 1, planted
+# defect: stays a hold), an untagged real defect (held 1, fail-safe), a BOGUS kind (held 1), an untagged real defect under a pre-red tests/ folder (held 1/0), prose that only looks like a kind, 'Info -' and 'limit.' (held 2), then ftpHoldListed: own proof ok (false), no own proof (true: a change whose tests pass on base too stays held), opt-out (true).
+# Plants: splitFlags treats an unknown or missing kind as soft (the untagged count reads 0); ftpHoldListed returns false without an own proof (the 11th field reads false); the touched check dropped (the planted field reads 0).
+LT="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null -e '
+const { ftpHoldListed } = await import("./src/engine10/stages/seal.ts"); const x = await import("./src/engine10/stages/xreview.ts");
+const r = x.parseReview("claude", JSON.stringify({ result: "VERDICT: FLAG\n- UNMET: line four is not delivered\n- DEFECT: createArticle drops two fields\n- LIMIT: the db test was not run\n- INFO: nothing wrong here\n- an untagged concern" }));
+const c = { touched: ["backend/src/services/knowledge.ts"], preRedFiles: ["frontend/src/app/(auth)/register/__tests__/page.test.tsx"] };
+const s = x.splitFlags(r, c), b = x.splitFlags({ ...r, level: "block" }, c), off = x.splitFlags(r, c, { LOKI_E10_REVIEW_KINDS: "0" });
+const pr = (t: string, touched = c.touched) => { const q = x.parseReview("claude", JSON.stringify({ result: "VERDICT: FLAG\n- " + t })); return x.splitFlags(q, { touched, preRedFiles: c.preRedFiles }); };
+const a = pr("INFO: The frontend vitest failures in pages this backend-only diff does not touch were not investigated"), n = pr("register page.test.tsx fails after the change", ["frontend/src/app/(auth)/register/__tests__/page.test.tsx"]), nk = x.splitFlags(x.parseReview("claude", JSON.stringify({ result: "VERDICT: FLAG\n- a real bug in the code" })), c), bg = pr("BOGUS: unknown kind"), ut = x.splitFlags(x.parseReview("claude", JSON.stringify({ result: "VERDICT: FLAG\n- The new parser fails on empty input and the tests were not changed to cover it" })), { touched: ["src/parser.py"], preRedFiles: ["tests/test_legacy.py"] }), lc = x.splitFlags(x.parseReview("claude", JSON.stringify({ result: "VERDICT: FLAG\n- Info - y\n- limit. z" })), c);
+console.log([s.held.length, s.disclosed.length, s.disclosed.every((d) => d.endsWith("does not cap: LIMIT)") || d.endsWith("does not cap: INFO)")), b.held.length, b.disclosed.length, off.held.length, a.disclosed.length, n.held.length, nk.held.length, bg.held.length, ut.held.length + "/" + ut.disclosed.length, lc.held.length, ftpHoldListed(true), ftpHoldListed(false), ftpHoldListed(true, { LOKI_E10_FTP_LISTING: "0" })].join(" ## "));' 2>&1)"
+[ "$LT" = '3 ## 2 ## true ## 5 ## 0 ## 5 ## 1 ## 1 ## 1 ## 1 ## 1/0 ## 2 ## false ## true ## true' ] && ok "LABEL-TRUST: LIMIT and INFO notes and a listed-but-proved fail-then-pass hold do not hold; DEFECT, UNMET, untagged, touched and no-own-proof still hold" || bad "LABEL-TRUST gave: $LT"
+
 finish
