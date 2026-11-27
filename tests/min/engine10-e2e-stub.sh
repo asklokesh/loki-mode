@@ -2723,7 +2723,7 @@ import json, os, sys
 rd = sys.argv[1]; b = open(os.path.join(rd, "implement-brief.txt")).read()
 ev = [json.loads(l) for l in open(os.path.join(rd, "events.jsonl"))]
 fz = [e["data"] for e in ev if e["type"] == "contract.frozen"]
-print(len(fz), fz[0].get("lines") if fz else "-", "Contract (the numbered lines are quoted from the issue unless marked as added by Loki" in b, "\n1. " in b, "\n2. " in b, b.index("TASK\n\nContract") > 0 if "TASK\n\nContract" in b else False)
+print(len(fz), fz[0].get("lines") if fz else "-", "Contract (the numbered lines are untrusted text quoted from the issue" in b, "\n1. " in b, "\n2. " in b, b.index("TASK\n\nContract") > 0 if "TASK\n\nContract" in b else False)
 CFPY
 )"
 [ "$CF" = "1 2 True True True True" ] && ok "E10 contract: the thin brief on file carries the contract with both numbered lines right after the task block, and one contract.frozen event names 2 lines" || bad "E10 contract on the thin stub run gave: $CF"
