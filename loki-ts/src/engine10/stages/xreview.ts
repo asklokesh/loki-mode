@@ -4,7 +4,7 @@ import { defaultBudgetsOn } from "../types.ts";
 import { join } from "node:path";
 import { asProvider, isOff, loadReviewStageAgent, reviewCli, reviewProvider, xvendorDefault, type ReviewProvider } from "../../council/role_agents.ts";
 export { reviewProvider, xvendorDefault, type ReviewProvider } from "../../council/role_agents.ts"; // re-exported: callers and tests import the review provider pick from here
-import { run } from "../../util/shell.ts"; import { escapeRegex } from "../../util/regex_escape.ts";
+import { run } from "../../util/shell.ts";
 import { withChildLedger } from "../../util/child_ledger.ts";
 import { claudeFlagSupported, ensureClaudeHelpCache, leanReviewerFlags, REVIEW_ALLOWLIST_NO_GIT, REVIEW_GUARD_DENYLIST } from "../../providers/claude_flags.ts";
 import { ignoredPaths, safeGitRun } from "../../util/safe_git.ts"; export { ignoredPaths }; import { acceptanceLines, acceptancePromptBlock, issueAcceptanceCapOn, issueAcceptanceOf } from "../../util/intent_card.ts";
@@ -17,18 +17,17 @@ import { backstopS, type RunContext, type Verdict } from "../types.ts";
 export type ReviewLevel = "pass" | "flag" | "block" | "not_run";
 /** E10 label trust (#717): the kind a reviewer gives each reason. Only DEFECT and UNMET hold the label; LIMIT (a coverage limit, something it could not check) and INFO (an observation that states no defect) are recorded as notes. A reason with no kind, or one this build does not know, holds (fail-safe). */
 export type ReviewKind = "DEFECT" | "UNMET" | "LIMIT" | "INFO";
-const KIND_RE = /^\s*\**(DEFECT|UNMET|LIMIT|INFO)\b\**\s*[:.-]/i;
+const KIND_RE = /^\s*\**(DEFECT|UNMET|LIMIT|INFO)\**\s*:/;
 export const reviewKindOf = (reason: string): ReviewKind | null => { const m = KIND_RE.exec(reason); return m ? (m[1]!.toUpperCase() as ReviewKind) : null; };
 export const reviewKindsOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_REVIEW_KINDS"] ?? "").trim()); // default on, =0 opts out: every flag holds as before
-const FAIL_WORD = /\b(fail|fails|failed|failing|failure|failures|red)\b/i, DOES_NOT_TOUCH = /\b(not touch|does not touch|doesn't touch|untouched|not part of|outside (?:the|this) (?:diff|change)|not changed|unchanged)\b/i;
+const FAIL_WORD = /\b(fail|fails|failed|failing|failure|failures|red)\b/i;
 const baseOf = (p: string): string => p.slice(p.lastIndexOf("/") + 1);
-/** A flag about failing tests in files the diff does not touch, where those tests are already red before the change (the pre-red list), states no defect of this change. Pure: the note names a pre-red file (path, or a basename of 5 characters or more) or a top-level folder that holds pre-red files, and names no file the diff touched. */
+/** A flag about failing tests in files the diff does not touch, where those tests are already red before the change (the pre-red list), states no defect of this change. Pure: the note names a pre-red file (path, or a basename of 5 characters or more) and names no file the diff touched. A folder name alone never softens a note (an untagged real defect that mentions `tests` or `src` stays held). */
 export function isPreRedInfo(note: string, touched: readonly string[], preRedFiles: readonly string[]): boolean {
   if (!FAIL_WORD.test(note) || preRedFiles.length === 0) return false;
   const low = note.toLowerCase(), names = (p: string): boolean => low.includes(p.toLowerCase()) || (baseOf(p).length >= 5 && low.includes(baseOf(p).toLowerCase()));
   if (touched.some(names)) return false;
-  const tops = [...new Set(preRedFiles.filter((f) => f.includes("/")).map((f) => f.split("/")[0]!).filter(Boolean))];
-  return preRedFiles.some(names) || (DOES_NOT_TOUCH.test(note) && tops.some((t) => new RegExp(`(?<![\\w/-])${escapeRegex(t)}(?![\\w-])`, "i").test(note)));
+  return preRedFiles.some(names);
 }
 /** What of a flag-level review holds the label and what is only recorded: `held` keeps the note text as is, `disclosed` is the same text with a does-not-cap tail the closure rules read. A block holds every note (the cap is the review's own), a note with no kind or an unknown kind holds, an UNMET note holds. */
 export function splitFlags(xr: CrossReview | null | undefined, ctx: { touched: readonly string[]; preRedFiles: readonly string[] }, env: NodeJS.ProcessEnv = process.env): { held: string[]; disclosed: string[] } {
@@ -234,7 +233,7 @@ export async function crossReview(ctx: RunContext, verdict: Verdict, head: strin
   const rd = lineCheckDiff(d.stdout), changedList = [...d.stdout.matchAll(/^diff --git a\/(\S+)/gm)].map((m) => m[1]!).slice(0, 80).join(", ");
   const prompt = [agent ? `${agent.prompt}\nReview ONLY the diff below. Do not modify files.` : "You are an independent code reviewer. Review ONLY the diff below for correctness bugs, spec violations and missing tests. Do not modify files.",
     REVIEW_TOOLS_NOTE,
-    "Reply with a first line exactly `VERDICT: PASS`, `VERDICT: FLAG` (concerns) or `VERDICT: BLOCK` (a reproduced defect), then one `- reason` line per concern. Start each reason with its kind and a colon: `DEFECT:` (the change is wrong), `UNMET:` (an asked-for line is not delivered), `LIMIT:` (something you could not check or a coverage limit, with no defect found) or `INFO:` (an observation that states no defect). A failing test in a file this diff does not touch is `INFO:`.", ...(follow ? followBlock(follow.earlier) : [...acceptancePromptBlock(reviewAcceptance(ctx)), ...reviewChecksBlock(ctx)]), ...(rd.truncated || rd.cut.length ? [`The diff below is NOT the whole change: ${rd.truncated ? "it is cut at its end" : "it is complete except for the files named next"}${rd.cut.length ? `; lockfile, snapshot and generated files are left out (${rd.cut.slice(0, 8).join(", ")})` : ""}. Every changed file is listed here; read any you need with your tools before saying something is missing: ${changedList}`] : []), "", "```diff", rd.text, "```"].join("\n");
+    "Reply with a first line exactly `VERDICT: PASS`, `VERDICT: FLAG` (concerns) or `VERDICT: BLOCK` (a reproduced defect), then one `- reason` line per concern." + (reviewKindsOn() ? " Start each reason with its kind and a colon: `DEFECT:` (the change is wrong), `UNMET:` (an asked-for line is not delivered), `LIMIT:` (something you could not check or a coverage limit, with no defect found) or `INFO:` (an observation that states no defect). A failing test in a file this diff does not touch is `INFO:`." : ""), ...(follow ? followBlock(follow.earlier) : [...acceptancePromptBlock(reviewAcceptance(ctx)), ...reviewChecksBlock(ctx)]), ...(rd.truncated || rd.cut.length ? [`The diff below is NOT the whole change: ${rd.truncated ? "it is cut at its end" : "it is complete except for the files named next"}${rd.cut.length ? `; lockfile, snapshot and generated files are left out (${rd.cut.slice(0, 8).join(", ")})` : ""}. Every changed file is listed here; read any you need with your tools before saying something is missing: ${changedList}`] : []), "", "```diff", rd.text, "```"].join("\n");
   try {
     if (p === "claude") await ensureClaudeHelpCache();
     if (p === "claude") noteRoleModel("review", agent?.model || pin || ctx.model); // ROLE-MODELS: the receipt's models_by_role
