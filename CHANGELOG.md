@@ -7,16 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-## v11.189.0 (2026-11-27)
-
-### Changed
-
-- Issue intake preflight (#722): before any model call, a GitHub issue run reads the issue timeline, searches pull requests and issues in every state for an error string, file path or identifier quoted from the issue (secrets removed first), reads up to 8 candidates with gh, and checks cited paths and versions against the base with git. No model call and nothing written to GitHub. The facts reach the plan and implement briefs after the task block as data labelled VERIFIED, REPORTED or UNKNOWN, with fixed preflight rules, never in the cache-stable prefix; the receipt gets issue_preflight and the pull request body an Issue preflight section. A lookup that fails reads UNKNOWN with the page named, never "none found". A pull request title is quoted only for OWNER, MEMBER or COLLABORATOR authors, and only such a pull request or an APPROVED one may narrow the work. The preflight stops a run (PARTIAL, exit code 6) only on a merged pull request that closes the issue, merged after the issue was filed into the default branch, an ancestor of the run's base with no revert after it, with the issue closed and not reopened since; an open pull request never stops a run. LOKI_ISSUE_PREFLIGHT=0 opts out; LOKI_ISSUE_PREFLIGHT_BUDGET_S (default 60) bounds the whole read; an issue.preflight event says it fired. The older intake exit for a closed issue is unchanged (#723 tracks its closed_by_merged_pr half).
-
-- Project knowledge (#721): a Claude issue run adds passages from README, CONTRIBUTING, docs/, decision records and the new loki.yaml knowledge_sources entries (paths, globs, or workspace owner/repo names with a local path), chosen by keyword overlap with the task, with no model call. Each file is redacted whole before it is cut into passages, each passage is cited as path:first-last inside an untrusted-data fence, and the pack is capped at LOKI_KNOWLEDGE_BUDGET_CHARS (default 6000). The pack sits in the per-task part of the brief, after the cache-stable prefix, never in it; on the thin route it follows the quoted task. A workspace sibling is read only when named in knowledge_sources and only under the repository's parent directory or ~/.loki/repos (the whole home directory only with LOKI_KNOWLEDGE_HOME=1; LOKI_WORKSPACES=0 skips it). The receipt context.knowledge lists the cited sources and characters spent, and every such run emits a knowledge.pack event, also when nothing matched. New command: loki ask "<question>" prints the same selection with citations. LOKI_KNOWLEDGE=0 opts out.
-
-- Release checks: calibration on hc2 (merged tree 795948e41): n 32, right 28, verifier right 29, false VERIFIED 0, invalid 0. Full gate on 795948e41: 29 of 31 suites passed; scope-and-fix had one new red (a private regex-escape copy in issue_preflight.ts), fixed in 9e4973f55 to use util/regex_escape.ts, after which scope-and-fix is 1036 passed with the 4 base reds (quick verify outcome PARTIAL and PROOF-TEST-SIDE unit, mutationProof and proofSupport) and typecheck passes; h2h-harness: 166 passed, the 2 base learning arm on the stub cells. No pinned brief hash moved in the gate. Not measured: no real model run on this build yet.
-
 ## v11.188.0 (2026-11-27)
 
 ### Changed
