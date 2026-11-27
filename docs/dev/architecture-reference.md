@@ -92,6 +92,8 @@ Pins (exact, all sites): `@anthropic-ai/sdk` 0.124.0 -> 1.3.0 (loki-ts/package.j
 
 Bump 2026-11-06: agent-sdk 0.3.316 -> 0.3.318 (bundled Claude Code 2.1.316 -> 2.1.318, `SDK_BUNDLED_CLAUDE_CODE`), sdk 1.3.0 -> 1.6.0, Python `anthropic` 2.3.0 -> 2.6.0, at every site above (the Dockerfile line had stayed at 0.3.314 / 1.3.0; tests/min/version-consistency.sh now holds it, both lockfiles and both package.json files to one version). Sources: agent-sdk CHANGELOG 0.3.317..0.3.318, sdk CHANGELOG 1.4.0..1.6.0, anthropic-sdk-python CHANGELOG 2.4.0..2.6.0. No breaking change reaches loki-ts/src (tsc clean): sdk 1.4.0-1.6.0 add Admin API methods and error classes (`err.name` is now the class name; runner/crash.ts reads it only as a label); agent-sdk 0.3.317 removes `file_unchanged` from `FileReadOutput` (no Loki reference).
 
+Bump 2026-11-26 (11.187.0, Dependabot #641 and #642): agent-sdk 0.3.318 -> 0.3.330 (bundled Claude Code 2.1.318 -> 2.1.330, `SDK_BUNDLED_CLAUDE_CODE`), Python `anthropic` 2.8.0 -> 2.12.0, sdk unchanged at 1.6.0. Dependabot moved only package.json and package-lock.json; loki-ts/package.json, loki-ts/bun.lock and docker/Dockerfile were brought to the same pin so tests/min/version-consistency.sh holds. tsc clean against 0.3.330; `client.beta.agents.create` still present in anthropic 2.12.0.
+
 | Change (0.3.317-0.3.318) | Status |
 |---|---|
 | agent-sdk 0.3.317 `onFailure: "block"` on hook matchers | WIRED: the host guard (Bash) and config fence (Edit/Write/MultiEdit) PreToolUse matchers on the SDK route (runner/providers.ts) block a call when the hook throws or returns invalid output; the SDK refuses such a session on a CLI that does not honor the option (tests/min/host-guard.sh, against the e2e stub) |
