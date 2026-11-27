@@ -119,7 +119,19 @@ export const thinRoute = (provider: string, source: unknown, lines: number, plan
 /** The thin route's first brief: the task block exactly as buildImplementBrief quotes it, the prove-by-running paragraph, the environment card line when one was
  *  made, and the finish line. No stage prefix, no rules, no proof-script line, no old-record line, no repository card, no lessons and no plan lead. This session
  *  shares no prefix with any other stage's session, so the cache-stable prefix rule has nothing to keep stable here. */
-export const thinImplementBrief = (quotedTask: string, cardLine: string | null): string => [quotedTask, PROVE_BY_RUNNING_BLOCK, cardLine, ISSUE_FINISH_LINE].filter(Boolean).join("\n\n");
+export const thinImplementBrief = (quotedTask: string, cardLine: string | null, contract = ""): string => [quotedTask, contract, PROVE_BY_RUNNING_BLOCK, cardLine, ISSUE_FINISH_LINE].filter(Boolean).join("\n\n");
+/** E10 FROZEN CONTRACT (LOKI_E10_CONTRACT, default on; 0/off/false/no opts out): the issue's own acceptance lines, numbered as acceptance.txt numbers them, given to the first
+ *  implement session as what the change is judged on (FireLater#79: the reviewer found an unmet line only at the end). The lead is a constant; the lines are per-task quoted
+ *  issue text, so the block sits after the task block, never in the cache-stable prefix. No lines or the opt-out: "" and the brief is byte for byte what it was. */
+export const contractOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_CONTRACT"] ?? "").trim());
+export const CONTRACT_MAX_LINES = 10;
+export const CONTRACT_LEAD = "Contract (the numbered lines are quoted from the issue; this change is judged on exactly these). For each line write one check that fails before your change and passes after it. Never weaken, skip or delete an existing test to make a line pass. Before your finish line, close your reply with a table of line number, evidence (test name or command) and status (done, done differently, not done), then a short list headed \"Decided on my own\" naming anything you did that is outside these lines.";
+export function contractBlock(asks: string[], env: NodeJS.ProcessEnv = process.env): string {
+  const lines = asks.map((a) => a.replace(/\s+/g, " ").trim()).filter(Boolean);
+  if (!contractOn(env) || lines.length === 0) return "";
+  const clip = (t: string): string => (t.length > 300 ? `${t.slice(0, 297)}...` : t);
+  return [CONTRACT_LEAD, ...lines.slice(0, CONTRACT_MAX_LINES).map((t, i) => `${i + 1}. ${clip(t)}`), ...(lines.length > CONTRACT_MAX_LINES ? [`(${lines.length - CONTRACT_MAX_LINES} more lines are in acceptance.txt and the issue.)`] : [])].join("\n");
+}
 export const pinnedTestUpdateEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_PINNED_TEST_UPDATE"] ?? "").trim());
 /** The rules block the implement and fix briefs lead with: FIXED_RULES by default, the v11.139.0 text with the knob off. Either way a constant, so the prefix stays cache-stable. */
 export const fixedRules = (env: NodeJS.ProcessEnv = process.env, issue: boolean | "text" = false): string => { const r = pinnedTestUpdateEnabled(env) ? (docUpdateRuleOn(env) ? FIXED_RULES : FIXED_RULES_DOC_V139) : LEGACY_FIXED_RULES; return issue ? issueRules(r, issue === "text") : r; }; // issue: the caller's issueRunBrief(provider, source); each result is a constant, so the prefix stays cache-stable per route

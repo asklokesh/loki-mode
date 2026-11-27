@@ -25,6 +25,65 @@ export function weakensTest(baseText: string, newText: string): boolean {
   return count(ASSERT_RE, newText) < count(ASSERT_RE, baseText) || count(CASE_RE, newText) < count(CASE_RE, baseText) || count(SKIP_RE, newText) > count(SKIP_RE, baseText) || count(SETUP_RE, newText) > count(SETUP_RE, baseText) || (!moreCases && count(LOCAL_SETUP_RE, newText) > count(LOCAL_SETUP_RE, baseText));
 }
 
+// E10 TEST WEAKENING (LOKI_E10_TEST_WEAKENING, default on; 0/off/false/no opts out): the same detection as weakensTest, but per finding (file, line, kind) so the receipt and the PR body
+// can show where. No model. Kinds: deleted_case (a pre-existing test case gone, with no moved or rewritten replacement), deleted_assertion (a kept case with fewer assertions),
+// skip_marker (a skip, only, todo or expected-failure marker added), always_true (an assertion added that cannot fail). Only deleted_case, skip_marker and unreadable hold the label; the
+// rest are reported. A case whose title or body reappears in an added case anywhere in the change (a rename or a move), or that a new case in the same file replaces, is not deleted.
+export type WeakKind = "deleted_case" | "deleted_assertion" | "skip_marker" | "always_true" | "unreadable";
+export interface WeakFinding { file: string; line: number; kind: WeakKind }
+export const testWeakeningOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_TEST_WEAKENING"] ?? "").trim());
+export const WEAK_HOLD_KINDS: ReadonlySet<WeakKind> = new Set<WeakKind>(["deleted_case", "skip_marker", "unreadable"]);
+const ALWAYS_TRUE_RE = /\bexpect\(\s*(?:true|1)\s*\)\.(?:toBe\(\s*(?:true|1)\s*\)|toBeTruthy\(\))|\bassert\s+(?:True|1)\s*(?:$|#|,)|\bassert(?:True|That)?\(\s*(?:true|True|1)\s*[,)]|\bassert\.(?:ok|isTrue)\(\s*true\s*[,)]|\bassert\s+(\w+)\s*==\s*\1\s*(?:$|#|,)|\bassertEquals?\(\s*(\w+)\s*,\s*\2\s*\)/;
+const ANNOT_RE = /^\s*(?:@Test\b|\[(?:Fact|Theory|Test|TestMethod)\])/;
+const TITLE_RES = [/\b(?:it|test)(?:\.\w+)?\s*\(\s*(['"`])((?:\\.|(?!\1).)*)\1/, /\bdef\s+(test_\w+)/, /\bfunc\s+(Test\w+)/];
+interface CaseAt { title: string; line: number; body: string; asserts: number }
+function casesOf(text: string): CaseAt[] {
+  const lines = text.split("\n"), starts: { title: string; line: number }[] = [];
+  lines.forEach((l, i) => {
+    const m = TITLE_RES[0]!.exec(l); if (m) { starts.push({ title: m[2]!, line: i + 1 }); return; }
+    const py = TITLE_RES[1]!.exec(l) ?? TITLE_RES[2]!.exec(l); if (py) { starts.push({ title: py[1]!, line: i + 1 }); return; }
+    if (ANNOT_RE.test(l)) { for (let k = i + 1; k < Math.min(lines.length, i + 4); k++) { const n = /\b(\w+)\s*\(/.exec(lines[k]!); if (n && !/^\s*[@[]/.test(lines[k]!)) { starts.push({ title: n[1]!, line: k + 1 }); break; } } }
+  });
+  return starts.map((c, i) => { const end = i + 1 < starts.length ? starts[i + 1]!.line - 1 : lines.length, body = lines.slice(c.line, end).map((x) => x.trim()).filter(Boolean).join("\n"); return { ...c, body, asserts: count(ASSERT_RE, body) }; });
+}
+const multiset = (text: string): Map<string, number> => { const m = new Map<string, number>(); for (const l of text.split("\n")) { const t = l.trim(); if (t) m.set(t, (m.get(t) ?? 0) + 1); } return m; };
+/** Per-finding weakening of the pre-existing test files in a change. entries are the diff's status and path pairs (--no-renames); an added file is never read as weakened. Pure read, no model. */
+export function testWeakening(repoDir: string, baseSha: string, headSha: string | null, entries: { status: string; rel: string }[]): WeakFinding[] {
+  const read = (rel: string, head: boolean): string => (head ? (headSha === null ? readFileSync(join(repoDir, rel), "utf8") : safeGit(repoDir, ["show", `${headSha}:${rel}`])) : safeGit(repoDir, ["show", `${baseSha}:${rel}`]));
+  const out: WeakFinding[] = [], texts = new Map<string, { base: string; head: string }>();
+  const pool: { title: string; body: string }[] = []; // cases added anywhere in the change: a rename or a move finds its case here
+  for (const e of entries) {
+    if (!isTestFile(e.rel)) continue;
+    try {
+      const base = e.status === "A" ? "" : read(e.rel, false), head = e.status === "D" ? "" : read(e.rel, true); texts.set(e.rel, { base, head });
+      const had = new Set(casesOf(base).map((c) => c.title)); for (const c of casesOf(head)) if (!had.has(c.title)) pool.push({ title: c.title, body: c.body });
+    } catch { if (e.status !== "A") out.push({ file: e.rel, line: 0, kind: "unreadable" }); }
+  }
+  for (const e of entries) {
+    const t = texts.get(e.rel); if (!t || e.status === "A") continue;
+    const baseCases = casesOf(t.base), headCases = casesOf(t.head), headBy = new Map(headCases.map((c) => [c.title, c] as const));
+    let rewrites = headCases.filter((c) => !baseCases.some((b) => b.title === c.title)).length; // new cases in this file stand in for a deleted one, one for one
+    for (const c of baseCases) {
+      const kept = headBy.get(c.title);
+      if (kept) { if (kept.asserts < c.asserts) out.push({ file: e.rel, line: kept.line, kind: "deleted_assertion" }); continue; }
+      const i = pool.findIndex((p) => p.title === c.title || (c.body !== "" && p.body === c.body));
+      if (i >= 0) { pool.splice(i, 1); continue; }
+      if (rewrites > 0) { rewrites--; continue; }
+      out.push({ file: e.rel, line: c.line, kind: "deleted_case" });
+    }
+    const before = multiset(t.base);
+    t.head.split("\n").forEach((l, i) => {
+      const k = l.trim(); if (!k) return; const left = before.get(k) ?? 0; if (left > 0) { before.set(k, left - 1); return; }
+      SKIP_RE.lastIndex = 0;
+      if (SKIP_RE.test(l)) out.push({ file: e.rel, line: i + 1, kind: "skip_marker" });
+      else if (ALWAYS_TRUE_RE.test(l)) out.push({ file: e.rel, line: i + 1, kind: "always_true" });
+    });
+  }
+  return out;
+}
+/** The files whose findings hold the label (deleted_case, skip_marker, unreadable), in order, once each. */
+export const weakeningHeldFiles = (f: WeakFinding[]): string[] => [...new Set(f.filter((x) => WEAK_HOLD_KINDS.has(x.kind)).map((x) => x.file))];
+
 /** True when an edited pre-existing test file must cap the verdict: it was deleted or retyped (status D or T), or its text at headSha (null: the file on disk)
  *  weakens the base text (see weakensTest). An unreadable blob or file counts as weakened (fail-safe). Pure read, never edits the tree. */
 export function testFileWeakened(repoDir: string, baseSha: string, headSha: string | null, rel: string, status: string, task = ""): boolean {

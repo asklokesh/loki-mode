@@ -181,3 +181,29 @@ export function cardWithIssueLines(card: string[] | null, issueLines: string[]):
 }
 
 export const intentLine = (card: unknown): string | null => { for (const l of Array.isArray(card) ? card : []) { const m = /^\s*what i think you want\s*:\s*(\S.*)$/i.exec(String(l)); if (m) return m[1]!.trim(); } return null; };
+
+// E10 DRIFT (LOKI_E10_DRIFT, default on; 0/off/false/no opts out): report only, never changes the label. Three lists built with no model call from what the run already holds: the first
+// session's closing table (line number, evidence, status; contractBlock in e10ext/context.ts asks for it), the acceptance check's own rows, and the outside-scope notes.
+export const driftOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_DRIFT"] ?? "").trim());
+export interface Drift { decided_on_its_own: string[]; done_differently: string[]; asked_but_missing: string[]; closing_table: "parsed" | "none" }
+const CLOSING_ROW_RE = /^\s*\|\s*(\d{1,3})\s*\|(.*)\|\s*([A-Za-z][A-Za-z ]{2,24}?)\s*\|\s*$/;
+const clipDrift = (t: string): string => { const x = t.replace(/\s+/g, " ").trim(); return x.length > 200 ? `${x.slice(0, 197)}...` : x; };
+/** The closing table rows and the "Decided on my own" items of the last reply that holds them, or null when the reply has neither. */
+export function parseClosingTable(reply: string): { rows: { n: number; evidence: string; status: string }[]; decided: string[] } | null {
+  const lines = reply.split("\n"), rows: { n: number; evidence: string; status: string }[] = [], decided: string[] = [];
+  for (const l of lines) { const m = CLOSING_ROW_RE.exec(l); if (m && !/^-+$/.test(m[3]!.trim())) rows.push({ n: Number(m[1]), evidence: clipDrift(m[2]!), status: m[3]!.trim().toLowerCase() }); }
+  const at = lines.map((l) => /decided on my own/i.test(l)).lastIndexOf(true);
+  if (at >= 0) { for (const l of lines.slice(at + 1)) { const b = /^\s*(?:[-*]|\d+[.)])\s+(.+)$/.exec(l); if (b) decided.push(clipDrift(b[1]!)); else if (l.trim() === "" && decided.length) break; else if (l.trim() !== "" && !decided.length && /^\s*(?:LOKI_|Finish)/.test(l)) break; } }
+  const none = decided.filter((d) => !/^(none|nothing|n\/a)\b/i.test(d));
+  return rows.length || at >= 0 ? { rows, decided: none } : null;
+}
+export function driftOf(a: { reply: string; asks: { line: string; status: string; reason?: unknown; optional?: unknown }[]; scopeNotes: string[] }): Drift | null {
+  const t = parseClosingTable(a.reply), nth = (n: number): string => clipDrift(a.asks[n - 1]?.line ?? `line ${n}`);
+  const differently = (t?.rows ?? []).filter((r) => /differently/.test(r.status)).map((r) => `${r.n}. ${nth(r.n)}${r.evidence ? ` (${r.evidence})` : ""}`);
+  const missing = new Map<string, string>();
+  a.asks.forEach((r, i) => { if (r.status !== "met" && r.optional !== true) missing.set(String(i + 1), `${i + 1}. ${clipDrift(r.line)}${typeof r.reason === "string" && r.reason ? ` (${clipDrift(r.reason)})` : ""}`); });
+  for (const r of t?.rows ?? []) if (/^not done|^missing|^undone/.test(r.status) && !missing.has(String(r.n))) missing.set(String(r.n), `${r.n}. ${nth(r.n)} (the session's own table says not done)`);
+  const own = [...(t?.decided ?? []), ...a.scopeNotes.map((n) => /^outside stated scope: (.+)$/.exec(n)?.[1]).filter((x): x is string => !!x).map((f) => `changed ${clipDrift(f)}, which the issue does not name`)];
+  const d: Drift = { decided_on_its_own: own, done_differently: differently, asked_but_missing: [...missing.values()], closing_table: t ? "parsed" : "none" };
+  return d.decided_on_its_own.length || d.done_differently.length || d.asked_but_missing.length ? d : null;
+}
