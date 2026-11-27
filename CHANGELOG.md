@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## v11.190.0 (2026-11-27)
+
+### Changed
+
+- Control Plane UI replaced (#725; loki dashboard, port 47821): the dashboard now shows Needs you, Running, Delivered, All work, Spend and Defaults on real backend data only. A run opens to what it promised (proven, unmet or not checked lines with their reasons), why it carries its label (stop reason and integrity reasons), its stage bar, and its change and cost; an unpriced run reads unpriced, never $0, and the label is always the effective verdict. Actions are Answer for a blocked run, Stop for a running one, Open pull request (merging stays on GitHub), Mark as seen, and Delete run with an inline confirm. New work posts to the existing POST /v1/start route (issue ref or link, or a one-line brief, repository, provider, model and spend cap; no new route was added). Light and dark themes, three panes at 1180 pixels and wider, a drawer under 860, no horizontal scroll at 400. The old Account, Project, Repo and Run pages, Tailwind and lucide-react are removed; the CLI run link #runs/<source>/<run> still opens the run. tests/min/control-ui.sh covers the view logic, the Start route with a spawn stub, and a scratch build.
+
+- Release checks: no label file changed, so no new calibration file was needed (release.sh --check-calibration exits 0). Full gate on the merged tree 63f34ec04: 30 suites PASS and 2 FAIL (32 suites, counted by grep of the gate log); the two red suites match the base reds (scope-and-fix: 1036 passed, 4 failed; h2h-harness: 166 passed, 2 failed, the 2 learning arm on the stub cells).
+
 ## v11.189.0 (2026-11-27)
 
 ### Changed

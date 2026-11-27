@@ -8,7 +8,7 @@
 #   jobs:
 #     loki:
 #       permissions: { contents: write, pull-requests: write, issues: write }
-#       uses: asklokesh/loki-mode/.github/workflows/loki-issue-to-pr.yml@v11.189.0
+#       uses: asklokesh/loki-mode/.github/workflows/loki-issue-to-pr.yml@v11.190.0
 #       secrets: { ANTHROPIC_API_KEY: "${{ secrets.ANTHROPIC_API_KEY }}" }
 #
 # Rule of Two: issue text is untrusted, so the job that runs the agent never holds a write token.
@@ -44,7 +44,7 @@ on:
         description: 'loki-mode npm version to install: an exact x.y.z release (never latest). Keep it equal to the tag this workflow is called at.'
         type: string
         required: false
-        default: '11.189.0'
+        default: '11.190.0'
     secrets:
       ANTHROPIC_API_KEY:
         description: 'Model key. When it is missing the run stops before any model call and the issue gets a comment saying so.'
