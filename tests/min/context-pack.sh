@@ -863,4 +863,13 @@ else
     bad "e2e fragment writer off: no run events"
 fi
 
+# KNOWLEDGE (project docs passages for the brief and `loki ask`): the probe prints one name=value line per cell; every cell must be true.
+# Plants: selectPassages drops the `need` threshold (no_match_is_empty red); selectPassages skips redactKeepingLines (redacted and multiline_secret_redacted red); body() uses a one-pass tag strip (tag_forgery_blocked red); the heading uses the raw p.label instead of fence(p.label) (path_fence_blocked red); workspacePaths pairs repo and path by line order (path_first_pairs red); readable() drops the symlink check (symlink_not_read red); safeRelative accepts ".." (cfg_unsafe_skipped red).
+KP="$(cd "$ROOT/loki-ts" && bun --no-env-file --config=/dev/null "$ROOT/tests/min/fixtures/knowledge/probe.ts" "$ROOT/loki-ts/src" "$T" 2>&1)"
+for cell in fired cites_readme_and_docs no_changelog_no_unrelated untrusted_wrapper redacted tag_neutralized deterministic chars_match budget_cap opt_out no_match_is_empty receipt_context receipt_no_pack cfg_docs_glob cfg_sibling_repo cfg_unsafe_skipped cfg_missing_repo_skipped path_first_pairs workspaces_off_skipped workspace_path_bounded tag_forgery_blocked path_fence_blocked multiline_secret_redacted multiline_lines_exact symlink_not_read ask_cited; do
+    case "$KP" in *"
+$cell=true"*|"$cell=true"*) ok "knowledge: $cell" ;; *) bad "knowledge: $cell ($(printf '%s' "$KP" | command grep "^$cell=" | head -1))" ;; esac
+done
+case "$KP" in *'yamllist=[["a/*.md","b c.md"],["a.md","b.md"],[],["./docs","x.md"],["p","q"]]'*) ok "knowledge: yamlList reads flow, block and top-level lists" ;; *) bad "knowledge: yamlList" ;; esac
+
 finish

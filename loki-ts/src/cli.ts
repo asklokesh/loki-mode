@@ -98,6 +98,10 @@ async function dispatch(argv: readonly string[]): Promise<number> {
       return runMemory(["lessons", ...rest]);
     case "knowledge":
       return runKnowledge(rest);
+    case "ask": {
+      const { runAsk } = await import("./commands/ask.ts");
+      return runAsk(rest);
+    }
 
     case "status": {
       // CLI-MODERN-2: `loki status` shows Loki 10 runs only; the legacy box is gone from this path.

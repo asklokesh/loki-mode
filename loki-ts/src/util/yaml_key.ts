@@ -62,3 +62,35 @@ export function yamlKey(text: string, parent: string, key: string): string | nul
   }
   return null;
 }
+
+/** A list under a top-level key (`key: [a, b]` or `key:` then `  - item` lines), or under `parent:` when parent is given. Comments are stripped, quotes removed; absent gives []. */
+export function yamlList(text: string, parent: string | null, key: string): string[] {
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  let i = -1, indent = "";
+  if (parent === null) i = lines.findIndex((l) => new RegExp(`^${escapeRegex(key)}:`).test(l));
+  else {
+    const start = lines.findIndex((l) => new RegExp(`^${escapeRegex(parent)}:[ \\t]*(?:#.*)?$`).test(l));
+    for (let j = start + 1; start >= 0 && j < lines.length; j++) {
+      const l = lines[j]!;
+      if (l.trim() === "" || /^[ \t]*#/.test(l)) continue;
+      const m = /^([ \t]+)(\S.*)$/.exec(l);
+      if (!m) break;
+      if (indent === "") indent = m[1]!;
+      if (m[1] === indent && new RegExp(`^${escapeRegex(key)}:`).test(m[2]!)) { i = j; break; }
+    }
+  }
+  if (i < 0) return [];
+  const rest = lines[i]!.replace(new RegExp(`^[ \\t]*${escapeRegex(key)}:[ \\t]*`), "").replace(/[ \t]+#.*$/, "").trim();
+  const flow = /^\[(.*)\]$/.exec(rest);
+  if (flow) return flow[1]!.split(",").map((x) => clean(x)).filter((x) => x !== "");
+  const items: string[] = [];
+  for (let j = i + 1; j < lines.length; j++) {
+    const t = lines[j]!;
+    if (t.trim() === "" || /^[ \t]*#/.test(t)) continue;
+    const it = /^([ \t]*)-[ \t]+(.*)$/.exec(t);
+    if (!it || (parent !== null && it[1]!.length <= indent.length)) break;
+    const v = clean(it[2]!);
+    if (v !== "") items.push(v);
+  }
+  return items;
+}

@@ -30,9 +30,9 @@ budgets:                   # USD
   per_day_usd: 50          # backlog stops launching new runs at this daily spend
                            #                          (env: LOKI_BUDGET_PER_DAY_USD)
 
-knowledge_sources:         # local paths; validated now, consumed by a later release
+knowledge_sources:         # paths, globs or workspace owner/repo names read as project knowledge by runs and `loki ask`; README, docs/ and decision records are always read
   - ./docs
-  - ~/notes/architecture
+  - docs/adr/*.md
 
 notifications:
   # NAME of the env var holding the Slack webhook URL  (env: LOKI_SLACK_WEBHOOK_ENV)
