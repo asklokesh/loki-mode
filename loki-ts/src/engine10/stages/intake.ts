@@ -15,7 +15,7 @@ import { ignoreSnapshot } from "../../util/check_result.ts"; import { intakeProj
 import { issueAcceptance } from "../../util/intent_card.ts"; import { safeGit } from "../../util/safe_git.ts"; import { hiddenRunnerConfigs } from "../../features/runner_config.ts"; import { baseOnDemandOn, multiPackageRepo, baselineCmdS, BASELINE_CMD_TIMEOUT_S, ensureProfile, intakeBudgetNote, intakeCapS, readinessNotice, writeBaselineRecord, repoReadiness, SUITE_BASELINE_BUDGET_S } from "../../runner/repo_profile.ts";
 import { snapshotGuides } from "../../project_model/guides.ts"; import { verifyCommandRows } from "../../project_model/package_suite.ts"; import { untestableReason } from "../testmap.ts";
 import { ambiguityGate, rankedRemedy, rankedRemedyEnabled, voteOpenChoices, type ChoiceCtx } from "../../features/spec_ambiguity.ts"; import { triageGate } from "../../features/triage.ts";
-import { readPreflight, type PreflightReport } from "../../features/issue_preflight.ts"; import { execSpecPrefetchOn, prefetchExecSpec } from "../../features/exec_spec.ts"; import { wallEnabled } from "../sizing.ts"; import { wallConcurrent } from "../../util/wall_knobs.ts";
+import { confirmPreflightStop, readPreflight, type PreflightReport } from "../../features/issue_preflight.ts"; import { execSpecPrefetchOn, prefetchExecSpec } from "../../features/exec_spec.ts"; import { wallEnabled } from "../sizing.ts"; import { wallConcurrent } from "../../util/wall_knobs.ts";
 export interface IntakeOptions { taskText?: string; issueJsonPath?: string; }
 interface IssueFields { state: string | null; closed_by_merged_pr?: boolean }
 /** owner/repo#number, when the issue JSON carries both (GitHub); null for anything else, never guessed. */
@@ -94,7 +94,7 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
     taskSha256 = sha256(raw);
     const i = JSON.parse(raw) as { title?: unknown; body?: unknown; repo?: unknown; number?: unknown; comments?: unknown };
     task = [i.title, i.body].filter((x) => typeof x === "string" && x !== "").join("\n\n");
-    preflight = readPreflight(ctx.runDir); if (preflight) ctx.emit("issue.preflight", "intake", { issue: preflight.issue, calls: preflight.calls, seconds: preflight.seconds, prior_art: preflight.prior_art.length, covering_open: preflight.prior_art.filter((r) => r.kind === "pr" && r.state === "OPEN" && r.closes === "yes").map((r) => r.number), unknown: preflight.unknown.length, stop: preflight.stop?.kind ?? null });
+    preflight = confirmPreflightStop(readPreflight(ctx.runDir), ctx.repoDir, baseSha); if (preflight) ctx.emit("issue.preflight", "intake", { issue: preflight.issue, calls: preflight.calls, seconds: preflight.seconds, prior_art: preflight.prior_art.length, covering_open: preflight.prior_art.filter((r) => r.kind === "pr" && r.state === "OPEN" && r.closes === "yes").map((r) => r.number), unknown: preflight.unknown.length, stop: preflight.stop?.kind ?? null });
     alreadySatisfied = isAlreadyDone(loadIssue(issueJsonPath)) || preflight?.stop !== undefined; // a merged pull request that closes the issue and is on this base stops the run with its evidence
     issueRef = issueRefOf(i);
     if (Array.isArray(i.comments)) issueComments = i.comments.filter((c): c is NonNullable<ChoiceCtx["comments"]>[number] => typeof c?.author === "string" && typeof c?.association === "string" && typeof c?.body === "string"); // fetch_issue kept only OWNER, MEMBER and COLLABORATOR comments
