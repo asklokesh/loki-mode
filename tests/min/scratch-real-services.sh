@@ -164,7 +164,7 @@ const b = m.ruleStatus([L], rr)[0].status;
 console.log(a + " " + b);' 2>&1)"
 [ "$O6" = "unmet met" ] && ok "O6 git fixture: a source file naming the product and no manifest line is unmet; a manifest line naming it is met" || bad "O6 fixture: $O6"
 # ---- Outside listener (#713): a daemon that left the process group, lost the nonce and sits in a temp directory the script made outside the scratch. ----
-# L1: a script run through util/shell.ts run with the scratch's marker descriptor (scratchMarkerFd) makes a directory directly under /tmp and starts a python
+# L1: a script run through util/shell.ts run wrapped in withScratchMarker (the marker on descriptor 3) makes a directory directly under /tmp and starts a python
 # listener that double-forks, setsids and runs under env -i, then exits. After cleanupSessionScratch it is stopped (why: the marker), its directory is gone, and
 # the record names both. L2: a listener started before the scratch existed, in its own fresh temp directory, is not touched. L3: a listener started DURING the
 # run by something outside the run (no nonce, no marker), in its own new temp directory, survives with its directory and is listed as a suspect only.
@@ -182,10 +182,10 @@ try {
   await Bun.sleep(1500);
   const s = w.createSessionScratch(), env = { ...process.env, ...w.scratchSessionEnv(s) };
   const foreign = mk(); await Bun.spawn(cmd(foreign), { stdout: "ignore", stderr: "ignore" }).exited; const fpid = await pidIn(foreign); pids.push(fpid); // no nonce, no marker: not this run
-  const fresh = mk(), fd = w.scratchMarkerFd(s); // the script sits outside the scratch too: its command line must not prove ownership
-  try { await sh.run(cmd(fresh), { env, group: false, inheritFd: fd, timeoutMs: 20000 }); } finally { w.closeMarkerFd(fd); }
+  const fresh = mk(); // the script sits outside the scratch too: its command line must not prove ownership
+  const rr = await sh.run(w.withScratchMarker(s, cmd(fresh)), { env, group: true, timeoutMs: 20000 }); out.fd = rr.exitCode === 0;
   const pid = await pidIn(fresh); pids.push(pid);
-  out.before = alive(pid) && alive(fpid); out.fd = fd !== null; const freshReal = fs.realpathSync(fresh), foreignReal = fs.realpathSync(foreign);
+  out.before = alive(pid) && alive(fpid); const freshReal = fs.realpathSync(fresh), foreignReal = fs.realpathSync(foreign);
   const r = w.cleanupSessionScratch(s, { termWaitMs: 3000 });
   out.stopped = r.stopped.some((x) => x.pid === pid && x.port !== null && x.why === "holds the run\u0027s marker"); out.alive = alive(pid); out.dir_gone = !fs.existsSync(fresh);
   out.recorded = (r.outside_removed ?? []).includes(freshReal); out.scratch_removed = r.removed;
@@ -198,7 +198,7 @@ console.log(JSON.stringify(out));' 2>&1)"
 echo "    $LOUT"
 LC() { python3 -I -c 'import json, sys
 o = json.loads(sys.argv[1]); sys.exit(0 if eval(sys.argv[2], {"o": o}) else 1)' "$LOUT" "$1" 2>/dev/null; }
-LC 'o["before"] is True and o["fd"] is True' && ok "L1 setup: both fixture listeners were running before the cleanup and the marker descriptor opened" || bad "L1 setup: $LOUT"
+LC 'o["before"] is True and o["fd"] is True' && ok "L1 setup: both fixture listeners were running before the cleanup and the wrapped script exited 0" || bad "L1 setup: $LOUT"
 LC 'o["stopped"] is True and o["alive"] is False' && ok "L1: the double-forked listener holding the run's marker is stopped, its port in the record" || bad "L1: listener survived: $LOUT"
 LC 'o["dir_gone"] is True and o["recorded"] is True and o["scratch_removed"] is True' && ok "L1: its temp directory is removed and named in outside_removed; the scratch is removed" || bad "L1: directory left: $LOUT"
 LC 'o["other_untouched"] is True' && ok "L2: a listener that started before the run, in its own temp directory, is left alone" || bad "L2: unrelated listener touched: $LOUT"

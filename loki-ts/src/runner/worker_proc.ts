@@ -4,7 +4,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { createInterface } from "node:readline";
 import { StringDecoder } from "node:string_decoder";
 import { join, resolve } from "node:path";
-import { accessSync, chmodSync, closeSync, constants as fsConstants, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, lstatSync, readlinkSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, chmodSync, constants as fsConstants, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, lstatSync, readlinkSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { providerCause } from "./retry_class.ts";
@@ -254,13 +254,13 @@ function cwdOf(pid: number): string {
   return (r.stdout ?? "").split("\n").find((l) => l.startsWith("n"))?.slice(1) ?? "";
 }
 const portOf = (pid: number): number | null => { const r = spawnSync("lsof", ["-nP", "-a", "-p", String(pid), "-iTCP", "-sTCP:LISTEN", "-Fn"], { encoding: "utf8", timeout: 3000 }); const m = /\nn[^\n]*:(\d+)/.exec(`\n${r.stdout ?? ""}`); return m ? Number(m[1]) : null; };
-/** #713 RUN MARKER: the harness hands a script it runs a read-only descriptor on the scratch's marker file (`scratchMarkerFd`, passed as descriptor 3).
- *  fork, setsid, `env -i` and a process title that overwrites the environment all keep an inherited descriptor (measured on macOS 2026-11-26: a python double
- *  fork under env -i and `redis-server --daemonize yes` both still held it), so a daemon that left the run's group, lost the nonce and sits in a directory
- *  outside the scratch is still provably this run's. A program that closes its inherited descriptors, or a session whose shells do not pass them on, loses it.
- *  The caller closes the descriptor once the script has exited. Returns the descriptor, or null when the marker cannot be opened. */
-export function scratchMarkerFd(s: SessionScratch): number | null { try { return openSync(join(s.dir, SCRATCH_MARKER), "r"); } catch { return null; } }
-export function closeMarkerFd(fd: number | null): void { if (fd !== null) { try { closeSync(fd); } catch { /* already closed */ } } }
+/** #713 RUN MARKER: a script the harness runs gets a read-only descriptor on the scratch's marker file as descriptor 3, opened by a small sh wrapper that then
+ *  execs the script (same pid, so a group kill or a timeout is unchanged). fork, setsid, `env -i` and a process title that overwrites the environment all keep an
+ *  inherited descriptor (measured on macOS 2026-11-26: a python double fork under env -i and `redis-server --daemonize yes` both still held it), so a daemon that
+ *  left the run's group, lost the nonce and sits in a directory outside the scratch is still provably this run's. A program that closes its inherited
+ *  descriptors, or a session whose shells do not pass them on, loses it. The child opens the file itself: a descriptor handed to Bun.spawn is closed by Bun
+ *  later, so a parent that also closed it could close a reused descriptor number. When the marker is not readable the script runs without it. */
+export const withScratchMarker = (s: SessionScratch, argv: readonly string[]): string[] => ["/bin/sh", "-c", '[ -r "$1" ] && exec 3<"$1"; shift; exec "$@"', "loki-run-marker", join(s.dir, SCRATCH_MARKER), ...argv];
 /** Which of `pids` hold this file open (linux /proc/PID/fd, else one `lsof` on the file). */
 function holdsFile(pids: number[], file: string): Set<number> {
   const out = new Set<number>(); if (!pids.length) return out;

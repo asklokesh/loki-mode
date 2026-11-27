@@ -8,7 +8,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statfsSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
-import { cleanupSessionScratch, closeMarkerFd, createSessionScratch, scratchMarkerFd, scratchSessionEnv, TASK_MEMORY_SUBDIR } from "../runner/worker_proc.ts";
+import { cleanupSessionScratch, createSessionScratch, scratchSessionEnv, TASK_MEMORY_SUBDIR, withScratchMarker } from "../runner/worker_proc.ts";
 import { run } from "../util/shell.ts";
 import { noteHarnessRestored, safeGit, treeSnapshot, withTrackedRestored } from "../util/safe_git.ts";
 import { CONNECTION_ENV } from "./session.ts";
@@ -382,9 +382,8 @@ async function runProofScript(env: NodeJS.ProcessEnv, signal: AbortSignal | unde
       for (const f of HANDED) { try { const su = join(runDir, f); if (existsSync(su)) copyFileSync(su, join(scratch.dir, f)); } catch { /* a script that needs it says so */ } } // what Loki handed the session (the card's setup, and the setup fix when the setup check found one)
       const emptyDir = join(scratch.dir, "run"); mkdirSync(emptyDir, { mode: 0o700 }); // the script's argument is an EMPTY directory: the scratch itself holds Loki's helper, and a script that checks for emptiness refused it
       const t0 = Date.now(); ran = true;
-      const mfd = scratchMarkerFd(scratch); // #713: the run's marker on descriptor 3, kept by a daemon that leaves the group and drops the nonce
-      try { const r = await run(["bash", p.script, emptyDir], { cwd: p.cwd, timeoutMs: (p.limitS ?? proofRerunS(env)) * 1000, group: true, signal, inheritFd: mfd, env: { ...blank, ...scratchSessionEnv(scratch), ...(p.extra ?? {}), LOKI_PROOF_TOKEN: token, LOKI_PROOF_LOG: resultLog } }); exit = r.exitCode; timedOut = r.timedOut === true; out = `${r.stdout}\n${r.stderr}`; }
-      finally { closeMarkerFd(mfd); seconds = Math.round((Date.now() - t0) / 1000); }
+      try { const r = await run(withScratchMarker(scratch, ["bash", p.script, emptyDir]), { cwd: p.cwd, timeoutMs: (p.limitS ?? proofRerunS(env)) * 1000, group: true, signal, env: { ...blank, ...scratchSessionEnv(scratch), ...(p.extra ?? {}), LOKI_PROOF_TOKEN: token, LOKI_PROOF_LOG: resultLog } }); exit = r.exitCode; timedOut = r.timedOut === true; out = `${r.stdout}\n${r.stderr}`; }
+      finally { seconds = Math.round((Date.now() - t0) / 1000); } // #713: withScratchMarker hands the script the run's marker, kept by a daemon that leaves the group and drops the nonce
     }
   } catch (e) { out = `Loki's re-run did not complete: ${(e as Error).message}`; }
   let logged = ""; try { logged = readFileSync(resultLog, "utf8").replace(/[\x00-\x08\x0b-\x1f\x7f]+/g, " "); } catch { /* no result file: the output alone is counted */ }
@@ -683,9 +682,8 @@ async function runOwned(repoDir: string, script: (scratchDir: string) => string,
   let exit: number | null = null, out = "";
   try {
     const emptyDir = join(scratch.dir, "run"); mkdirSync(emptyDir, { mode: 0o700 }); // the script's argument is an EMPTY directory: the scratch itself holds Loki's helper, and a script that checks for emptiness refused it
-    const mfd = scratchMarkerFd(scratch); // #713: the run's marker on descriptor 3 (runner/worker_proc.ts)
-    try { const r = await run(["bash", script(scratch.dir), emptyDir], { cwd: repoDir, timeoutMs: timeoutS * 1000, group: true, signal, inheritFd: mfd, env: { ...blank, ...scratchSessionEnv(scratch), ...extra, LOKI_PROOF_LOG: join(scratch.dir, RESULT_LOG) } });
-      exit = r.exitCode; out = `${r.stdout}\n${r.stderr}`; } finally { closeMarkerFd(mfd); }
+    const r = await run(withScratchMarker(scratch, ["bash", script(scratch.dir), emptyDir]), { cwd: repoDir, timeoutMs: timeoutS * 1000, group: true, signal, env: { ...blank, ...scratchSessionEnv(scratch), ...extra, LOKI_PROOF_LOG: join(scratch.dir, RESULT_LOG) } }); // #713: the run's marker (runner/worker_proc.ts)
+    exit = r.exitCode; out = `${r.stdout}\n${r.stderr}`;
   } catch (e) { out = `Loki's re-run did not complete: ${(e as Error).message}`; }
   const seconds = Math.round((Date.now() - t0) / 1000);
   let logged = ""; try { logged = readFileSync(join(scratch.dir, RESULT_LOG), "utf8"); } catch { /* no result file: the output alone is counted */ }
