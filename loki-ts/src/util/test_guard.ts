@@ -61,6 +61,7 @@ export function testWeakening(repoDir: string, baseSha: string, headSha: string 
   }
   for (const e of entries) {
     const t = texts.get(e.rel); if (!t || e.status === "A") continue;
+    const caseDrop = count(CASE_RE, t.head) < count(CASE_RE, t.base), skipRise = count(SKIP_RE, t.head) > count(SKIP_RE, t.base); // a finding holds only when the file-level count moves the same way, so a wrapped title, a parametrized case or an edited skipped title never holds
     const baseCases = casesOf(t.base), headCases = casesOf(t.head), headBy = new Map(headCases.map((c) => [c.title, c] as const));
     let rewrites = headCases.filter((c) => !baseCases.some((b) => b.title === c.title)).length; // new cases in this file stand in for a deleted one, one for one
     for (const c of baseCases) {
@@ -69,13 +70,13 @@ export function testWeakening(repoDir: string, baseSha: string, headSha: string 
       const i = pool.findIndex((p) => p.title === c.title || (c.body !== "" && p.body === c.body));
       if (i >= 0) { pool.splice(i, 1); continue; }
       if (rewrites > 0) { rewrites--; continue; }
-      out.push({ file: e.rel, line: c.line, kind: "deleted_case" });
+      if (caseDrop) out.push({ file: e.rel, line: c.line, kind: "deleted_case" });
     }
     const before = multiset(t.base);
     t.head.split("\n").forEach((l, i) => {
       const k = l.trim(); if (!k) return; const left = before.get(k) ?? 0; if (left > 0) { before.set(k, left - 1); return; }
       SKIP_RE.lastIndex = 0;
-      if (SKIP_RE.test(l)) out.push({ file: e.rel, line: i + 1, kind: "skip_marker" });
+      if (SKIP_RE.test(l)) { if (skipRise) out.push({ file: e.rel, line: i + 1, kind: "skip_marker" }); }
       else if (ALWAYS_TRUE_RE.test(l)) out.push({ file: e.rel, line: i + 1, kind: "always_true" });
     });
   }

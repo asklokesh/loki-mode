@@ -5307,7 +5307,7 @@ res("weakening: a clean diff (one added case) reports nothing", (set("a.test.ts"
 set("a.test.ts", base.replace('  it("subs", () => {\n    expect(sub(3, 1)).toBe(2);\n  });\n', ""));
 res("weakening: a deleted pre-existing case is reported with its base line and holds", kinds([{ status: "M", rel: "a.test.ts" }]) === "deleted_case@a.test.ts:6" && weakeningHeldFiles(testWeakening(R, B, null, [{ status: "M", rel: "a.test.ts" }])).join() === "a.test.ts");
 set("a.test.ts", base.replace('it("subs"', 'it.skip("subs"'));
-res("weakening: an added skip marker is reported at its line and holds", kinds([{ status: "M", rel: "a.test.ts" }]) === "skip_marker@a.test.ts:6" || kinds([{ status: "M", rel: "a.test.ts" }]).startsWith("skip_marker@a.test.ts:6"));
+res("weakening: an added skip marker is reported at its line and holds", (kinds([{ status: "M", rel: "a.test.ts" }]) === "skip_marker@a.test.ts:6" || kinds([{ status: "M", rel: "a.test.ts" }]).startsWith("skip_marker@a.test.ts:6")) && weakeningHeldFiles(testWeakening(R, B, null, [{ status: "M", rel: "a.test.ts" }])).join() === "a.test.ts");
 set("a.test.ts", base.replace("    expect(add(0, 0)).toBe(0);\n", ""));
 res("weakening: a dropped assertion inside a kept case is reported and does not hold by itself", kinds([{ status: "M", rel: "a.test.ts" }]) === "deleted_assertion@a.test.ts:2" && weakeningHeldFiles(testWeakening(R, B, null, [{ status: "M", rel: "a.test.ts" }])).length === 0);
 set("a.test.ts", base.replace("expect(sub(3, 1)).toBe(2);", "expect(true).toBe(true);"));
@@ -5320,6 +5320,14 @@ set("a.test.ts", base.replace('  it("subs", () => {\n    expect(sub(3, 1)).toBe(
 res("weakening: a case replaced by a new one in the same file is not a deletion", kinds([{ status: "M", rel: "a.test.ts" }]) === "");
 set("a.test.ts", base); sh(R, "rm", "-q", "-f", "b.test.ts");
 res("weakening: a deleted test file with no moved case is reported per case and holds; an unchanged tree reports nothing", kinds([{ status: "D", rel: "b.test.ts" }]) === "deleted_case@b.test.ts:1" && kinds([{ status: "M", rel: "a.test.ts" }]) === "" && kinds([{ status: "M", rel: "src/app.ts" }]) === "");
+set("a.test.ts", base.replace('  it("subs", () => {', '  it.each([[3, 1, 2]])("subs", (a, b, r) => {').replace("expect(sub(3, 1)).toBe(2);", "expect(sub(a, b)).toBe(r);"));
+res("weakening: an existing case parametrized with it.each does not hold", weakeningHeldFiles(testWeakening(R, B, null, [{ status: "M", rel: "a.test.ts" }])).length === 0);
+set("a.test.ts", base.replace('  it("subs", () => {', '  it(\n    "subs",\n    () => {'));
+res("weakening: a formatter wrapping a case title onto its own line does not hold", weakeningHeldFiles(testWeakening(R, B, null, [{ status: "M", rel: "a.test.ts" }])).length === 0);
+set("a.test.ts", base.replace('it("subs"', 'it.skip("subs"')); sh(R, "add", "--", "a.test.ts"); sh(R, "commit", "-q", "-m", "skipped"); const B2 = sh(R, "rev-parse", "HEAD").trim();
+set("a.test.ts", base.replace('it("subs"', 'it.skip("subtracts"'));
+res("weakening: the title of an already skipped case edited does not hold", weakeningHeldFiles(testWeakening(R, B2, null, [{ status: "M", rel: "a.test.ts" }])).length === 0);
+set("a.test.ts", base); sh(R, "reset", "-q", "--hard", B);
 res("weakening: LOKI_E10_TEST_WEAKENING=0 is the opt-out and the default is on", testWeakeningOn({ LOKI_E10_TEST_WEAKENING: "0" }) === false && testWeakeningOn({}) === true);
 const reply = "Done.\n\n| line | evidence | status |\n|---|---|---|\n| 1 | feedback.test.ts: stores vote | done |\n| 2 | replace.test.ts | done differently |\n| 3 | none | not done |\n\nDecided on my own\n- added an index on kb_article_feedback\n- renamed a helper\n\nLOKI_DONE";
 const t = parseClosingTable(reply);
@@ -5328,6 +5336,10 @@ const rows = [{ line: "stores the vote", status: "met" }, { line: "second vote r
 const d = driftOf({ reply, asks: rows, scopeNotes: ["outside stated scope: backend/src/schemas/knowledge.ts"] })!;
 res("drift: decided on its own, done differently and asked but missing are filled from the table, the acceptance rows and the scope notes", d.decided_on_its_own.length === 3 && d.decided_on_its_own[2]!.includes("knowledge.ts") && d.done_differently.length === 1 && d.done_differently[0]!.startsWith("2. second vote replaces") && d.asked_but_missing.length === 1 && d.asked_but_missing[0]!.includes("no check ran") && d.closing_table === "parsed");
 res("drift: no table and every line met gives nothing; a missing table is said", driftOf({ reply: "LOKI_DONE", asks: rows.slice(0, 2), scopeNotes: [] }) === null && driftOf({ reply: "LOKI_DONE", asks: rows, scopeNotes: [] })!.closing_table === "none");
+const planted = "token AKIAIOSFODNN7EXAMPLE and sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA and ghp_abcdefghijklmnopqrstuvwxyz0123456789";
+const dp = driftOf({ reply: "| 1 | " + planted + " | done differently |\n\nDecided on my own\n- " + planted + "\n", asks: rows, scopeNotes: [] })!, dps = JSON.stringify(dp) + driftSection({ drift: dp });
+res("drift: a token planted in the reply is redacted from driftOf and the pull request section", !/AKIAIOSFODNN7EXAMPLE|sk-ant-api03-A|ghp_abcdef/.test(dps) && dp.decided_on_its_own.length === 1);
+res("drift: a closing table repeated by a joined reply counts each line once", driftOf({ reply: "| 2 | a | done differently |\n| 2 | a | done differently |\n", asks: rows, scopeNotes: [] })!.done_differently.length === 1);
 const sec = driftSection({ drift: d, test_weakening: { findings: [{ file: "a.test.ts", line: 6, kind: "deleted_case" }] } });
 res("drift: the pull request section names the three lists and the weakened test, and is empty without either", sec.includes("## Drift from the issue (report only)") && sec.includes("**Decided on its own**") && sec.includes("**Done differently than asked**") && sec.includes("**Asked but missing**") && sec.includes("a.test.ts:6 deleted case") && driftSection({}) === "" && driftSection(null) === "");
 TS
@@ -5335,6 +5347,7 @@ out="$(cd "$ROOT/loki-ts" && bun "$T/e10-contract.ts" 2>&1)"
 while IFS= read -r line; do
     case "$line" in "OK "*) ok "E10 contract-first: ${line#OK }" ;; "NO "*) bad "E10 contract-first: ${line#NO }" ;; esac
 done <<< "$out"
+[ "$(grep -c '^OK ' <<< "$out")" = "24" ] || bad "E10 contract-first unit script: want 24 OK lines, got $(grep -c '^OK ' <<< "$out")"
 grep -q '^OK ' <<< "$out" || { bad "E10 contract-first unit script produced no results"; printf '%s\n' "$out" | tail -8 | sed 's/^/    | /'; }
 
 finish

@@ -1,5 +1,6 @@
 // T3 Intent card v1: the plan model states what it thinks the user wants plus the acceptance tests it will hold itself to.
 // The card is parsed from the plan output, never invented: no parseable card means "Intent: NOT STATED by plan".
+import { redactSecrets } from "./redact.ts";
 import { stderrIsTty } from "./term_width.ts";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -187,11 +188,13 @@ export const intentLine = (card: unknown): string | null => { for (const l of Ar
 export const driftOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_DRIFT"] ?? "").trim());
 export interface Drift { decided_on_its_own: string[]; done_differently: string[]; asked_but_missing: string[]; closing_table: "parsed" | "none" }
 const CLOSING_ROW_RE = /^\s*\|\s*(\d{1,3})\s*\|(.*)\|\s*([A-Za-z][A-Za-z ]{2,24}?)\s*\|\s*$/;
-const clipDrift = (t: string): string => { const x = t.replace(/\s+/g, " ").trim(); return x.length > 200 ? `${x.slice(0, 197)}...` : x; };
+const clipDrift = (t: string): string => { const x = redactSecrets(t.replace(/[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u206f\u061c\u180e\ufeff]+/g, " ")).replace(/\s+/g, " ").trim(); return x.length > 200 ? `${x.slice(0, 197)}...` : x; };
 /** The closing table rows and the "Decided on my own" items of the last reply that holds them, or null when the reply has neither. */
 export function parseClosingTable(reply: string): { rows: { n: number; evidence: string; status: string }[]; decided: string[] } | null {
   const lines = reply.split("\n"), rows: { n: number; evidence: string; status: string }[] = [], decided: string[] = [];
-  for (const l of lines) { const m = CLOSING_ROW_RE.exec(l); if (m && !/^-+$/.test(m[3]!.trim())) rows.push({ n: Number(m[1]), evidence: clipDrift(m[2]!), status: m[3]!.trim().toLowerCase() }); }
+  const byN = new Map<number, { n: number; evidence: string; status: string }>(); // a joined pair of replies can repeat a line: the last row wins
+  for (const l of lines) { const m = CLOSING_ROW_RE.exec(l); if (m && !/^-+$/.test(m[3]!.trim())) byN.set(Number(m[1]), { n: Number(m[1]), evidence: clipDrift(m[2]!), status: m[3]!.trim().toLowerCase() }); }
+  rows.push(...byN.values());
   const at = lines.map((l) => /decided on my own/i.test(l)).lastIndexOf(true);
   if (at >= 0) { for (const l of lines.slice(at + 1)) { const b = /^\s*(?:[-*]|\d+[.)])\s+(.+)$/.exec(l); if (b) decided.push(clipDrift(b[1]!)); else if (l.trim() === "" && decided.length) break; else if (l.trim() !== "" && !decided.length && /^\s*(?:LOKI_|Finish)/.test(l)) break; } }
   const none = decided.filter((d) => !/^(none|nothing|n\/a)\b/i.test(d));

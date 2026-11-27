@@ -125,7 +125,7 @@ export const thinImplementBrief = (quotedTask: string, cardLine: string | null, 
  *  issue text, so the block sits after the task block, never in the cache-stable prefix. No lines or the opt-out: "" and the brief is byte for byte what it was. */
 export const contractOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_CONTRACT"] ?? "").trim());
 export const CONTRACT_MAX_LINES = 10;
-export const CONTRACT_LEAD = "Contract (the numbered lines are quoted from the issue; this change is judged on exactly these). For each line write one check that fails before your change and passes after it. Never weaken, skip or delete an existing test to make a line pass. Before your finish line, close your reply with a table of line number, evidence (test name or command) and status (done, done differently, not done), then a short list headed \"Decided on my own\" naming anything you did that is outside these lines.";
+export const CONTRACT_LEAD = "Contract (the numbered lines are quoted from the issue unless marked as added by Loki; this change is judged on exactly these). For each line write one check that fails before your change and passes after it. Never weaken, skip or delete an existing test to make a line pass. Before your finish line, close your reply with a table of line number, evidence (test name or command) and status (done, done differently, not done), then a short list headed \"Decided on my own\" naming anything you did that is outside these lines.";
 export function contractBlock(asks: string[], env: NodeJS.ProcessEnv = process.env): string {
   const lines = asks.map((a) => a.replace(/\s+/g, " ").trim()).filter(Boolean);
   if (!contractOn(env) || lines.length === 0) return "";
