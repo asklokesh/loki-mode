@@ -18,6 +18,7 @@ export type ShellOpts = {
   env?: Record<string, string>;
   cwd?: string;
   group?: boolean; // own process group: a timeout/abort kills the whole tree (wrapper scripts that do not exec), and strays are reaped on exit
+  inheritFd?: number | null; // #713: an open descriptor the child gets as descriptor 3 (runner/worker_proc.ts scratchMarkerFd: the run's ownership marker)
   signal?: AbortSignal; // abort: SIGTERM, then SIGKILL after 2s (same as a timeout)
   onFirstStdout?: () => void; // fires once when the first stdout byte arrives (a throwing callback is ignored)
   silenceMs?: number; // NO-DEFAULT-BUDGET: stop the process after this long with no stdout or stderr byte; a non-finite timeoutMs implies cmdSilenceS()
@@ -107,8 +108,7 @@ export async function run(
 ): Promise<ShellResult> {
   const proc = Bun.spawn({
     cmd: [...argv],
-    stdout: "pipe",
-    stderr: "pipe",
+    ...(typeof opts.inheritFd === "number" ? { stdio: ["ignore", "pipe", "pipe", opts.inheritFd] as const } : { stdout: "pipe" as const, stderr: "pipe" as const }),
     env: envWithPwd(opts.env ? { ...process.env, ...opts.env } : process.env, opts.cwd),
     cwd: opts.cwd,
     ...(opts.group ? { detached: true } : {}),

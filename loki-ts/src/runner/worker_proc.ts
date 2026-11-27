@@ -4,7 +4,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { createInterface } from "node:readline";
 import { StringDecoder } from "node:string_decoder";
 import { join, resolve } from "node:path";
-import { accessSync, chmodSync, constants as fsConstants, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, lstatSync, readlinkSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, chmodSync, closeSync, constants as fsConstants, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, lstatSync, readlinkSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { providerCause } from "./retry_class.ts";
@@ -254,10 +254,24 @@ function cwdOf(pid: number): string {
   return (r.stdout ?? "").split("\n").find((l) => l.startsWith("n"))?.slice(1) ?? "";
 }
 const portOf = (pid: number): number | null => { const r = spawnSync("lsof", ["-nP", "-a", "-p", String(pid), "-iTCP", "-sTCP:LISTEN", "-Fn"], { encoding: "utf8", timeout: 3000 }); const m = /\nn[^\n]*:(\d+)/.exec(`\n${r.stdout ?? ""}`); return m ? Number(m[1]) : null; };
-/** #713 OUTSIDE LISTENER: a daemon that double-forked out of the run's process group, lost the nonce (its title overwrote the environment) and sat in a
- *  directory the script made outside the scratch (`mktemp -d /tmp/...`). It is the run's only when ALL hold: it started during the run, its parent is init, it
- *  listens on a TCP port, and its working directory is inside a directory that sits directly in a temp root, was created after the run's scratch directory and is no
- *  other run's scratch. That directory (never the temp root) is what the cleanup removes. Returns the directory, or null. */
+/** #713 RUN MARKER: the harness hands a script it runs a read-only descriptor on the scratch's marker file (`scratchMarkerFd`, passed as descriptor 3).
+ *  fork, setsid, `env -i` and a process title that overwrites the environment all keep an inherited descriptor (measured on macOS 2026-11-26: a python double
+ *  fork under env -i and `redis-server --daemonize yes` both still held it), so a daemon that left the run's group, lost the nonce and sits in a directory
+ *  outside the scratch is still provably this run's. A program that closes its inherited descriptors, or a session whose shells do not pass them on, loses it.
+ *  The caller closes the descriptor once the script has exited. Returns the descriptor, or null when the marker cannot be opened. */
+export function scratchMarkerFd(s: SessionScratch): number | null { try { return openSync(join(s.dir, SCRATCH_MARKER), "r"); } catch { return null; } }
+export function closeMarkerFd(fd: number | null): void { if (fd !== null) { try { closeSync(fd); } catch { /* already closed */ } } }
+/** Which of `pids` hold this file open (linux /proc/PID/fd, else one `lsof` on the file). */
+function holdsFile(pids: number[], file: string): Set<number> {
+  const out = new Set<number>(); if (!pids.length) return out;
+  if (existsSync("/proc/self/fd")) { for (const pid of pids) { try { for (const f of readdirSync(`/proc/${pid}/fd`)) { try { if (readlinkSync(`/proc/${pid}/fd/${f}`) === file) { out.add(pid); break; } } catch { /* closed meanwhile */ } } } catch { /* gone, or not ours */ } } return out; }
+  const want = new Set(pids), r = spawnSync("lsof", ["-Fp", "--", file], { encoding: "utf8", timeout: 4000 });
+  for (const l of (r.stdout ?? "").split("\n")) if (l.startsWith("p") && want.has(Number(l.slice(1)))) out.add(Number(l.slice(1)));
+  return out;
+}
+/** #713 OUTSIDE DIRECTORY: the directory to remove for a process already proven the run's whose working directory is outside the scratch: a directory that sits
+ *  directly in a temp root, was created after the run's scratch directory and is no other run's scratch. Never the temp root itself. Also how a suspect is
+ *  told apart (below). Returns the directory, or null. */
 function outsideTempDir(cwd: string, since: number, scratchDir: string): string | null {
   if (!cwd) return null;
   let born = since * 1000; try { const b = lstatSync(scratchDir).birthtimeMs; if (b > 0) born = b; } catch { /* scratch already gone: the second-level start time stands */ }
@@ -273,14 +287,16 @@ function outsideTempDir(cwd: string, since: number, scratchDir: string): string 
   }
   return null;
 }
-/** The processes this scratch's run owns, by the evidence above; `why` says which. `outside` is set for the #713 case: the temp directory to remove. */
+/** The processes this scratch's run owns, by the evidence above; `why` says which. `outside` is set when an owned process sits in a temp directory made during
+ *  the run outside the scratch: that directory is removed once every owned process is gone. */
 export function ownedProcesses(s: SessionScratch): (Cand & { why: string; outside?: string })[] {
-  const c = candidates(s.since), nonce = s.nonce ? carriesNonce(c.map((x) => x.pid), s.nonce) : new Set<number>(), owned = new Map<number, Cand & { why: string; outside?: string }>();
+  const c = candidates(s.since), pids = c.map((x) => x.pid), nonce = s.nonce ? carriesNonce(pids, s.nonce) : new Set<number>(), marker = holdsFile(pids, join(s.dir, SCRATCH_MARKER)), owned = new Map<number, Cand & { why: string; outside?: string }>();
   for (const x of c) {
-    const cwd = nonce.has(x.pid) ? "" : cwdOf(x.pid);
-    const why = nonce.has(x.pid) ? "environment" : inside(cwd, s.dir) ? "working directory" : x.command.split(/\s+/).some((w) => w.startsWith("/") && inside(w.replace(/[,;:]+$/, ""), s.dir)) ? "command line" : null;
-    if (why) { owned.set(x.pid, { ...x, why }); continue; }
-    if (x.ppid === 1 && cwd) { const top = outsideTempDir(cwd, s.since, s.dir); if (top && portOf(x.pid) !== null) owned.set(x.pid, { ...x, why: "listener left in a temp directory made during the run", outside: top }); }
+    const cwd = nonce.has(x.pid) && !marker.has(x.pid) ? "" : cwdOf(x.pid);
+    const why = nonce.has(x.pid) ? "environment" : marker.has(x.pid) ? "holds the run's marker" : inside(cwd, s.dir) ? "working directory" : x.command.split(/\s+/).some((w) => w.startsWith("/") && inside(w.replace(/[,;:]+$/, ""), s.dir)) ? "command line" : null;
+    if (!why) continue;
+    const top = marker.has(x.pid) && cwd && !inside(cwd, s.dir) ? outsideTempDir(cwd, s.since, s.dir) : null;
+    owned.set(x.pid, { ...x, why, ...(top ? { outside: top } : {}) });
   }
   for (let grew = true; grew;) { grew = false; for (const x of c) if (!owned.has(x.pid) && owned.has(x.ppid)) { owned.set(x.pid, { ...x, why: "child of an owned process" }); grew = true; } }
   return [...owned.values()];
@@ -288,7 +304,20 @@ export function ownedProcesses(s: SessionScratch): (Cand & { why: string; outsid
 /** One process in a cleanup record: the base name of its executable only, never its arguments (a command line can carry a password or a token). */
 export interface ScratchProc { pid: number; name: string; port: number | null; why: string }
 export const procName = (command: string): string => (command.trim().split(/\s+/)[0] ?? "").split("/").pop()!.slice(0, 60);
-export interface ScratchCleanup { dir: string; stopped: ScratchProc[]; left: ScratchProc[]; removed: boolean; kept?: string; outside_removed?: string[] }
+/** #713 SUSPECT: a listener the run's evidence does not cover but that looks like a leak (it started during the run, its parent is init, and its working
+ *  directory is in a temp directory made after the scratch). Recorded for a person to check, never signalled; its directory is never removed. It may be another
+ *  run's or an unrelated test's. */
+export interface ScratchSuspect { pid: number; name: string; port: number; cwd: string }
+export interface ScratchCleanup { dir: string; stopped: ScratchProc[]; left: ScratchProc[]; removed: boolean; kept?: string; outside_removed?: string[]; suspects?: ScratchSuspect[] }
+function suspectProcesses(s: SessionScratch, skip: Set<number>): ScratchSuspect[] {
+  const out: ScratchSuspect[] = [];
+  for (const x of candidates(s.since)) {
+    if (x.ppid !== 1 || skip.has(x.pid) || !alive(x.pid)) continue;
+    const cwd = cwdOf(x.pid); if (!cwd || inside(cwd, s.dir) || !outsideTempDir(cwd, s.since, s.dir)) continue;
+    const port = portOf(x.pid); if (port !== null) out.push({ pid: x.pid, name: procName(x.command), port, cwd: cwd.slice(0, 200) });
+  }
+  return out.slice(0, 20);
+}
 /** Stops every process the run owns (start time rechecked before each signal; TERM, about 2 s, then KILL), scans again until nothing owned is alive, and
  *  only then removes the directory (its marker must hold its own path). A pid the session listed in <dir>/pids that is not provably the run's is left alone and
  *  reported. `signal` is a test seam. Never throws. */
@@ -313,12 +342,14 @@ export function cleanupSessionScratch(s: SessionScratch, o: { signal?: (pid: num
       for (const pid of listed) if (alive(pid) && !stopped.some((y) => y.pid === pid)) left.push({ pid, name: procName(psOut(["-o", "comm=", "-p", String(pid)])), port: portOf(pid), why: "left running, not proven ours" });
     } catch { /* no pids file: it is only a hint */ }
   } catch { /* never fails the run */ }
+  let suspects: ScratchSuspect[] = []; try { suspects = suspectProcesses(s, new Set([...stopped, ...left].map((x) => x.pid))); } catch { /* a record only */ }
+  const sus = suspects.length ? { suspects } : {};
   const live = stopped.filter((x) => still.some((y) => y.pid === x.pid));
-  if (live.length) return { dir: s.dir, stopped, left, removed: false, kept: `kept: ${live.length} owned process(es) did not stop: ${live.map((x) => x.pid).join(", ")}` };
+  if (live.length) return { dir: s.dir, stopped, left, removed: false, ...sus, kept: `kept: ${live.length} owned process(es) did not stop: ${live.map((x) => x.pid).join(", ")}` };
   const outside_removed: string[] = []; for (const d of outside) { try { rmSync(d, { recursive: true, force: true }); if (!existsSync(d)) outside_removed.push(d); } catch { /* left: the next run's scan or the user */ } } // #713: only after every owned process is gone
   let removed = false;
   try { if (readFileSync(join(s.dir, SCRATCH_MARKER), "utf8") === s.dir) { try { chmodSync(join(s.dir, TASK_MEMORY_SUBDIR), 0o700); } catch { /* no task memory here */ } rmSync(s.dir, { recursive: true, force: true }); removed = !existsSync(s.dir); } } catch { removed = !existsSync(s.dir); } // TASK MEMORY: its read-only directory is made writable first, or the removal fails on it
-  return { dir: s.dir, stopped, left, removed, ...(outside_removed.length ? { outside_removed } : {}) };
+  return { dir: s.dir, stopped, left, removed, ...(outside_removed.length ? { outside_removed } : {}), ...sus };
 }
 /** The record a run wrote at scratch creation, when its directory still exists. */
 export function readScratchRecord(runDir: string): (SessionScratch & { worker_pid?: number }) | null {

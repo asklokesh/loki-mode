@@ -10,7 +10,7 @@ import { defaultBudgetsOn, MAX_TIMER_MS } from "../types.ts";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
-import { cleanupSessionScratch, createSessionScratch, killGroup, ownedProcesses, scratchSessionEnv, type ScratchCleanup, type SessionScratch } from "../../runner/worker_proc.ts";
+import { cleanupSessionScratch, closeMarkerFd, createSessionScratch, killGroup, ownedProcesses, scratchMarkerFd, scratchSessionEnv, type ScratchCleanup, type SessionScratch } from "../../runner/worker_proc.ts";
 import { plainTestEnv } from "../../util/check_result.ts";
 import { treeFingerprint } from "../../util/anti_loop.ts";
 import { snapshotDiff } from "../../e10ext/treeswap.ts";
@@ -212,7 +212,8 @@ export async function runPass(root: string, dir: string, out: string, ids: strin
     scriptS = o.scriptS ?? scriptLimitS(), passS = o.passS ?? 480, teardownS = o.teardownS ?? TEARDOWN_S;
   const base = plainTestEnv(), env = { ...base, ...(o.pathAppend?.length ? { PATH: [...(base["PATH"] ?? "").split(":").filter(Boolean), ...o.pathAppend].join(":") } : {}), ...scratchSessionEnv(scratch), PROVE_ROOT: root, PROVE_TMP: tmp, PROVE_DIR: dir }; // the env card's directories, appended as the implement session had them
   const before = listeningPorts();
-  const proc = Bun.spawn(["bash", "-c", DRIVER, "loki-prove-driver", "pass", out, String(scriptS), dir, ...ids.map((id) => `ask-${id}`)], { cwd: root, env, stdin: "ignore", stdout: "ignore", stderr: "ignore", detached: true });
+  const mfd = scratchMarkerFd(scratch), fds = (): ["ignore", "ignore", "ignore", number] | ["ignore", "ignore", "ignore"] => (mfd === null ? ["ignore", "ignore", "ignore"] : ["ignore", "ignore", "ignore", mfd]); // #713: the pass's marker on descriptor 3 (runner/worker_proc.ts)
+  const proc = Bun.spawn(["bash", "-c", DRIVER, "loki-prove-driver", "pass", out, String(scriptS), dir, ...ids.map((id) => `ask-${id}`)], { cwd: root, env, stdio: fds(), detached: true });
   const live: LivePass = { pgid: proc.pid, dir, root, tmp, out, env, since, scratch }; LIVE.add(live);
   let cut = false, endpoints: PassResult["endpoints"] = [], skipped: string | null = null, done = false;
   const stop = (): void => { cut = true; killGroup(proc.pid, "SIGKILL"); };
@@ -231,13 +232,14 @@ export async function runPass(root: string, dir: string, out: string, ids: strin
     await proc.exited;
   } finally { clearTimeout(timer); signal.removeEventListener("abort", stop); killGroup(proc.pid, "SIGKILL"); }
   if (!existsSync(join(out, "driver.done")) && !existsSync(join(out, "teardown.exit"))) { // teardown always runs, even after a cut or an abort
-    const t = Bun.spawn(["bash", "-c", DRIVER, "loki-prove-driver", "teardown", out, String(teardownS), dir], { cwd: root, env, stdin: "ignore", stdout: "ignore", stderr: "ignore", detached: true });
+    const t = Bun.spawn(["bash", "-c", DRIVER, "loki-prove-driver", "teardown", out, String(teardownS), dir], { cwd: root, env, stdio: fds(), detached: true });
     const tt = setTimeout(() => killGroup(t.pid, "SIGKILL"), (teardownS + 5) * 1000);
     try { await t.exited; } finally { clearTimeout(tt); killGroup(t.pid, "SIGKILL"); }
   }
   // After teardown: what the pass started is stopped by proven ownership (the nonce in its environment, its directory or a command-line path in $PROVE_TMP, or an
   // owned parent; runner/worker_proc.ts), and $PROVE_TMP is removed only once nothing owned is alive. A pid in prove/pids that is not provably the pass's is
   // reported, never signalled.
+  closeMarkerFd(mfd);
   const cl = cleanupSessionScratch(scratch, { termWaitMs: 2000 }), leftovers = scratchLeftovers(cl, dir);
   LIVE.delete(live);
   const asks: Record<string, ScriptOutcome> = {};
