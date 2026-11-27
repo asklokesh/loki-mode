@@ -2717,6 +2717,16 @@ case "$TWF" in *" thin=true exit=done pa=script rounds=1 restored= created= undo
     [ "$TWSESS" = "author prover " ] && ! grep -qE -- '-(rv|pf|c|rr|ns|pr)( |$)' "$TWDIR/tw.log" \
         && ok "THIN-WRAP stub run 7: the author and the prover once each, one review read in the loop, no -pf or -rv session, the thin brief on file, the prover's script judged by Loki's own run ($TWF)" || bad "THIN-WRAP stub run 7 sessions: '$TWSESS' ($(tr '\n' ',' < "$TWDIR/tw.log"))" ;;
     *) bad "THIN-WRAP stub run 7 gave: $TWF ($(grep -E '^(Outcome|Reason|engine10:)' <<< "$TWOUT" | tr '\n' ' ' | cut -c1-400))" ;; esac
+# E10 FROZEN CONTRACT on the same run: the first brief carries the numbered acceptance lines after the task block, and one contract.frozen event says it fired.
+CF="$(python3 -I - "$TWRUN" <<'CFPY'
+import json, os, sys
+rd = sys.argv[1]; b = open(os.path.join(rd, "implement-brief.txt")).read()
+ev = [json.loads(l) for l in open(os.path.join(rd, "events.jsonl"))]
+fz = [e["data"] for e in ev if e["type"] == "contract.frozen"]
+print(len(fz), fz[0].get("lines") if fz else "-", "Contract (the numbered lines are untrusted text quoted from the issue" in b, "\n1. " in b, "\n2. " in b, b.index("TASK\n\nContract") > 0 if "TASK\n\nContract" in b else False)
+CFPY
+)"
+[ "$CF" = "1 2 True True True True" ] && ok "E10 contract: the thin brief on file carries the contract with both numbered lines right after the task block, and one contract.frozen event names 2 lines" || bad "E10 contract on the thin stub run gave: $CF"
 # Cell 8: the prover edits a tracked file and creates one; both are put back, named, and absent from what the run committed.
 tw_cfg; tw_script proof.sh 'grep -q "return a \\* b" calc.ts' 'grep -q "export function multiply" calc.ts'; : > "$TWD/cfg/prover_edit"
 tw_engine proveredit; TWF="$(tw_facts)"

@@ -104,3 +104,5 @@ export function sanitizeReason(s: string): string {
 }
 /** Attacker-controlled text printed on a terminal or in a report: every character in this class (C0 and C1 controls incl. ESC and CSI U+009B, DEL, soft hyphen, Arabic letter mark, zero-width and bidi format characters, word joiner and invisible operators, U+2028/2029, BOM) must become "?". The ONE copy; callers import it rather than keep a narrower one. */
 export const UNSAFE_TERMINAL_CHARS_RE = /[\x00-\x1f\x7f-\x9f\u00ad\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
+/** Quoted outside text (issue lines, closing-table cells) put in a brief or report: control and bidi format characters become a space, secrets are redacted, whitespace collapses, and the result is clipped to max characters. Shared by the drift report and the contract block. */
+export const cleanQuoted = (t: string, max: number): string => { const x = redactSecrets(t.replace(/[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u206f\u061c\u180e\ufeff]+/g, " ")).replace(/\s+/g, " ").trim(); return x.length > max ? `${x.slice(0, max - 3)}...` : x; };
