@@ -23,7 +23,7 @@ export function App() {
   const [newOpen, setNewOpen] = useState(false);
   const [repo, setRepo] = useState<string | null>(null);
   const [shown, setShown] = useState(PAGE);
-  const [last, setLast] = useState<ListView>("needs"); // the list a run was opened from, for the back link
+  const [last, setLast] = useState<ListView>(() => (route.run ? "all" : isListView(route.view) ? route.view : "needs")); // the list a run was opened from, for the back link
   useEffect(() => { if (!route.run && isListView(route.view)) setLast(route.view); setShown(PAGE); setNavOpen(false); }, [route.view, route.run, repo]);
   useEffect(() => {
     const on = (e: KeyboardEvent): void => { if (e.key === "n" && !e.metaKey && !e.ctrlKey && !e.altKey && !/^(INPUT|TEXTAREA|SELECT)$/.test((e.target as HTMLElement).tagName)) { e.preventDefault(); setNewOpen(true); } };
@@ -42,7 +42,7 @@ export function App() {
   const startable = useMemo(() => startableRepos(d.repos, d.runs), [d.repos, d.runs]);
 
   const view = route.view;
-  const listView: ListView = isListView(view) ? view : last;
+  const listView: ListView = route.run || !isListView(view) ? last : view;
   const rows = bucketed.filter((x) => listView === "all" || x.b === listView).map((x) => x.r);
   const sel = route.run ? `${route.run.source}/${route.run.run}` : null;
   const selRow = sel ? d.runs.find((r) => runKey(r) === sel) ?? null : null;

@@ -1,12 +1,13 @@
 // The detail pane: what a run promised, what it proved, why it carries its label, what it changed and cost, and the actions that apply to it.
 import { useEffect, useState } from "react";
 import { deleteRun, getRunDetail, postAnswer, stopRun, type RunDetail, type RunRow } from "../api";
-import { ago, duration, isRunning, money, repoName, runKey, runTitle, STAGES, stageNow, tone, type Bucket } from "../lib/model";
+import { ago, duration, isRunning, money, repoName, runKey, runTitle, STAGES, stageNow, tone, verdictOf, type Bucket } from "../lib/model";
 import { Chip, Dot } from "./WorkList";
 import { Icon } from "./Icon";
 
 const LINE_TONE = { met: "ok", unmet: "warn", waiting: "idle" } as const;
 const LINE_WORD = { met: "PROVEN", unmet: "UNMET", waiting: "PENDING" } as const;
+const lineWord = (s: keyof typeof LINE_WORD, running: boolean): string => (s === "waiting" && !running ? "NOT CHECKED" : LINE_WORD[s]);
 const usd = (n: number | null | undefined): string => (typeof n === "number" ? `$${n.toFixed(2)}` : "unpriced");
 
 export function WorkDetail({ row, source, run, tick, bucket, onDismiss, onGone, onBack, backLabel, backHref }: {
@@ -52,7 +53,7 @@ export function WorkDetail({ row, source, run, tick, bucket, onDismiss, onGone, 
           {STAGES.map((s, i) => <div key={s} className={`stg ${running ? (i < at ? "done" : i === at ? "now" : "") : i < at || (!halted && i === at) ? "done" : i === at ? "halt" : ""}`}><b />{s}</div>)}
         </div>
         {err ? <div className="err">{err}</div> : null}
-        <Actions r={r} d={d} running={running} bucket={bucket} onDismiss={onDismiss} onGone={onGone} />
+        <Actions r={r} d={d} running={running} bucket={bucket} reason={reasonLine(r, d, acc.length + notProven.length, proven)} onDismiss={onDismiss} onGone={onGone} />
 
         {acc.length + notProven.length > 0 ? (
           <div className="blk">
@@ -61,7 +62,7 @@ export function WorkDetail({ row, source, run, tick, bucket, onDismiss, onGone, 
               {acc.map((a, i) => (
                 <div className="ln" key={i}>
                   <span className={`st ${LINE_TONE[a.status]}`}>{a.status === "met" ? <Icon id="done" /> : a.status === "unmet" ? <Icon id="pause" /> : null}</span>
-                  <span>{a.line}</span><span className="ev">{LINE_WORD[a.status]}</span>
+                  <span>{a.line}</span><span className="ev">{lineWord(a.status, running)}</span>
                   {a.reason ? <span className="why">{a.reason}</span> : null}
                 </div>
               ))}
@@ -101,7 +102,7 @@ export function WorkDetail({ row, source, run, tick, bucket, onDismiss, onGone, 
   );
 }
 
-function Actions({ r, d, running, bucket, onDismiss, onGone }: { r: RunRow; d: RunDetail | null; running: boolean; bucket: Bucket | null; onDismiss: (k: string) => void; onGone: () => void }) {
+function Actions({ r, d, running, bucket, reason, onDismiss, onGone }: { reason: string | null; r: RunRow; d: RunDetail | null; running: boolean; bucket: Bucket | null; onDismiss: (k: string) => void; onGone: () => void }) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ t: string; bad: boolean } | null>(null);
@@ -121,7 +122,7 @@ function Actions({ r, d, running, bucket, onDismiss, onGone }: { r: RunRow; d: R
           <label className="sr" htmlFor="answer">Your answer</label>
           <textarea id="answer" value={text} onChange={(e) => setText(e.target.value)} placeholder="Type your answer" />
         </>
-      ) : <h3>{running ? "In progress" : bucket === "needs" ? "Waiting on you" : "Actions"}</h3>}
+      ) : <><h3>{running ? "In progress" : bucket === "needs" ? "Waiting on you" : "Actions"}</h3>{reason ? <p>{reason}</p> : null}</>}
       <div className="acts">
         {q ? <button className="btn pri" disabled={busy || !text.trim()} onClick={() => void act(async () => { await postAnswer(r.source_id, r.run_id, text.trim()); setText(""); }, "Answer sent. The run resumes when it reads it.")}>Answer</button> : null}
         {running ? (confirm === "stop"
@@ -137,4 +138,13 @@ function Actions({ r, d, running, bucket, onDismiss, onGone }: { r: RunRow; d: R
       {msg ? <p className={`msg${msg.bad ? " bad" : ""}`} role="status">{msg.t}</p> : null}
     </div>
   );
+}
+
+/** One plain sentence on why the run is where it is, from the data the run carries; null when there is nothing to say. */
+export function reasonLine(r: RunRow, d: RunDetail | null, total: number, proven: number): string | null {
+  if (d?.blocked_question) return null;
+  if (isRunning(r)) return r.current_stage ? `Working in the ${r.current_stage.replace(/_/g, " ")} stage.` : null;
+  const v = String(verdictOf(r) ?? "").trim();
+  const parts = [v ? `Loki labelled this ${v}.` : "", d?.stop_reason ?? "", total > 0 ? `${proven} of ${total} lines proven.` : ""].filter(Boolean);
+  return parts.length ? parts.join(" ") : null;
 }
