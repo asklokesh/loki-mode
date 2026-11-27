@@ -1,62 +1,48 @@
-// The frame around every page: the account at the top of the sidebar, then each org with its projects and their repositories.
-import { Building2, FolderGit2, GitBranch, Home } from "lucide-react";
+// The frame: sidebar (navigation, repositories, theme), the top bar under 860px, and the drawer scrim. Children are the main pane.
 import type { ReactNode } from "react";
-import type { RunRow, Workspace } from "../api";
-import { isWorking, repoOf } from "../lib/format";
-import { href, type Route } from "../lib/router";
+import { href } from "../lib/router";
+import { TITLES, type View } from "../lib/model";
+import type { Theme } from "../lib/data";
+import { Icon, Sprite, type IconId } from "./Icon";
 
-export function Shell({ ws, runs, route, children }: { ws: Workspace | null; runs: RunRow[]; route: Route; children: ReactNode }) {
-  const live = (repo: string): number => runs.filter((r) => repoOf(r) === repo && isWorking(r)).length;
+const NAV: [View, IconId][] = [["needs", "inbox"], ["running", "run"], ["delivered", "done"], ["all", "all"]];
+
+export function Shell({ view, counts, repos, repo, onRepo, open, navOpen, setNavOpen, onNew, onToggleTheme, theme, children }: {
+  view: View; counts: Record<string, number>; repos: string[]; repo: string | null; onRepo: (r: string | null) => void; open: boolean;
+  navOpen: boolean; setNavOpen: (b: boolean) => void; onNew: () => void; onToggleTheme: () => void; theme: Theme; children: ReactNode;
+}) {
+  const link = (v: View, icon: IconId, hot = false) => (
+    <a key={v} href={href.view(v)} className={hot && counts[v] ? "hot" : ""} aria-current={view === v ? "page" : undefined} onClick={() => setNavOpen(false)}>
+      <Icon id={icon} />{TITLES[v]}{v in counts ? <span className="n">{counts[v]}</span> : null}
+    </a>
+  );
   return (
-    <div className="app">
-      <aside className="side">
-        <a className="brand" href={href.account()}>
-          <span className="brand-dot" />
-          Loki
-        </a>
-        <nav className="nav">
-          <a className={route.page === "account" ? "on" : ""} href={href.account()}>
-            <Home size={16} />
-            {ws?.account.name ?? "Account"}
-          </a>
+    <div className={`app${open ? " open" : ""}${navOpen ? " nav-open" : ""}`}>
+      <Sprite />
+      <div className="scrim" onClick={() => setNavOpen(false)} />
+      <aside className="side" aria-label="Navigation">
+        <div className="brand"><span className="mark">L</span>Loki</div>
+        <button className="newbtn" onClick={() => { setNavOpen(false); onNew(); }}><Icon id="plus" />New work</button>
+        <nav className="nav" aria-label="Views">
+          {NAV.map(([v, i]) => link(v, i, v === "needs"))}
+          <div className="sec">Repositories</div>
+          {repos.length === 0 ? <div className="repo">None seen yet</div> : repos.map((r) => (
+            <a key={r} className="repo" href={href.view("all")} aria-current={repo === r ? "true" : undefined} onClick={() => { onRepo(repo === r ? null : r); setNavOpen(false); }}><i />{r}</a>
+          ))}
+          <div className="sec">Account</div>
+          {link("spend", "coin")}
+          {link("setup", "gear")}
         </nav>
-        {(ws?.orgs ?? []).map((o) => (
-          <nav className="nav" key={o.id}>
-            <div className="nav-label">
-              <Building2 size={11} style={{ verticalAlign: "-1px", marginRight: 5 }} />
-              {o.name}
-            </div>
-            {o.projects.map((p) => (
-              <div key={p.id}>
-                <a className={route.page === "project" && route.org === o.id && route.project === p.id ? "on" : ""} href={href.project(o.id, p.id)}>
-                  <FolderGit2 size={16} />
-                  {p.name}
-                  <span className="count">{p.repos.length}</span>
-                </a>
-                {p.repos.map((r) => (
-                  <a key={r} className={`sub ${route.page === "repo" && route.repo === r ? "on" : ""}`} href={href.repo(r)}>
-                    <GitBranch size={14} />
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r}</span>
-                    {live(r) ? <span className="count" style={{ color: "var(--accent)" }}>{live(r)} live</span> : null}
-                  </a>
-                ))}
-              </div>
-            ))}
-          </nav>
-        ))}
-        {ws && ws.unassigned.length > 0 ? (
-          <nav className="nav">
-            <div className="nav-label">Not in a project yet</div>
-            {ws.unassigned.map((r) => (
-              <a key={r} className={`sub ${route.page === "repo" && route.repo === r ? "on" : ""}`} href={href.repo(r)}>
-                <GitBranch size={14} />
-                {r}
-              </a>
-            ))}
-          </nav>
-        ) : null}
+        <div className="foot"><span>{theme ?? "system"} theme</span><button className="iconbtn" onClick={onToggleTheme} aria-label="Toggle theme"><Icon id="moon" /></button></div>
       </aside>
-      <main className="main">{children}</main>
+      <div className="main">
+        <div className="top">
+          <button className="iconbtn" onClick={() => setNavOpen(true)} aria-label="Open navigation"><Icon id="menu" /></button>
+          <span className="mark">L</span><b style={{ fontWeight: 600 }}>{TITLES[view]}</b>
+          <button className="iconbtn" style={{ marginLeft: "auto" }} aria-label="New work" onClick={onNew}><Icon id="plus" /></button>
+        </div>
+        {children}
+      </div>
     </div>
   );
 }

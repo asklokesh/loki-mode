@@ -160,10 +160,6 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
   return (await res.json().catch(() => ({}))) as T;
 }
 
-/** Import the server's own repo (.loki/runs) through the existing backfill. */
-export const importRuns = (): Promise<{ runs: number; sent: number; failed: string[] }> => postJson("/v1/import", {});
-export const listRepos = (): Promise<{ repos: string[]; default_repo?: string | null }> => get("/v1/repos");
-
 /** Subscribe to the runs-list SSE stream (GET /v1/stream). Uses fetch so the bearer header can be sent; reconnects until stop() is called. */
 export function watchRuns(onChange: () => void, retryMs = 3000): () => void {
   const ctl = new AbortController();
@@ -192,7 +188,8 @@ export function watchRuns(onChange: () => void, retryMs = 3000): () => void {
   return () => ctl.abort();
 }
 /** Start a run: target is owner/repo#N or a plain task. */
-export const startRun = (target: string, repo: string): Promise<{ ok: true; pid: number; command: string }> => postJson("/v1/start", { target, repo });
+export interface StartOptions { repo: string; provider?: string; model?: string; budget?: string }
+export const startRun = (target: string, o: StartOptions): Promise<{ ok: true; pid: number; command: string }> => postJson("/v1/start", { target, ...o });
 
 /** Remove one run and its events. Resolves with what the server says was removed; rejects with the server's own error text. */
 export async function deleteRun(source: string, run: string): Promise<{ ok: true; removed: { runs: number; events: number; sources: number }; remaining_runs: number }> {
@@ -202,23 +199,36 @@ export async function deleteRun(source: string, run: string): Promise<{ ok: true
   return { ok: true, removed: j.removed ?? { runs: 0, events: 0, sources: 0 }, remaining_runs: j.remaining_runs ?? 0 };
 }
 
-export interface DoctorCheck { name: string; status: "pass" | "warn" | "fail"; detail: string }
-export const getDoctor = (): Promise<{ checks: DoctorCheck[] }> => get("/v1/doctor");
-
-// ---- Loki UI v2: the account / project / repository levels, a repository's knowledge, and the acceptance table of a run ----
-export interface Project { id: string; name: string; repos: string[] }
-export interface Org { id: string; name: string; projects: Project[] }
-export interface Workspace { account: { name: string }; orgs: Org[]; repos: string[]; unassigned: string[] }
+// What the work views read beyond a run's own row: the acceptance table, the stop reason, a repository's knowledge, providers and outcome metrics.
 export interface AcceptanceRow { line: string; status: "met" | "unmet" | "waiting"; checks: number; reason: string | null }
-export interface RunDetailV2 extends RunDetailResponse { acceptance?: AcceptanceRow[]; acceptance_source?: "issue" | "plan"; proof?: { round: number; exit: number | null; proved: number; failed: number; seconds: number } | null; stop_reason?: string | null }
-export interface RepoKnowledge { repo: string; instructions: { path: string; bytes: number; truncated: boolean; text: string }[]; notes: { path: string; bytes: number; preview: string }[] }
-async function putJson<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${base()}${path}`, { method: "PUT", headers: authHeaders({ "content-type": "application/json" }), body: JSON.stringify(body) });
-  await failIfNotOk(res);
-  return (await res.json()) as T;
+export interface RunDetail extends RunDetailResponse { acceptance?: AcceptanceRow[]; acceptance_source?: "issue" | "plan"; proof?: { round: number; exit: number | null; proved: number; failed: number; seconds: number } | null; stop_reason?: string | null }
+export const getRunDetail = (source: string, run: string): Promise<RunDetail> => get<RunDetail>(`/v1/runs/${encodeURIComponent(source)}/${encodeURIComponent(run)}`);
+
+/** Every run, page by page through next_cursor (200 a page). */
+export async function listAllRuns(f: RunFilters = {}, maxPages = 10): Promise<RunsResponse> {
+  const all: RunRow[] = [];
+  let cursor: string | null = null, total = 0;
+  for (let i = 0; i < maxPages; i++) {
+    const q = new URLSearchParams({ limit: "200" });
+    for (const [k, v] of Object.entries(f)) if (v) q.set(k, v);
+    if (cursor) q.set("cursor", cursor);
+    const page: RunsResponse = await get<RunsResponse>(`/v1/runs?${q.toString()}`);
+    all.push(...page.runs); total = page.total; cursor = page.next_cursor;
+    if (!cursor) break;
+  }
+  return { runs: all, total, next_cursor: cursor };
 }
+
+export interface Workspace { repos: string[] }
 export const getWorkspace = (): Promise<Workspace> => get<Workspace>("/v1/workspace");
-export const saveWorkspace = (ws: Pick<Workspace, "account" | "orgs">): Promise<Workspace> => putJson<Workspace>("/v1/workspace", { account: ws.account, orgs: ws.orgs });
-export const getRunV2 = (source: string, run: string): Promise<RunDetailV2> => get<RunDetailV2>(`/v1/runs/${encodeURIComponent(source)}/${encodeURIComponent(run)}`);
+export interface RepoKnowledge { repo: string; instructions: { path: string; bytes: number; truncated: boolean; text: string }[]; notes: { path: string; bytes: number; preview: string }[] }
 export const getKnowledge = (repo: string): Promise<RepoKnowledge> => get<RepoKnowledge>(`/v1/repo/knowledge?repo=${encodeURIComponent(repo)}`);
-export const saveInstructions = (repo: string, content: string): Promise<RepoKnowledge> => putJson<RepoKnowledge>("/v1/repo/instructions", { repo, content });
+
+export interface ProviderRow { id: string; installed: boolean; version: string | null; auth_present: boolean; tiers: Record<string, string | null> }
+export const getProviders = (): Promise<{ providers: ProviderRow[]; catalog_updated: string | null }> => get("/v1/providers");
+
+export interface CostPerVerified { value: number | null; n: number; label: string; spend_usd: number | null; priced_runs: number; unpriced_runs: number; verified_runs: number }
+export const getOutcomes = (): Promise<{ cost_per_verified_usd?: CostPerVerified; runs_finished?: number }> => get("/v1/stats/outcomes");
+
+/** Stop a run: signals only the pid the run recorded (loopback POST route). */
+export const stopRun = (source: string, run: string): Promise<{ ok?: boolean }> => postJson(`/v1/runs/${encodeURIComponent(source)}/${encodeURIComponent(run)}/stop`, {});
