@@ -1,4 +1,4 @@
-// New work: the target (owner/repo#N, an issue link, a PRD path or a one-line brief), the repository, and the options `loki start` takes as flags (provider, model, spend cap).
+// New work: the target (owner/repo#N, an issue link or a one-line brief), the repository, and the options `loki start` takes as flags (provider, model, spend cap).
 // It posts to the existing POST /v1/start route; the run then appears through the event stream.
 import { useEffect, useRef, useState } from "react";
 import { getProviders, startRun, type ProviderRow } from "../api";
@@ -41,7 +41,7 @@ export function NewWork({ open, onClose, repos, defaultRepo, onStarted }: { open
           <button type="button" className="iconbtn" aria-label="Close" onClick={onClose}><Icon id="x" /></button>
         </div>
         <label className="sr" htmlFor="nw-target">What to build</label>
-        <textarea id="nw-target" value={target} onChange={(e) => setTarget(e.target.value)} placeholder="An issue (owner/repo#123 or its link), a PRD path, or describe the change in one line" />
+        <textarea id="nw-target" value={target} onChange={(e) => setTarget(e.target.value)} placeholder="An issue (owner/repo#123 or its link), or describe the change in one line" />
         <div className="fields">
           <label>Repository
             <select value={repo} onChange={(e) => setRepo(e.target.value)}>{repos.length === 0 ? <option value="">No repository seen</option> : repos.map((r) => <option key={r} value={r}>{r}</option>)}</select>

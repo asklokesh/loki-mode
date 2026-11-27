@@ -20,6 +20,7 @@ await leg("a running run holding a question is Needs you", () => eq(model.bucket
 await leg("PARTIAL and FAILED need the person; VERIFIED without a PR is Delivered", () => {
   eq(model.bucket(row({ verdict: "PARTIAL", status: "completed" }), none, none), "needs", "partial");
   eq(model.bucket(row({ verdict: "FAILED", status: "completed" }), none, none), "needs", "failed");
+  eq(model.bucket(row({ verdict: "SPEC_CONFLICT", status: "completed" }), none, none), "needs", "spec conflict (the blocked question)");
   eq(model.bucket(row({ verdict: "VERIFIED", status: "completed" }), none, none), "delivered", "verified");
 });
 await leg("VERIFIED with an open PR needs a look until dismissed", () => {
