@@ -76,7 +76,7 @@
       }
     },
     "knowledge_sources": {
-      "description": "Local paths of knowledge to give runs. Parsed and validated only; consumed by a later slice.",
+      "description": "Extra project knowledge for the first implement brief and `loki ask`: a relative path, directory or glob inside the repository, or an owner/repo named by a `workspaces` entry that has a local `path`. README, CONTRIBUTING, docs/ and decision records are always read. Opt out of the brief pack with LOKI_KNOWLEDGE=0.",
       "type": "array",
       "items": { "type": "string", "minLength": 1 }
     },

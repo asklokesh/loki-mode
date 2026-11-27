@@ -203,4 +203,30 @@ d=next(e["data"] for e in E if e["type"]=="run.started")
 print(d.get("task_source"), d.get("issue_ref"))' "$R2" 2>&1)"
 [ "$gs" = "issue acme/calc#7" ] && ok "goal: run.started has task_source=issue and issue_ref=acme/calc#7" || bad "goal: run.started gave: $gs"
 
+
+# --- KNOWLEDGE (#knowledge pack): a project doc passage that matches the issue reaches the first implement brief, cited and marked untrusted, the receipt
+# context names its sources, and LOKI_KNOWLEDGE=0 leaves the brief without it. The doc says "multiply" (the issue's word), the base fixture has no docs.
+# Plants: implement.ts drops `(kp?.text ?? "")` from the repoMap: both default cells go red; knowledgeOn ignores the env var: the opt-out cell goes red.
+for K in on off; do
+    RK="$T/repo-k-$K"
+    cp -R "$FIX/repo" "$RK"
+    mkdir -p "$RK/docs"
+    printf '# Arithmetic helpers\n\nThe multiply function in calc.ts must return a plain number and never mutate its arguments (KNOW_MARK_5d2e).\n' > "$RK/docs/arithmetic.md"
+    git -C "$RK" init -q -b main; git -C "$RK" config user.name e2e; git -C "$RK" config user.email e2e@example.invalid
+    git -C "$RK" add calc.ts calc.test.ts bunfig.toml docs/arithmetic.md; git -C "$RK" commit -q -m base
+    KENV=(); [ "$K" = off ] && KENV=(LOKI_KNOWLEDGE=0)
+    (cd "$RK" && env -u LOKI_ALLOW_AGENT_GITHUB_TOKEN -u LOKI_MODEL_OVERRIDE -u LOKI_RECEIPT_SIGNING_KEY -u LOKI_SPEED "${KENV[@]}" \
+        LOKI_E10_INVOKER=cli LOKI_CLAUDE_CLI="$FIX/bin/claude" PATH="$T/bin:$FIX/bin:$PATH" E2E_STUB_PROMPT_LOG="$T/prompt-k-$K" \
+        LOKI_E10_PLAN=1 LOKI_RECEIPT_SIGNING_KEY_FILE="$T/k.pem" ${TO[@]+"${TO[@]}"} bash "$ROOT/bin/loki" start acme/calc#7 --no-pr >/dev/null 2>&1)
+done
+kb="$(cat "$T/prompt-k-on.implement0" 2>/dev/null)"
+case "$kb" in *KNOW_MARK_5d2e*"[docs/arithmetic.md:"*|*"[docs/arithmetic.md:"*KNOW_MARK_5d2e*) ok "knowledge: the implement brief carries the matching doc passage with its path and line range" ;; *) bad "knowledge: the implement brief lacks the doc passage" ;; esac
+case "$kb" in *"UNTRUSTED DATA: passages from this project"*) ok "knowledge: the passage block is marked untrusted data" ;; *) bad "knowledge: no untrusted marker" ;; esac
+case "$(cat "$T/prompt-k-off.implement0" 2>/dev/null)" in *KNOW_MARK_5d2e*|"") bad "knowledge: LOKI_KNOWLEDGE=0 still sent the passage (or no brief)" ;; *) ok "knowledge: LOKI_KNOWLEDGE=0 sends no passage" ;; esac
+kr="$(python3 -I -c 'import json,sys,glob
+for f in sorted(glob.glob(sys.argv[1]+"/.loki/runs/*/receipt.json")):
+    k=json.load(open(f)).get("context",{}).get("knowledge") or {}
+    print(k.get("chars",0)>0 and any(x.startswith("docs/arithmetic.md:") for x in k.get("sources",[])))' "$T/repo-k-on" 2>&1)"
+[ "$kr" = True ] && ok "knowledge: the receipt context lists the source and the characters spent" || bad "knowledge: receipt context.knowledge was: $kr"
+
 finish

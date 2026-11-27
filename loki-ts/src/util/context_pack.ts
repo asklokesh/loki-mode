@@ -368,7 +368,7 @@ export function contextPack(repoDir: string, task: string, files: string[], symb
 }
 
 // ---- L022: did the brief cover the code that changed? ----
-export interface ContextCoverage { brief_files: number; changed_files: number; covered_files: number; context_recall: number | null; context_precision: number | null; reads_before_first_edit: number | null; pack_tokens?: number }
+export interface ContextCoverage { brief_files: number; changed_files: number; covered_files: number; context_recall: number | null; context_precision: number | null; reads_before_first_edit: number | null; pack_tokens?: number; knowledge?: { sources: string[]; chars: number } }
 
 /**
  * context_recall: changed pre-existing non-test files that the brief named, over changed pre-existing non-test files.
@@ -389,12 +389,14 @@ export function contextCoverage(implement: Record<string, unknown> | undefined, 
   }
   const round = (x: number): number => Math.round(x * 1000) / 1000;
   const pack = implement?.["context_pack"] as { tokens?: unknown } | undefined;
+  const kn = implement?.["knowledge_pack"] as { sources?: unknown; chars?: unknown } | undefined; // project knowledge passages the brief carried (util/knowledge.ts)
   return {
     brief_files: briefSet.size, changed_files: changed.length, covered_files: hit,
     context_recall: changed.length ? round(hit / changed.length) : null,
     context_precision: briefSet.size ? round(hit / briefSet.size) : null,
     reads_before_first_edit: reads,
     ...(typeof pack?.tokens === "number" ? { pack_tokens: pack.tokens } : {}),
+    ...(Array.isArray(kn?.sources) && typeof kn?.chars === "number" ? { knowledge: { sources: kn.sources.filter((x): x is string => typeof x === "string"), chars: kn.chars } } : {}),
   };
 }
 export const contextCoverageBlock = (implement: Record<string, unknown> | undefined, nameStatus: readonly string[], repoDir: string): { context?: ContextCoverage } => { const c = contextCoverage(implement, nameStatus, repoDir); return c ? { context: c } : {}; };
