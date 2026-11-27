@@ -71,10 +71,10 @@ jobs:
       pull-requests: write   # open the pull request
       issues: write          # comment the result on the issue
     # A release tag, and the same loki-mode version: never main, never npm latest.
-    uses: asklokesh/loki-mode/.github/workflows/loki-issue-to-pr.yml@v11.186.0
+    uses: asklokesh/loki-mode/.github/workflows/loki-issue-to-pr.yml@v11.187.0
     with:
       issue: ${{ inputs.issue }}   # only set by workflow_dispatch; an issue event names its own issue
-      version: '11.186.0'
+      version: '11.187.0'
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
@@ -191,7 +191,7 @@ jobs:
           path: ${{ runner.temp }}/loki-cmd
 
       - name: Install Loki Mode
-        run: npm install -g loki-mode@11.186.0
+        run: npm install -g loki-mode@11.187.0
 
       - name: Apply the request (model key, no GitHub token)
         env:
@@ -289,7 +289,7 @@ jobs:
           node-version: '20'
 
       - name: Install Loki Mode
-        run: npm install -g loki-mode@11.186.0
+        run: npm install -g loki-mode@11.187.0
 
       - name: Prove the PR and report
         env:
