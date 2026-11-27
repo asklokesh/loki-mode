@@ -120,7 +120,7 @@ import os, re, subprocess
 ROOTS = ["tests", "scripts", "docs", "skills", "loki-ts", "benchmarks", "eval", "examples", "demo", "references", "autonomy",
          "providers", "tools", "wiki", "packages", "dashboard", "deploy", "vscode-extension"]
 ALLOW = [r"^deploy/loki-", r"^docs/(comments|prd\.md|api\.html|AGENTS\.md)$", r"^\.github/", r"^wiki/My-Page\.md$",
-         r"^dashboard/(terminal|static/?)$", r"^scripts/CI$", r"^loki-ts/runner$", r"^loki-ts/dist(/.*)?$",  # built at publish time, not tracked
+         r"^dashboard/(terminal|static/?)$", r"^scripts/CI$", r"^loki-ts/runner$", r"^loki-ts/dist(/.*)?$", r"^packages/control-plane/ui/dist(/.*)?$",  # built at publish time, not tracked
          r"^tests/(a\.py|Quick|monitoring|unit/?|load\.js)$", r"^autonomy/hooks/$"]
 TEST_REPO = re.compile(r"^tests/(test[-_][^/]*|run-[^/]*|check-[^/]*|(moat|managed|managed_memory|real-run|workspace|commands|fixtures|cli|council|memory|e2e|plugins|dashboard)(/.*)?)$")
 tracked = [f for f in subprocess.check_output(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"]).decode().split("\0") if f]
