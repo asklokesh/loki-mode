@@ -357,12 +357,26 @@ print(" ".join("%s:%s" % (e["stage"], e["type"].split(".")[1]) for e in ev if e[
 # reading the merged commits: it is the only one that adds brief text to an issue run; lane B's tip gave 56283bbaf3afe29d.
 # It is b8fb76be34ea8c2d since the untrusted-input rule line of #692 (buildImplementBrief, UNTRUSTED_INPUT_RULE, added on purpose in the cache-stable prefix): measured 2026-11-26, the kept brief with that one line and its blank line removed hashes to 88f0207ba3c89b01 again, and nothing else in the signature moved.
 # The receipt key set gained verified_by with VERIFY-PLAN V7 (2026-11-20): every receipt says what verified the change; nothing else in the signature moved.
+# It is 11add118b8b9fcf8 and the receipt key set gained issue_preflight with the issue intake preflight of #722 (features/issue_preflight.ts, added on purpose): this leg's stub gh
+# answers none of the preflight reads, so the brief gains the block of UNKNOWN lines and the fixed preflight rules after the quoted task. Measured 2026-11-27: the
+# same leg with LOKI_ISSUE_PREFLIGHT=0 gives b8fb76be34ea8c2d and the old key set again; stage order and the implement key set did not move.
 W3="$T/whole-sig"; make_repo "$W3" 0
 LOKI_E10_PROVE=0 LOKI_E10_PROVE_BY_RUNNING=0 LOKI_E10_ISSUE_ACCEPTANCE=0 E2E_STUB_MODE=done run_loki "$W3" "$T/whole-sig-stub.log" start acme/search#24 --no-pr --max-cost 5
 cp "$(dirname "$(ls "$W3"/.loki/runs/*/events.jsonl 2>/dev/null | head -1)")/implement-brief.txt" "${S1B_KEEP:-/dev/null}" 2>/dev/null # S1B_KEEP=<file>: keep the brief the hash is taken from (for a diff when the pin moves)
 W3SIG="$(python3 -I "$ROOT/tests/min/fixtures/e2e/s1b/sig.py" "$(dirname "$(ls "$W3"/.loki/runs/*/events.jsonl 2>/dev/null | head -1)")" "$W3" 2>&1)"
-[ "$W3SIG" = "stages=intake,{plan,wall},implement,verify,commit,seal; receipt=base_sha,checks,context,cost,cost_preview,diff_sha256,events_sha256,evidence,head_sha,log_seal,loki_version,model,model_source,mutation_outcome,mutation_proof,not_applicable,not_proven,provider,receipt_sha256,repo,resumed,run_id,schema,seal_accuracy,seeded_corpus,self_review,task,time,toolchain,tree,verdict,verification,verified_by,wall; implement=already_done_evidence,brief_files,cascade,coverage_resume,diff_stat,duration_s,exit,impacted_tests,iteration_ids,model,self_review,session_id,session_resume,spec_conflict_reason,summary_tail,tests_reverted; brief=b8fb76be34ea8c2d" ] \
+W3PIN="stages=intake,{plan,wall},implement,verify,commit,seal; receipt=base_sha,checks,context,cost,cost_preview,diff_sha256,events_sha256,evidence,head_sha,issue_preflight,log_seal,loki_version,model,model_source,mutation_outcome,mutation_proof,not_applicable,not_proven,provider,receipt_sha256,repo,resumed,run_id,schema,seal_accuracy,seeded_corpus,self_review,task,time,toolchain,tree,verdict,verification,verified_by,wall; implement=already_done_evidence,brief_files,cascade,coverage_resume,diff_stat,duration_s,exit,impacted_tests,iteration_ids,model,self_review,session_id,session_resume,spec_conflict_reason,summary_tail,tests_reverted; brief=11add118b8b9fcf8"
+[ "$W3SIG" = "$W3PIN" ] \
     && ok "S1b no-loss (issue run): stage order, receipt key set, implement key set and the normalized implement brief equal the base commit's" || bad "S1b no-loss (issue run) differs from the base commit: $W3SIG"
+# #722 opt-out equals the base: the same leg with LOKI_ISSUE_PREFLIGHT=0 gives the signature this leg had before the preflight existed: the brief hash
+# b8fb76be34ea8c2d (the #692 pin above) and the receipt key set without issue_preflight. The expected line is the pin with exactly those two parts put back.
+# Plant: features/issue_preflight.ts issuePreflightOn returns true (rebuild dist); this leg fails.
+W3O="$T/whole-sig-off"; make_repo "$W3O" 0
+LOKI_ISSUE_PREFLIGHT=0 LOKI_E10_PROVE=0 LOKI_E10_PROVE_BY_RUNNING=0 LOKI_E10_ISSUE_ACCEPTANCE=0 E2E_STUB_MODE=done run_loki "$W3O" "$T/whole-sig-off-stub.log" start acme/search#24 --no-pr --max-cost 5
+W3OSIG="$(python3 -I "$ROOT/tests/min/fixtures/e2e/s1b/sig.py" "$(dirname "$(ls "$W3O"/.loki/runs/*/events.jsonl 2>/dev/null | head -1)")" "$W3O" 2>&1)"
+W3OPIN="$(printf '%s' "$W3PIN" | sed -e 's/,issue_preflight,/,/' -e 's/brief=[0-9a-f]*$/brief=b8fb76be34ea8c2d/')"
+case "$W3PIN" in *,issue_preflight,*) : ;; *) bad "S1b opt-out: the default pin no longer names issue_preflight, so this leg proves nothing" ;; esac
+[ "$W3OSIG" = "$W3OPIN" ] && [ "$W3OSIG" != "$W3PIN" ] \
+    && ok "S1b opt-out (issue run): LOKI_ISSUE_PREFLIGHT=0 gives brief hash b8fb76be34ea8c2d and the receipt key set without issue_preflight" || bad "S1b opt-out (issue run) differs from the pre-preflight signature: $W3OSIG"
 
 # --- F4 rerun guard: before any model call, an open Loki pull request from the origin's owner that covers the issue stops `loki start owner/repo#N` --------
 RG="$T/rerun-unit"; make_repo "$RG" 0; git -C "$RG" remote add origin https://github.com/acme/search.git
@@ -599,6 +613,10 @@ pv_run para E2E_STUB_LIST=para E2E_STUB_LIST_LOG="$T/pv-para.list"
 [ "$(grep -c '^Loki 10 prove listing' "$T/pv-para.list" 2>/dev/null)" = 2 ] && grep -q '^- Add full text search to the issues list$' "$T/pv-para.list" && case "$PVS" in "verdict=VERIFIED; asks=1=proved,2=proved; "*) true ;; *) false ;; esac \
     && ok "prove listing: a paraphrased ask is rejected and the listing retried once with that ask named; the verbatim retry is used" || bad "prove listing retry: calls $(grep -c '^Loki 10 prove listing' "$T/pv-para.list" 2>/dev/null); $PVS"
 pv_run badlist pr E2E_STUB_LIST=bad
+# #722 issue intake preflight: the pull request body of an issue run carries the preflight section. This leg's stub gh answers none of the preflight reads, so
+# the section must say prior art is UNKNOWN and never that none was found. Plant: stages/pr.ts drop preflightPrSection (rebuild dist); this leg fails.
+PFBODY="$(cat "$PVD/pr-body.md" 2>/dev/null)"
+case "$PFBODY" in *"## Issue preflight"*"Prior art is UNKNOWN"*"Could not be read"*) case "$PFBODY" in *"No related issue or pull request was found"*) bad "preflight: the pull request body says none was found while the lookups failed" ;; *) ok "preflight: the pull request body of an issue run carries the preflight section, UNKNOWN where the lookups failed" ;; esac ;; *) bad "preflight: the pull request body lacks the preflight section ($(printf '%s' "$PFBODY" | wc -c | tr -d ' ') bytes)" ;; esac
 case "$PVS" in "verdict=PARTIAL; asks=; "*"lines=not proved: asks could not be listed") pvbl=ok ;; *) pvbl=bad ;; esac
 [ "$pvbl" = ok ] && pv_kept && ok "prove listing: a second paraphrased list gives PARTIAL \"asks could not be listed\"; the diff and the pull request are kept" || bad "prove listing twice bad: $PVS; outcome $(grep '^Outcome:' <<< "$OUT")"
 pv_run notrun E2E_STUB_PROVE=notrun

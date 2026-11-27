@@ -1,4 +1,5 @@
 // E-16: Plan (ENGINE.md 4). A fast-tier session sees up to 8 relevant files (keyword overlap with the repo map) and writes at most 10 lines to <runDir>/plan-output.txt; the engine reads and truncates it (missing/unreadable is an empty plan, never a crash).
+import { preflightBriefBlock } from "../../features/issue_preflight.ts";
 import { stderrIsTty } from "../../util/term_width.ts";
 import { wallOnLeanOn } from "../../util/wall_knobs.ts";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -98,7 +99,7 @@ export const planStage: Stage = {
     const cardOn = intentCardEnabled(process.env);
     const runPlan = (onSonnet: boolean) => ctx.sessions.run({
       stage: "plan",
-      brief: buildPlanBrief(task, relevantFiles, outputPath, join(ctx.runDir, PLAN_SCOPE_FILE), pr.routed && !pr.preset, cardOn, mutationStrict(), reviewerBriefEnabled(), prior.intake?.assumptions, issueAcceptanceOf(prior.intake).length > 0) + (pr.preset ? `\n\n${PRESET_PLAN_INSTRUCTION}` : ""),
+      brief: buildPlanBrief(task, relevantFiles, outputPath, join(ctx.runDir, PLAN_SCOPE_FILE), pr.routed && !pr.preset, cardOn, mutationStrict(), reviewerBriefEnabled(), prior.intake?.assumptions, issueAcceptanceOf(prior.intake).length > 0) + preflightBriefBlock(prior.intake).map((b) => `\n\n${b}`).join("") + (pr.preset ? `\n\n${PRESET_PLAN_INSTRUCTION}` : ""),
       tier: "fast",
       iterationId,
       limitS: planStage.limitS,
