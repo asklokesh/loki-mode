@@ -76,7 +76,7 @@
       }
     },
     "knowledge_sources": {
-      "description": "Extra project knowledge for the first implement brief and `loki ask`: a relative path, directory or glob inside the repository, or an owner/repo named by a `workspaces` entry that has a local `path`. README, CONTRIBUTING, docs/ and decision records are always read. Opt out of the brief pack with LOKI_KNOWLEDGE=0.",
+      "description": "Extra project knowledge for the first implement brief and `loki ask`: a relative path, directory or glob inside the repository, or an owner/repo named by a `workspaces` entry that has a local `path` (under the repository's parent directory or the home directory; skipped when LOKI_WORKSPACES=0). A workspace sibling is read only when named here. README, CONTRIBUTING, docs/ and decision records are always read. Opt out of the brief pack with LOKI_KNOWLEDGE=0.",
       "type": "array",
       "items": { "type": "string", "minLength": 1 }
     },
