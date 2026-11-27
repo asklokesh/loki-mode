@@ -602,6 +602,10 @@ pv_run para E2E_STUB_LIST=para E2E_STUB_LIST_LOG="$T/pv-para.list"
 [ "$(grep -c '^Loki 10 prove listing' "$T/pv-para.list" 2>/dev/null)" = 2 ] && grep -q '^- Add full text search to the issues list$' "$T/pv-para.list" && case "$PVS" in "verdict=VERIFIED; asks=1=proved,2=proved; "*) true ;; *) false ;; esac \
     && ok "prove listing: a paraphrased ask is rejected and the listing retried once with that ask named; the verbatim retry is used" || bad "prove listing retry: calls $(grep -c '^Loki 10 prove listing' "$T/pv-para.list" 2>/dev/null); $PVS"
 pv_run badlist pr E2E_STUB_LIST=bad
+# #722 issue intake preflight: the pull request body of an issue run carries the preflight section. This leg's stub gh answers none of the preflight reads, so
+# the section must say prior art is UNKNOWN and never that none was found. Plant: stages/pr.ts drop preflightPrSection (rebuild dist); this leg fails.
+PFBODY="$(cat "$PVD/pr-body.md" 2>/dev/null)"
+case "$PFBODY" in *"## Issue preflight"*"Prior art is UNKNOWN"*"Could not be read"*) case "$PFBODY" in *"No related issue or pull request was found"*) bad "preflight: the pull request body says none was found while the lookups failed" ;; *) ok "preflight: the pull request body of an issue run carries the preflight section, UNKNOWN where the lookups failed" ;; esac ;; *) bad "preflight: the pull request body lacks the preflight section ($(printf '%s' "$PFBODY" | wc -c | tr -d ' ') bytes)" ;; esac
 case "$PVS" in "verdict=PARTIAL; asks=; "*"lines=not proved: asks could not be listed") pvbl=ok ;; *) pvbl=bad ;; esac
 [ "$pvbl" = ok ] && pv_kept && ok "prove listing: a second paraphrased list gives PARTIAL \"asks could not be listed\"; the diff and the pull request are kept" || bad "prove listing twice bad: $PVS; outcome $(grep '^Outcome:' <<< "$OUT")"
 pv_run notrun E2E_STUB_PROVE=notrun

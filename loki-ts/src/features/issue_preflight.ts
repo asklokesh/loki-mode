@@ -77,7 +77,8 @@ const TIMELINE_JQ = ".[] | {event, at: (.created_at // .submitted_at), body, n: 
 export function collectPreflight(a: { repoDir: string; slug: string; number: number; title: string; body: string; createdAt: string; trustedComments: number; excludedComments: number }, d: PreflightDeps = {}): PreflightReport {
   const env = d.env ?? process.env, now = d.now ?? Date.now, t0 = now(), deadline = t0 + budgetMs(env);
   const rawGh: Gh = d.gh ?? ((args, timeoutMs) => { const r = spawnSync("gh", [...args], { cwd: a.repoDir, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: timeoutMs, killSignal: "SIGKILL", maxBuffer: 32 * 1024 * 1024 }); return { rc: r.status ?? 124, stdout: r.stdout ?? "", stderr: r.stderr ?? "" }; });
-  const git: Git = d.git ?? ((args) => { try { const r = safeGitSpawn(a.repoDir, args, { encoding: "utf8", timeout: 10_000, killSignal: "SIGKILL" }); return { rc: r.status ?? 124, stdout: r.stdout ?? "" }; } catch { return { rc: 125, stdout: "" }; } });
+  const rawGit: Git = d.git ?? ((args) => { try { const r = safeGitSpawn(a.repoDir, args, { encoding: "utf8", timeout: 10_000, killSignal: "SIGKILL" }); return { rc: r.status ?? 124, stdout: r.stdout ?? "" }; } catch { return { rc: 125, stdout: "" }; } });
+  const git: Git = (args) => (deadline - now() <= 0 ? { rc: 124, stdout: "" } : rawGit(args)); // git reads share the one time budget; 124 reads as UNKNOWN below, never as a finding
   const unknown: string[] = [], queries: string[] = []; let calls = 0;
   /** One bounded gh read. null means the page could not be read; the page is named in `unknown`. */
   const gh = (page: string, args: readonly string[]): GhOut | null => {
@@ -129,19 +130,19 @@ export function collectPreflight(a: { repoDir: string; slug: string; number: num
   const prior: PriorArtRow[] = [], age = (iso: string | undefined): number | null => { const t = Date.parse(iso ?? ""); return Number.isFinite(t) ? Math.max(0, Math.floor((now() - t) / 86_400_000)) : null; };
   const views = new Map<number, PrView>();
   for (const [n, f] of order.slice(0, MAX_CANDIDATES)) {
-    const by = [...f.by], issueRow = (label: FactLabel, source: string): PriorArtRow => ({ number: n, kind: "issue", label, source, state: (f.state ?? "UNKNOWN").toUpperCase(), title: clip(f.title ?? "", 80), url: f.url ?? `https://github.com/${a.slug}/issues/${n}`, draft: null, age_days: null, review: "n/a", ci: "n/a", mergeable: "n/a", base: null, merged_at: null, closes: "unknown", found_by: by });
+    const by = [...f.by], issueRow = (label: FactLabel, source: string): PriorArtRow => ({ number: n, kind: "issue", label, source, state: (f.state ?? "UNKNOWN").toUpperCase(), title: clip(redactSecrets(f.title ?? "").replace(/["`]/g, "'"), 80), url: f.url ?? `https://github.com/${a.slug}/issues/${n}`, draft: null, age_days: null, review: "n/a", ci: "n/a", mergeable: "n/a", base: null, merged_at: null, closes: "unknown", found_by: by });
     if (f.kind === "issue") { prior.push(issueRow(f.state ? "VERIFIED" : "REPORTED", f.state ? "gh issue list" : "issue timeline")); continue; }
     const before = unknown.length, r = gh(`pull request #${n}`, ["pr", "view", String(n), "--repo", a.slug, "--json", PR_FIELDS]);
     const v = r && r.rc === 0 ? parse<PrView>(r.stdout) : null;
     if (!v || typeof v.state !== "string") {
       if (r && /could not resolve to a pullrequest/i.test(r.stderr)) { unknown.length = before; prior.push(issueRow("REPORTED", "thread mention; gh says it is not a pull request")); continue; }
       if (r && r.rc === 0) unknown.push(`pull request #${n}: could not be parsed`);
-      prior.push({ number: n, kind: "pr", label: "UNKNOWN", source: `gh pr view ${n} failed`, state: "UNKNOWN", title: clip(f.title ?? "", 80), url: f.url ?? `https://github.com/${a.slug}/pull/${n}`, draft: null, age_days: null, review: "UNKNOWN", ci: "UNKNOWN", mergeable: "UNKNOWN", base: null, merged_at: null, closes: "unknown", found_by: by });
+      prior.push({ number: n, kind: "pr", label: "UNKNOWN", source: `gh pr view ${n} failed`, state: "UNKNOWN", title: clip(redactSecrets(f.title ?? "").replace(/["`]/g, "'"), 80), url: f.url ?? `https://github.com/${a.slug}/pull/${n}`, draft: null, age_days: null, review: "UNKNOWN", ci: "UNKNOWN", mergeable: "UNKNOWN", base: null, merged_at: null, closes: "unknown", found_by: by });
       continue;
     }
     views.set(n, v);
     const closes = Array.isArray(v.closingIssuesReferences) && v.closingIssuesReferences.some((c) => c?.number === a.number && (!c.repository?.name || `${c.repository.owner?.login ?? ""}/${c.repository.name}`.toLowerCase() === a.slug.toLowerCase()));
-    prior.push({ number: n, kind: "pr", label: "VERIFIED", source: `gh pr view ${n}`, state: v.state.toUpperCase(), title: clip(redactSecrets(v.title ?? ""), 80), url: v.url ?? `https://github.com/${a.slug}/pull/${n}`, draft: typeof v.isDraft === "boolean" ? v.isDraft : null, age_days: age(v.createdAt), review: v.reviewDecision ? String(v.reviewDecision) : "none", ci: ciOf(v.statusCheckRollup), mergeable: typeof v.mergeable === "string" && v.mergeable ? v.mergeable : "UNKNOWN", base: v.baseRefName ?? null, merged_at: v.mergedAt ?? null, closes: closes ? "yes" : saysNotClosing(String(v.body ?? ""), a.number) ? "says not" : "no link", found_by: by });
+    prior.push({ number: n, kind: "pr", label: "VERIFIED", source: `gh pr view ${n}`, state: v.state.toUpperCase(), title: clip(redactSecrets(v.title ?? "").replace(/["`]/g, "'"), 80), url: v.url ?? `https://github.com/${a.slug}/pull/${n}`, draft: typeof v.isDraft === "boolean" ? v.isDraft : null, age_days: age(v.createdAt), review: v.reviewDecision ? String(v.reviewDecision) : "none", ci: ciOf(v.statusCheckRollup), mergeable: typeof v.mergeable === "string" && v.mergeable ? v.mergeable : "UNKNOWN", base: v.baseRefName ?? null, merged_at: v.mergedAt ?? null, closes: closes ? "yes" : saysNotClosing(String(v.body ?? ""), a.number) ? "says not" : "no link", found_by: by });
   }
 
   // 4. Freshness: the issue is a snapshot. What it cites is checked against the base checkout.
@@ -151,7 +152,7 @@ export function collectPreflight(a: { repoDir: string; slug: string; number: num
   if (versions.length) freshness.push({ label: "REPORTED", source: "issue text", text: `cites version(s) ${versions.join(", ")}` });
   for (const sha of uniq([...text.matchAll(/\b([0-9a-f]{7,40})\b/g)].map((m) => m[1]!).filter((s) => /[a-f]/.test(s) && /\d/.test(s))).slice(0, 2)) {
     const r = git(["cat-file", "-e", `${sha}^{commit}`]);
-    freshness.push(r.rc === 0 ? { label: "VERIFIED", source: "git cat-file", text: `cited commit ${sha} is in this checkout` } : { label: "REPORTED", source: "issue text", text: `cites ${sha}, which is not a commit in this checkout` });
+    freshness.push(r.rc === 0 ? { label: "VERIFIED", source: "git cat-file", text: `cited commit ${sha} is in this checkout` } : r.rc === 1 || r.rc === 128 ? { label: "REPORTED", source: "issue text", text: `cites ${sha}, which is not a commit in this checkout` } : { label: "UNKNOWN", source: "git cat-file", text: `could not check whether ${sha} is a commit in this checkout` });
   }
   for (const p of ph.paths.slice(0, 6)) {
     const r = git(["ls-files", "--", p, `:(glob)**/${p}`]);
@@ -214,7 +215,7 @@ export function preflightStartLine(r: PreflightReport | null): string | null {
   if (!r) return null;
   if (r.stop) return `loki: ${r.issue} is already covered: merged pull request #${r.stop.pr} closes it and is on this base; no change is made (LOKI_ISSUE_PREFLIGHT=0 runs anyway)`;
   const open = r.prior_art.filter((p) => p.kind === "pr" && p.state === "OPEN" && p.closes === "yes").map((p) => `#${p.number}`);
-  return open.length ? `loki: open pull request(s) ${open.join(", ")} say they close ${r.issue}; the run records them and is told not to duplicate them (LOKI_ISSUE_PREFLIGHT=0 skips this read)` : null;
+  return open.length ? `loki: open pull request(s) ${open.join(", ")} say they close ${r.issue}; they are not merged, so the run goes on and names them in its brief, receipt and pull request body (LOKI_ISSUE_PREFLIGHT=0 skips this read)` : null;
 }
 const reportOf = (intake: unknown): PreflightReport | null => { const r = (intake as { issue_preflight?: PreflightReport } | undefined)?.issue_preflight; return r && r.v === 1 && Array.isArray(r.prior_art) ? r : null; };
 const fact = (f: Fact): string => `- ${f.label}${f.label === "UNKNOWN" ? "" : ` (${f.source})`}: ${f.text}`;
