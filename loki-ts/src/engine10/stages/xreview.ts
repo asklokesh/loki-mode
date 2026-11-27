@@ -4,7 +4,7 @@ import { defaultBudgetsOn } from "../types.ts";
 import { join } from "node:path";
 import { asProvider, isOff, loadReviewStageAgent, reviewCli, reviewProvider, xvendorDefault, type ReviewProvider } from "../../council/role_agents.ts";
 export { reviewProvider, xvendorDefault, type ReviewProvider } from "../../council/role_agents.ts"; // re-exported: callers and tests import the review provider pick from here
-import { run } from "../../util/shell.ts";
+import { run } from "../../util/shell.ts"; import { escapeRegex } from "../../util/regex_escape.ts";
 import { withChildLedger } from "../../util/child_ledger.ts";
 import { claudeFlagSupported, ensureClaudeHelpCache, leanReviewerFlags, REVIEW_ALLOWLIST_NO_GIT, REVIEW_GUARD_DENYLIST } from "../../providers/claude_flags.ts";
 import { ignoredPaths, safeGitRun } from "../../util/safe_git.ts"; export { ignoredPaths }; import { acceptanceLines, acceptancePromptBlock, issueAcceptanceCapOn, issueAcceptanceOf } from "../../util/intent_card.ts";
@@ -28,8 +28,7 @@ export function isPreRedInfo(note: string, touched: readonly string[], preRedFil
   const low = note.toLowerCase(), names = (p: string): boolean => low.includes(p.toLowerCase()) || (baseOf(p).length >= 5 && low.includes(baseOf(p).toLowerCase()));
   if (touched.some(names)) return false;
   const tops = [...new Set(preRedFiles.filter((f) => f.includes("/")).map((f) => f.split("/")[0]!).filter(Boolean))];
-  const esc = (t: string): string => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return preRedFiles.some(names) || (DOES_NOT_TOUCH.test(note) && tops.some((t) => new RegExp(`(?<![\\w/-])${esc(t)}(?![\\w-])`, "i").test(note)));
+  return preRedFiles.some(names) || (DOES_NOT_TOUCH.test(note) && tops.some((t) => new RegExp(`(?<![\\w/-])${escapeRegex(t)}(?![\\w-])`, "i").test(note)));
 }
 /** What of a flag-level review holds the label and what is only recorded: `held` keeps the note text as is, `disclosed` is the same text with a does-not-cap tail the closure rules read. A block holds every note (the cap is the review's own), a note with no kind or an unknown kind holds, an UNMET note holds. */
 export function splitFlags(xr: CrossReview | null | undefined, ctx: { touched: readonly string[]; preRedFiles: readonly string[] }, env: NodeJS.ProcessEnv = process.env): { held: string[]; disclosed: string[] } {
