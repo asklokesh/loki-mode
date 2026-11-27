@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## v11.188.0 (2026-11-27)
+
+### Changed
+
+- A review reason tagged LIMIT or INFO, or an untagged reason that has a failure word, names an already-red test file (by path, or by a file name of 5 or more characters) and names no file the change touches, is no longer listed in the receipt's held_by; it stays in not_proven with a 'disclosed, does not cap' tail. DEFECT, UNMET, untagged and unknown reasons stay listed, and a block lists every note. A hygiene note and a reason with a lower-case, colon-less or unknown tag stay listed. The label itself is unchanged by this (LOKI_E10_REVIEW_KINDS=0 opts out; the count shows in the seal.steps label_rules field). The reviewer prompt now asks for a kind at the start of each reason, only when the opt-out is not set.
+
+- The 'no fail-then-pass test' hold is no longer listed in held_by when Loki's own run of the kept proof script fails without the change and passes with it (own proof ok); it is still listed when that run did not happen or did not show the change (seal.ts ftpHoldListed; LOKI_E10_FTP_LISTING=0 opts out; fire marker in the seal.steps label_rules field). Listing only: the label is unchanged, and a closure round no longer spends a session on that hold.
+
+- Contract-first first session: when the issue lists acceptance lines, the first implement session gets them numbered after the task block, marked as untrusted quoted text with control characters stripped and secrets redacted, and is asked to close with a table of line number, evidence and status plus a "Decided on my own" list. LOKI_E10_CONTRACT=0 opts out; a contract.frozen event (lines listed, total) says it fired.
+
+- Drift report: report-only lists of what the session decided on its own, did differently than asked, or left out, built from the closing table, the acceptance rows and the scope notes, with secrets redacted. Closing keywords and @mentions are broken in the drift lists and in the reviewer findings of the pull request text. The no-closing-table sentence prints only when a contract was sent. LOKI_E10_DRIFT=0 opts out of the drift report; a drift.report event says it fired.
+
+- Test weakening check: reports per finding the file, line and kind (deleted case, skip marker, dropped assertion, always-true assertion) of weakened existing tests in the pull request section. It adds no hold of its own beyond the existing testFileWeakened check. LOKI_E10_TEST_WEAKENING=0 opts out; a test.weakening event says it fired.
+
+- Release checks: calibration on hc2 (merged tree 099b5aac9): n 32, right 28, verifier right 29, false VERIFIED 0, invalid 0. Full gate: 29 of 31 suites passed; the two red suites match the base reds (scope-and-fix: 4 cells, quick verify outcome PARTIAL and PROOF-TEST-SIDE unit, mutationProof and proofSupport, 1036 passed; h2h-harness: the 2 learning arm on the stub cells, 166 passed). Not measured: no real model run on this build yet, so the effect of the new reviewer prompt sentence on what a reviewer returns is not measured.
+
 ## v11.187.0 (2026-11-26)
 
 ### Changed
