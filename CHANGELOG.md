@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed
+
+- Fixed: a service a proof script started and detached (it left the process group, lost the run's marker and sat in a temp directory the script made outside the scratch) outlived the run, with its temp directory (#713). The scratch cleanup now also stops a listener that started during the run, whose parent is init and whose working directory is in a temp directory created after the run's scratch, then removes that directory and names it in the cleanup record as outside_removed. Every other evidence rule is unchanged. Not measured: no real Loki run; a service that never listens on a TCP port and sits outside the scratch is still left alone.
+
 ## v11.186.0 (2026-11-26)
 
 ### Changed

@@ -4,7 +4,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { createInterface } from "node:readline";
 import { StringDecoder } from "node:string_decoder";
 import { join, resolve } from "node:path";
-import { accessSync, chmodSync, constants as fsConstants, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, chmodSync, constants as fsConstants, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, lstatSync, readlinkSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { providerCause } from "./retry_class.ts";
@@ -254,12 +254,33 @@ function cwdOf(pid: number): string {
   return (r.stdout ?? "").split("\n").find((l) => l.startsWith("n"))?.slice(1) ?? "";
 }
 const portOf = (pid: number): number | null => { const r = spawnSync("lsof", ["-nP", "-a", "-p", String(pid), "-iTCP", "-sTCP:LISTEN", "-Fn"], { encoding: "utf8", timeout: 3000 }); const m = /\nn[^\n]*:(\d+)/.exec(`\n${r.stdout ?? ""}`); return m ? Number(m[1]) : null; };
-/** The processes this scratch's run owns, by the evidence above; `why` says which. */
-export function ownedProcesses(s: SessionScratch): (Cand & { why: string })[] {
-  const c = candidates(s.since), nonce = s.nonce ? carriesNonce(c.map((x) => x.pid), s.nonce) : new Set<number>(), owned = new Map<number, Cand & { why: string }>();
+/** #713 OUTSIDE LISTENER: a daemon that double-forked out of the run's process group, lost the nonce (its title overwrote the environment) and sat in a
+ *  directory the script made outside the scratch (`mktemp -d /tmp/...`). It is the run's only when ALL hold: it started during the run, its parent is init, it
+ *  listens on a TCP port, and its working directory is inside a directory that sits directly in a temp root, was created after the run's scratch directory and is no
+ *  other run's scratch. That directory (never the temp root) is what the cleanup removes. Returns the directory, or null. */
+function outsideTempDir(cwd: string, since: number, scratchDir: string): string | null {
+  if (!cwd) return null;
+  let born = since * 1000; try { const b = lstatSync(scratchDir).birthtimeMs; if (b > 0) born = b; } catch { /* scratch already gone: the second-level start time stands */ }
+  const roots = new Set<string>(); for (const r of ["/tmp", "/var/tmp", tmpdir(), process.env["TMPDIR"] ?? ""]) { if (!r) continue; try { roots.add(realpathSync(r)); } catch { /* absent */ } }
+  for (const root of roots) {
+    if (!cwd.startsWith(`${root}/`)) continue;
+    const top = join(root, cwd.slice(root.length + 1).split("/")[0]!);
+    try {
+      const st = lstatSync(top); if (!st.isDirectory() || st.isSymbolicLink() || (st.birthtimeMs > 0 ? st.birthtimeMs : st.ctimeMs) < born) return null;
+      if (existsSync(join(top, SCRATCH_MARKER)) || existsSync(join(top, ".loki-run-owned"))) return null;
+      return top;
+    } catch { return null; }
+  }
+  return null;
+}
+/** The processes this scratch's run owns, by the evidence above; `why` says which. `outside` is set for the #713 case: the temp directory to remove. */
+export function ownedProcesses(s: SessionScratch): (Cand & { why: string; outside?: string })[] {
+  const c = candidates(s.since), nonce = s.nonce ? carriesNonce(c.map((x) => x.pid), s.nonce) : new Set<number>(), owned = new Map<number, Cand & { why: string; outside?: string }>();
   for (const x of c) {
-    const why = nonce.has(x.pid) ? "environment" : inside(cwdOf(x.pid), s.dir) ? "working directory" : x.command.split(/\s+/).some((w) => w.startsWith("/") && inside(w.replace(/[,;:]+$/, ""), s.dir)) ? "command line" : null;
-    if (why) owned.set(x.pid, { ...x, why });
+    const cwd = nonce.has(x.pid) ? "" : cwdOf(x.pid);
+    const why = nonce.has(x.pid) ? "environment" : inside(cwd, s.dir) ? "working directory" : x.command.split(/\s+/).some((w) => w.startsWith("/") && inside(w.replace(/[,;:]+$/, ""), s.dir)) ? "command line" : null;
+    if (why) { owned.set(x.pid, { ...x, why }); continue; }
+    if (x.ppid === 1 && cwd) { const top = outsideTempDir(cwd, s.since, s.dir); if (top && portOf(x.pid) !== null) owned.set(x.pid, { ...x, why: "listener left in a temp directory made during the run", outside: top }); }
   }
   for (let grew = true; grew;) { grew = false; for (const x of c) if (!owned.has(x.pid) && owned.has(x.ppid)) { owned.set(x.pid, { ...x, why: "child of an owned process" }); grew = true; } }
   return [...owned.values()];
@@ -267,17 +288,18 @@ export function ownedProcesses(s: SessionScratch): (Cand & { why: string })[] {
 /** One process in a cleanup record: the base name of its executable only, never its arguments (a command line can carry a password or a token). */
 export interface ScratchProc { pid: number; name: string; port: number | null; why: string }
 export const procName = (command: string): string => (command.trim().split(/\s+/)[0] ?? "").split("/").pop()!.slice(0, 60);
-export interface ScratchCleanup { dir: string; stopped: ScratchProc[]; left: ScratchProc[]; removed: boolean; kept?: string }
+export interface ScratchCleanup { dir: string; stopped: ScratchProc[]; left: ScratchProc[]; removed: boolean; kept?: string; outside_removed?: string[] }
 /** Stops every process the run owns (start time rechecked before each signal; TERM, about 2 s, then KILL), scans again until nothing owned is alive, and
  *  only then removes the directory (its marker must hold its own path). A pid the session listed in <dir>/pids that is not provably the run's is left alone and
  *  reported. `signal` is a test seam. Never throws. */
 export function cleanupSessionScratch(s: SessionScratch, o: { signal?: (pid: number, sig: NodeJS.Signals) => void; termWaitMs?: number } = {}): ScratchCleanup {
   const send = o.signal ?? ((pid: number, sig: NodeJS.Signals) => { process.kill(pid, sig); }), stopped: ScratchCleanup["stopped"] = [], left: ScratchCleanup["left"] = [];
-  let still: (Cand & { why: string })[] = [];
+  let still: (Cand & { why: string })[] = []; const outside = new Set<string>();
   try {
     for (let round = 0; round < 4; round++) {
       const own = ownedProcesses(s).filter((x) => alive(x.pid));
       if (own.length === 0) { still = []; break; }
+      for (const x of own) if (x.outside) outside.add(x.outside);
       const info = own.map((x) => ({ ...x, port: portOf(x.pid) }));
       for (const x of info) { if (processStartEpoch(x.pid) === x.start) { try { send(x.pid, "SIGTERM"); } catch { /* gone */ } } }
       for (let i = 0; i < Math.ceil((o.termWaitMs ?? 2000) / 100) && info.some((x) => alive(x.pid)); i++) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
@@ -293,9 +315,10 @@ export function cleanupSessionScratch(s: SessionScratch, o: { signal?: (pid: num
   } catch { /* never fails the run */ }
   const live = stopped.filter((x) => still.some((y) => y.pid === x.pid));
   if (live.length) return { dir: s.dir, stopped, left, removed: false, kept: `kept: ${live.length} owned process(es) did not stop: ${live.map((x) => x.pid).join(", ")}` };
+  const outside_removed: string[] = []; for (const d of outside) { try { rmSync(d, { recursive: true, force: true }); if (!existsSync(d)) outside_removed.push(d); } catch { /* left: the next run's scan or the user */ } } // #713: only after every owned process is gone
   let removed = false;
   try { if (readFileSync(join(s.dir, SCRATCH_MARKER), "utf8") === s.dir) { try { chmodSync(join(s.dir, TASK_MEMORY_SUBDIR), 0o700); } catch { /* no task memory here */ } rmSync(s.dir, { recursive: true, force: true }); removed = !existsSync(s.dir); } } catch { removed = !existsSync(s.dir); } // TASK MEMORY: its read-only directory is made writable first, or the removal fails on it
-  return { dir: s.dir, stopped, left, removed };
+  return { dir: s.dir, stopped, left, removed, ...(outside_removed.length ? { outside_removed } : {}) };
 }
 /** The record a run wrote at scratch creation, when its directory still exists. */
 export function readScratchRecord(runDir: string): (SessionScratch & { worker_pid?: number }) | null {

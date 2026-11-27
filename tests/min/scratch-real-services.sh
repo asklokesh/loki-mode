@@ -163,4 +163,37 @@ fs.writeFileSync(process.env.OF + "/package.json", JSON.stringify({ name: "fx", 
 const b = m.ruleStatus([L], rr)[0].status;
 console.log(a + " " + b);' 2>&1)"
 [ "$O6" = "unmet met" ] && ok "O6 git fixture: a source file naming the product and no manifest line is unmet; a manifest line naming it is met" || bad "O6 fixture: $O6"
+# ---- Outside listener (#713): a daemon that left the process group, lost the nonce and sits in a temp directory the script made outside the scratch. ----
+# L1: a fixture proof script step makes a directory directly under /tmp and starts a python listener that double-forks, setsids and runs under env -i, then
+# exits. After cleanupSessionScratch no process is alive, the directory is gone, and the record names both. L2: a listener started before the scratch existed
+# (an unrelated daemon) in its own fresh temp directory is not touched.
+echo "TEST: leaked listener outside the scratch is stopped and its temp directory removed (#713)"
+LOUT="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
+const w = await import(process.env.ROOT + "/loki-ts/src/runner/worker_proc.ts"), fs = await import("node:fs");
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+const PY = "import os,sys,socket,time\nif os.fork(): sys.exit(0)\nos.setsid()\nif os.fork(): sys.exit(0)\nos.chdir(sys.argv[1])\nl=socket.socket(); l.bind((\"127.0.0.1\",0)); l.listen(1)\nopen(sys.argv[1]+\"/pid\",\"w\").write(str(os.getpid()))\ntime.sleep(300)\n";
+const launch = (env, dir, py) => Bun.spawnSync(["bash", "-c", `env -i PATH="$PATH" python3 "${py}" "${dir}"; sleep 1`], { env, stdout: "ignore", stderr: "ignore", stdin: "ignore", timeout: 20000 });
+const out = {}, made = [], pids = [];
+try {
+  const other = fs.mkdtempSync("/tmp/tmp."); made.push(other); fs.writeFileSync(other + "/l.py", PY);
+  launch(process.env, other, other + "/l.py"); const opid = Number(fs.readFileSync(other + "/pid", "utf8")); pids.push(opid);
+  await Bun.sleep(1500);
+  const s = w.createSessionScratch(), env = { ...process.env, ...w.scratchSessionEnv(s) };
+  const fresh = fs.mkdtempSync("/tmp/tmp."); made.push(fresh); fs.writeFileSync(fresh + "/l.py", PY); // the script sits outside the scratch too: its command line must not prove ownership
+  launch(env, fresh, fresh + "/l.py");
+  const pid = Number(fs.readFileSync(fresh + "/pid", "utf8")); pids.push(pid);
+  out.before = alive(pid); const freshReal = fs.realpathSync(fresh);
+  const r = w.cleanupSessionScratch(s, { termWaitMs: 3000 });
+  out.stopped = r.stopped.some((x) => x.pid === pid && x.port !== null); out.alive = alive(pid); out.dir_gone = !fs.existsSync(fresh);
+  out.recorded = (r.outside_removed ?? []).includes(freshReal); out.scratch_removed = r.removed;
+  out.other_untouched = alive(opid) && fs.existsSync(other);
+} finally { for (const p of pids) { try { process.kill(p, "SIGKILL"); } catch {} } for (const d of made) { try { fs.rmSync(d, { recursive: true, force: true }); } catch {} } }
+console.log(JSON.stringify(out));' 2>&1)"
+echo "    $LOUT"
+LC() { python3 -I -c 'import json, sys
+o = json.loads(sys.argv[1]); sys.exit(0 if eval(sys.argv[2], {"o": o}) else 1)' "$LOUT" "$1" 2>/dev/null; }
+LC 'o["before"] is True' && ok "L1 setup: the fixture listener was running before the cleanup" || bad "L1 setup: $LOUT"
+LC 'o["stopped"] is True and o["alive"] is False' && ok "L1: the double-forked listener outside the scratch is stopped, its port in the record" || bad "L1: listener survived: $LOUT"
+LC 'o["dir_gone"] is True and o["recorded"] is True and o["scratch_removed"] is True' && ok "L1: its temp directory is removed and named in outside_removed; the scratch is removed" || bad "L1: directory left: $LOUT"
+LC 'o["other_untouched"] is True' && ok "L2: a listener that started before the run, in its own temp directory, is left alone" || bad "L2: unrelated listener touched: $LOUT"
 finish
