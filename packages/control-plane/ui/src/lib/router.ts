@@ -1,27 +1,19 @@
-// A hash router small enough to read: #/, #/project/<org>/<project>, #/repo/<name>, #/runs/<source>/<run>.
+// Hash routes: #needs #running #delivered #all #spend #setup and #run/<source>/<run>. #runs/<source>/<run> is the link the CLI prints (runPageUrl).
 import { useEffect, useState } from "react";
+import type { View } from "./model";
 
-export type Route =
-  | { page: "account" }
-  | { page: "project"; org: string; project: string }
-  | { page: "repo"; repo: string }
-  | { page: "run"; source: string; run: string };
+export type Route = { view: View; run: { source: string; run: string } | null };
+const VIEW_SET = new Set<string>(["needs", "running", "delivered", "all", "spend", "setup"]);
 
 export function parse(hash: string): Route {
-  const p = hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
-  if (p[0] === "project" && p[1] && p[2]) return { page: "project", org: p[1], project: p[2] };
-  if (p[0] === "repo" && p[1]) return { page: "repo", repo: p.slice(1).join("/") };
-  if ((p[0] === "run" || p[0] === "runs") && p[1] && p[2]) return { page: "run", source: p[1], run: p[2] }; // "runs" is the link the CLI prints (runPageUrl)
-  return { page: "account" };
+  const p = hash.replace(/^#\/?/, "").split("/").filter(Boolean).map((s) => { try { return decodeURIComponent(s); } catch { return s; } });
+  if ((p[0] === "run" || p[0] === "runs") && p[1] && p[2]) return { view: "all", run: { source: p[1], run: p[2] } };
+  return { view: VIEW_SET.has(p[0] ?? "") ? (p[0] as View) : "needs", run: null };
 }
-
 export const href = {
-  account: (): string => "#/",
-  project: (org: string, project: string): string => `#/project/${encodeURIComponent(org)}/${encodeURIComponent(project)}`,
-  repo: (repo: string): string => `#/repo/${encodeURIComponent(repo)}`,
-  run: (source: string, run: string): string => `#/runs/${encodeURIComponent(source)}/${encodeURIComponent(run)}`,
+  view: (v: View): string => `#${v}`,
+  run: (source: string, run: string): string => `#run/${encodeURIComponent(source)}/${encodeURIComponent(run)}`,
 };
-
 export function useRoute(): Route {
   const [r, set] = useState<Route>(() => parse(location.hash));
   useEffect(() => {
