@@ -15,8 +15,36 @@ import { capToSessionPin } from "../../runner/model_rank.ts";
 import { isClaudeModel, noteRoleModel, PROVIDER_DEFAULT_MODEL, roleModel } from "../../util/claude_model.ts";
 import { backstopS, type RunContext, type Verdict } from "../types.ts";
 export type ReviewLevel = "pass" | "flag" | "block" | "not_run";
+/** E10 label trust (#717): the kind a reviewer gives each reason. Only DEFECT and UNMET hold the label; LIMIT (a coverage limit, something it could not check) and INFO (an observation that states no defect) are recorded as notes. A reason with no kind, or one this build does not know, holds (fail-safe). */
+export type ReviewKind = "DEFECT" | "UNMET" | "LIMIT" | "INFO";
+const KIND_RE = /^\s*\**(DEFECT|UNMET|LIMIT|INFO)\b\**\s*[:.-]/i;
+export const reviewKindOf = (reason: string): ReviewKind | null => { const m = KIND_RE.exec(reason); return m ? (m[1]!.toUpperCase() as ReviewKind) : null; };
+export const reviewKindsOn = (env: NodeJS.ProcessEnv = process.env): boolean => !/^(0|off|false|no)$/i.test((env["LOKI_E10_REVIEW_KINDS"] ?? "").trim()); // default on, =0 opts out: every flag holds as before
+const FAIL_WORD = /\b(fail|fails|failed|failing|failure|failures|red)\b/i, DOES_NOT_TOUCH = /\b(not touch|does not touch|doesn't touch|untouched|not part of|outside (?:the|this) (?:diff|change)|not changed|unchanged)\b/i;
+const baseOf = (p: string): string => p.slice(p.lastIndexOf("/") + 1);
+/** A flag about failing tests in files the diff does not touch, where those tests are already red before the change (the pre-red list), states no defect of this change. Pure: the note names a pre-red file (path, or a basename of 5 characters or more) or a top-level folder that holds pre-red files, and names no file the diff touched. */
+export function isPreRedInfo(note: string, touched: readonly string[], preRedFiles: readonly string[]): boolean {
+  if (!FAIL_WORD.test(note) || preRedFiles.length === 0) return false;
+  const low = note.toLowerCase(), names = (p: string): boolean => low.includes(p.toLowerCase()) || (baseOf(p).length >= 5 && low.includes(baseOf(p).toLowerCase()));
+  if (touched.some(names)) return false;
+  const tops = [...new Set(preRedFiles.filter((f) => f.includes("/")).map((f) => f.split("/")[0]!).filter(Boolean))];
+  const esc = (t: string): string => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return preRedFiles.some(names) || (DOES_NOT_TOUCH.test(note) && tops.some((t) => new RegExp(`(?<![\\w/-])${esc(t)}(?![\\w-])`, "i").test(note)));
+}
+/** What of a flag-level review holds the label and what is only recorded: `held` keeps the note text as is, `disclosed` is the same text with a does-not-cap tail the closure rules read. A block holds every note (the cap is the review's own), a note with no kind or an unknown kind holds, an UNMET note holds. */
+export function splitFlags(xr: CrossReview | null | undefined, ctx: { touched: readonly string[]; preRedFiles: readonly string[] }, env: NodeJS.ProcessEnv = process.env): { held: string[]; disclosed: string[] } {
+  const notes = xr?.notes ?? [];
+  if (!xr || xr.level !== "flag" || !reviewKindsOn(env)) return { held: [...notes], disclosed: [] };
+  const held: string[] = [], disclosed: string[] = [];
+  notes.forEach((n, i) => {
+    const kind = xr.kinds?.[i] ?? null, body = n.replace(/^cross-review \w+ \([^)]*\):\s*/, "");
+    const info = kind !== "UNMET" && kind !== "DEFECT" ? isPreRedInfo(body, ctx.touched, ctx.preRedFiles) : false, soft = kind === "LIMIT" || kind === "INFO" || info;
+    if (soft && !isUnmetNote(n)) disclosed.push(`${n} (disclosed, does not cap: ${info ? "INFO, a failure in a file this change does not touch that is already red before it" : kind})`); else held.push(n);
+  });
+  return { held, disclosed };
+}
 export type ReviewedBy = "model" | "deterministic" | "none";
-export interface CrossReview { provider: ReviewProvider; level: ReviewLevel; notes: string[]; same_vendor_default?: boolean; hygiene?: string[]; reviewed_by?: ReviewedBy; reviewer_model?: string; cost_iteration?: string; reasons?: string[]; still_open?: number[] | null; reused?: "implement loop"; }
+export interface CrossReview { provider: ReviewProvider; level: ReviewLevel; notes: string[]; kinds?: (ReviewKind | null)[]; same_vendor_default?: boolean; hygiene?: string[]; reviewed_by?: ReviewedBy; reviewer_model?: string; cost_iteration?: string; reasons?: string[]; still_open?: number[] | null; reused?: "implement loop"; }
 /** True only when a model reviewer really returned a verdict; a deterministic-only result never credits "one reviewer". */
 export const modelReviewRan = (xr: CrossReview | null | undefined): xr is CrossReview => !!xr && xr.level !== "not_run" && xr.reviewed_by !== "deterministic" && xr.reviewed_by !== "none"; // a hygiene flag can lift level off not_run with no model call (reviewed_by none)
 // Compiled or bytecode cache files by extension or dir (generic across stacks). Any other run-added path counts only when the repo's own ignore rules ignore it (it was force-added); legit source such as src/build/index.ts never counts.
@@ -84,9 +112,9 @@ export function parseReview(p: ReviewProvider, out: string): CrossReview {
   const level = m[1]!.toLowerCase() as ReviewLevel;
   const all = reviewFlagLines(out.slice(m.index + m[0].length)).map(clean).filter(Boolean), unmet = (r: string): boolean => UNMET_REASON_RE.test(r);
   const reasons = [...all.filter(unmet), ...all.filter((r) => !unmet(r))].slice(0, MAX_NOTES); // F3: UNMET reasons first, so the cap of 5 never cuts one
-  const notes = level === "pass" ? [] : (reasons.length ? reasons : ["no reason given"]).map((r) => `cross-review ${level} (${p}): ${r}`);
+  const notes = level === "pass" ? [] : (reasons.length ? reasons : ["no reason given"]).map((r) => `cross-review ${level} (${p}): ${r}`), kinds = level === "pass" ? [] : (reasons.length ? reasons : ["no reason given"]).map(reviewKindOf);
   const grouped = level === "pass" ? [] : reviewItems(out.slice(m.index + m[0].length)), reasonsAll = level === "pass" ? [] : grouped.length ? grouped : ["no reason given"]; // the whole findings in the order a session reads it: specific findings first, the UNMET items after; a finding keeps its sub-bullets and is never cut by MAX_NOTES (only the early review round reads it, reviewRound in implement.ts)
-  return { provider: p, level, notes, ...(reasonsAll.length ? { reasons: reasonsAll } : {}) };
+  return { provider: p, level, notes, ...(kinds.some((k) => k !== null) ? { kinds } : {}), ...(reasonsAll.length ? { reasons: reasonsAll } : {}) };
 }
 export const HAND_BACK_CLIP = 900, HAND_BACK_TOTAL = 12_000; // the early review's own bound: whole findings up to a total of characters, never a count and never a fragment of one
 /** What the early review round hands back to the session: the reviewer's whole findings (a finding keeps its sub-bullets), specific findings first, then its UNMET items, each clipped to HAND_BACK_CLIP, taken whole until HAND_BACK_TOTAL characters; what is left is counted in a last entry. The receipt side (notes, held_by, the label) keeps MAX_NOTES and the UNMET-first order. */
@@ -207,7 +235,7 @@ export async function crossReview(ctx: RunContext, verdict: Verdict, head: strin
   const rd = lineCheckDiff(d.stdout), changedList = [...d.stdout.matchAll(/^diff --git a\/(\S+)/gm)].map((m) => m[1]!).slice(0, 80).join(", ");
   const prompt = [agent ? `${agent.prompt}\nReview ONLY the diff below. Do not modify files.` : "You are an independent code reviewer. Review ONLY the diff below for correctness bugs, spec violations and missing tests. Do not modify files.",
     REVIEW_TOOLS_NOTE,
-    "Reply with a first line exactly `VERDICT: PASS`, `VERDICT: FLAG` (concerns) or `VERDICT: BLOCK` (a reproduced defect), then one `- reason` line per concern.", ...(follow ? followBlock(follow.earlier) : [...acceptancePromptBlock(reviewAcceptance(ctx)), ...reviewChecksBlock(ctx)]), ...(rd.truncated || rd.cut.length ? [`The diff below is NOT the whole change: ${rd.truncated ? "it is cut at its end" : "it is complete except for the files named next"}${rd.cut.length ? `; lockfile, snapshot and generated files are left out (${rd.cut.slice(0, 8).join(", ")})` : ""}. Every changed file is listed here; read any you need with your tools before saying something is missing: ${changedList}`] : []), "", "```diff", rd.text, "```"].join("\n");
+    "Reply with a first line exactly `VERDICT: PASS`, `VERDICT: FLAG` (concerns) or `VERDICT: BLOCK` (a reproduced defect), then one `- reason` line per concern. Start each reason with its kind and a colon: `DEFECT:` (the change is wrong), `UNMET:` (an asked-for line is not delivered), `LIMIT:` (something you could not check or a coverage limit, with no defect found) or `INFO:` (an observation that states no defect). A failing test in a file this diff does not touch is `INFO:`.", ...(follow ? followBlock(follow.earlier) : [...acceptancePromptBlock(reviewAcceptance(ctx)), ...reviewChecksBlock(ctx)]), ...(rd.truncated || rd.cut.length ? [`The diff below is NOT the whole change: ${rd.truncated ? "it is cut at its end" : "it is complete except for the files named next"}${rd.cut.length ? `; lockfile, snapshot and generated files are left out (${rd.cut.slice(0, 8).join(", ")})` : ""}. Every changed file is listed here; read any you need with your tools before saying something is missing: ${changedList}`] : []), "", "```diff", rd.text, "```"].join("\n");
   try {
     if (p === "claude") await ensureClaudeHelpCache();
     if (p === "claude") noteRoleModel("review", agent?.model || pin || ctx.model); // ROLE-MODELS: the receipt's models_by_role
