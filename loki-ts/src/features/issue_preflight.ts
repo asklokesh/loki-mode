@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { redactDeep, redactSecrets } from "../util/redact.ts";
+import { escapeRegex } from "../util/regex_escape.ts";
 import { safeGitSpawn } from "../util/safe_git.ts";
 
 export const PREFLIGHT_FILE = "issue-preflight.json";
@@ -55,7 +56,7 @@ export function searchPhrases(raw: string): { errors: string[]; paths: string[];
 }
 /** Numbers of issues and pull requests of this repository that a text names (#N or a github.com URL). Numbers only: the text itself is never quoted. */
 export function referencedNumbers(text: string, slug: string, self: number): number[] {
-  const esc = slug.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const esc = escapeRegex(slug);
   const re = new RegExp(`(?:^|[^A-Za-z0-9_/&])(?:${esc})?#(\\d{1,7})\\b|github\\.com/${esc}/(?:pull|issues)/(\\d{1,7})\\b`, "gi");
   return uniq([...text.matchAll(re)].map((m) => Number(m[1] ?? m[2])).filter((n) => n > 0 && n !== self));
 }
