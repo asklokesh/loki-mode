@@ -15,7 +15,7 @@ import { ignoreSnapshot } from "../../util/check_result.ts"; import { intakeProj
 import { issueAcceptance } from "../../util/intent_card.ts"; import { safeGit } from "../../util/safe_git.ts"; import { hiddenRunnerConfigs } from "../../features/runner_config.ts"; import { baseOnDemandOn, multiPackageRepo, baselineCmdS, BASELINE_CMD_TIMEOUT_S, ensureProfile, intakeBudgetNote, intakeCapS, readinessNotice, writeBaselineRecord, repoReadiness, SUITE_BASELINE_BUDGET_S } from "../../runner/repo_profile.ts";
 import { snapshotGuides } from "../../project_model/guides.ts"; import { verifyCommandRows } from "../../project_model/package_suite.ts"; import { untestableReason } from "../testmap.ts";
 import { ambiguityGate, rankedRemedy, rankedRemedyEnabled, voteOpenChoices, type ChoiceCtx } from "../../features/spec_ambiguity.ts"; import { triageGate } from "../../features/triage.ts";
-import { execSpecPrefetchOn, prefetchExecSpec } from "../../features/exec_spec.ts"; import { wallEnabled } from "../sizing.ts"; import { wallConcurrent } from "../../util/wall_knobs.ts";
+import { readPreflight, type PreflightReport } from "../../features/issue_preflight.ts"; import { execSpecPrefetchOn, prefetchExecSpec } from "../../features/exec_spec.ts"; import { wallEnabled } from "../sizing.ts"; import { wallConcurrent } from "../../util/wall_knobs.ts";
 export interface IntakeOptions { taskText?: string; issueJsonPath?: string; }
 interface IssueFields { state: string | null; closed_by_merged_pr?: boolean }
 /** owner/repo#number, when the issue JSON carries both (GitHub); null for anything else, never guessed. */
@@ -86,6 +86,7 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
   let source: "text" | "issue"; let taskSha256: string;
   let task = taskText ?? "";
   let alreadySatisfied = false;
+  let preflight: PreflightReport | null = null; // issue intake preflight (features/issue_preflight.ts): the supervisor's gh and git report, read back from the run dir
   let issueRef: string | null = null; let issueComments: NonNullable<ChoiceCtx["comments"]> = [];
   if (existsSync(issueJsonPath)) {
     source = "issue";
@@ -93,7 +94,8 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
     taskSha256 = sha256(raw);
     const i = JSON.parse(raw) as { title?: unknown; body?: unknown; repo?: unknown; number?: unknown; comments?: unknown };
     task = [i.title, i.body].filter((x) => typeof x === "string" && x !== "").join("\n\n");
-    alreadySatisfied = isAlreadyDone(loadIssue(issueJsonPath));
+    preflight = readPreflight(ctx.runDir); if (preflight) ctx.emit("issue.preflight", "intake", { issue: preflight.issue, calls: preflight.calls, seconds: preflight.seconds, prior_art: preflight.prior_art.length, covering_open: preflight.prior_art.filter((r) => r.kind === "pr" && r.state === "OPEN" && r.closes === "yes").map((r) => r.number), unknown: preflight.unknown.length, stop: preflight.stop?.kind ?? null });
+    alreadySatisfied = isAlreadyDone(loadIssue(issueJsonPath)) || preflight?.stop !== undefined; // a merged pull request that closes the issue and is on this base stops the run with its evidence
     issueRef = issueRefOf(i);
     if (Array.isArray(i.comments)) issueComments = i.comments.filter((c): c is NonNullable<ChoiceCtx["comments"]>[number] => typeof c?.author === "string" && typeof c?.association === "string" && typeof c?.body === "string"); // fetch_issue kept only OWNER, MEMBER and COLLABORATOR comments
   } else if (taskText !== undefined) {
@@ -106,10 +108,10 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
   // resumed is constant false: the engine has no resume.
   const evidence = hooks.runtimeEvidence?.(task) ?? null; // GAME10-08a: pasted traces, request/response pairs and tracker URLs, recorded with a content hash; data only, never run
   const asks = source === "issue" || workRoadOn() ? issueAcceptance(task) : []; // RW-02 ONE ROAD: a text task on the work road has its own acceptance list read the same way // Q1 ISSUE-ACCEPTANCE: the issue's own acceptance list, verbatim (util/intent_card.ts); absent when it has none, so other runs keep their keys
-  const common = { ...intakePrBase(ctx.repoDir, process.env, startBranch, startFrom !== null), ...(asks.length ? { issue_acceptance: asks } : {}), ...(evidence ? { runtime_evidence: evidence } : {}), ...(stacked ? { stacked_loki_skip: stacked } : {}), task, title: task.split("\n")[0]!.slice(0, 72), repo: githubRepoFromUrl(origin) ?? origin, resumed: false, contract_snapshot: snapshotContract(ctx.repoDir), preexisting_untracked: untrackedAtIntake(ctx.repoDir), preexisting_untracked_blobs: snapshotUntracked(ctx.repoDir), ...(Object.keys(preexisting).length > 0 ? { preexisting_dirty: preexisting } : {}) };
+  const common = { ...intakePrBase(ctx.repoDir, process.env, startBranch, startFrom !== null), ...(preflight ? { issue_preflight: preflight } : {}), ...(asks.length ? { issue_acceptance: asks } : {}), ...(evidence ? { runtime_evidence: evidence } : {}), ...(stacked ? { stacked_loki_skip: stacked } : {}), task, title: task.split("\n")[0]!.slice(0, 72), repo: githubRepoFromUrl(origin) ?? origin, resumed: false, contract_snapshot: snapshotContract(ctx.repoDir), preexisting_untracked: untrackedAtIntake(ctx.repoDir), preexisting_untracked_blobs: snapshotUntracked(ctx.repoDir), ...(Object.keys(preexisting).length > 0 ? { preexisting_dirty: preexisting } : {}) };
   if (alreadySatisfied) {
     // Deterministic exit: no repo/test map needed, and never a session/LLM call.
-    return { status: "completed", data: { ...common, ignore_snapshot: ignoreSnapshot(ctx.repoDir), task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch, already_satisfied: true } };
+    return { status: "completed", data: { ...common, ignore_snapshot: ignoreSnapshot(ctx.repoDir), task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch, already_satisfied: true, ...(preflight?.stop ? { evidence: preflight.stop.evidence, covered_by_pr: preflight.stop.pr } : {}) } };
   }
   const choiceCtx: ChoiceCtx = { repoDir: ctx.repoDir, comments: issueComments }, votes = await voteOpenChoices(task, choiceCtx); const gate = triageGate(task, ctx.repoDir, ambiguityGate(task, ctx.runDir, { ...choiceCtx, votes })); const ambiguity = gate.data; // precedent vote (spec_ambiguity.ts voteOpenChoices): one tool-less call per undecided either/or with siblings; interactive: stop at a checkpoint with a resume offer; headless: assumptions go to the receipt; triage (features/triage.ts) only records the class here, it never stops a direct run
   if (gate.stop) return { status: "failed", data: { ...common, task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch, ...gate.stop.failData }, reason: gate.stop.reason };

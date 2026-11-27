@@ -92,7 +92,7 @@ export const EVENT_TYPES = [
   "tests.restored", "test.result", "test.scoped_out", "test.skipped_on_base", "fix.round", "already.satisfied", "already.vetoed", "spec.conflict",
   "session.group_reaped",
   "escalated", "cap.hit", "cap.sized", "tamper.detected", "receipt.sealed", "pr.opened",
-  "proof.rerun", "proof.base", "acceptance.round", "review.early", "repo.card", "seal.steps", "deep.started", "deep.completed", "receipt.addendum", "run.completed", "log.sealed", "variant", "route", "route.escalated", "provider.failover", "project_model.fallback", "intent.revised", "already.attested", "cancel_requested", "cancel_effective", "loop.repeat", "deps.install", "scaffold.applied", "watchdog.silent", "sysedit.kept", "sysedit.undone", "attempts.selected", "nrd.completed", "s1b.resumed", "env.card", "scratch.cleanup", "prove.started", "prove.ask", "prove.completed",
+  "proof.rerun", "proof.base", "acceptance.round", "review.early", "repo.card", "seal.steps", "deep.started", "deep.completed", "receipt.addendum", "run.completed", "log.sealed", "variant", "route", "route.escalated", "provider.failover", "project_model.fallback", "intent.revised", "already.attested", "cancel_requested", "cancel_effective", "loop.repeat", "deps.install", "scaffold.applied", "watchdog.silent", "sysedit.kept", "sysedit.undone", "attempts.selected", "nrd.completed", "s1b.resumed", "env.card", "scratch.cleanup", "prove.started", "prove.ask", "prove.completed", "issue.preflight",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 /** One line of events.jsonl. All keys required; stage is null for run-level events; readers tolerate unknown `type` values. */
