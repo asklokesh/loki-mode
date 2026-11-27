@@ -280,15 +280,32 @@ function outsideTempDir(cwd: string, since: number, scratchDir: string): string 
     if (!cwd.startsWith(`${root}/`)) continue;
     const top = join(root, cwd.slice(root.length + 1).split("/")[0]!);
     try {
-      const st = lstatSync(top); if (!st.isDirectory() || st.isSymbolicLink() || (st.birthtimeMs > 0 ? st.birthtimeMs : st.ctimeMs) < born) return null;
+      const st = lstatSync(top); if (!st.isDirectory() || st.isSymbolicLink() || !(st.birthtimeMs > 0) || st.birthtimeMs < born) return null; // no birth time: a ctime moves with every new entry, so an old shared directory could pass
       if (existsSync(join(top, SCRATCH_MARKER)) || existsSync(join(top, ".loki-run-owned"))) return null;
       return top;
     } catch { return null; }
   }
   return null;
 }
+/** #713 OUTSIDE HOLDERS: live processes other than `skip` whose working directory or an open file is inside `dir` (linux /proc, else one `lsof +D`). An outside
+ *  directory can be shared: a foreign process in a sibling subdirectory must keep it. When the check cannot run (no lsof), the answer is "held". */
+function holdersIn(dir: string, skip: Set<number>): number[] | null {
+  const out = new Set<number>(), under = (l: string): boolean => l === dir || l.startsWith(`${dir}/`); // /proc links are already resolved
+  if (existsSync("/proc/self/fd")) {
+    for (const e of readdirSync("/proc")) {
+      if (!/^\d+$/.test(e)) continue; const pid = Number(e); if (skip.has(pid)) continue;
+      try { if (under(readlinkSync(`/proc/${pid}/cwd`))) { out.add(pid); continue; } } catch { /* gone, or not readable */ }
+      try { for (const f of readdirSync(`/proc/${pid}/fd`)) { try { if (under(readlinkSync(`/proc/${pid}/fd/${f}`))) { out.add(pid); break; } } catch { /* closed meanwhile */ } } } catch { /* gone, or not ours */ }
+    }
+    return [...out];
+  }
+  const r = spawnSync("lsof", ["-Fp", "+D", dir], { encoding: "utf8", timeout: 8000 });
+  if (r.error || r.status === null) return null;
+  for (const l of (r.stdout ?? "").split("\n")) if (l.startsWith("p")) { const pid = Number(l.slice(1)); if (pid > 0 && !skip.has(pid)) out.add(pid); }
+  return [...out];
+}
 /** The processes this scratch's run owns, by the evidence above; `why` says which. `outside` is set when an owned process sits in a temp directory made during
- *  the run outside the scratch: that directory is removed once every owned process is gone. */
+ *  the run outside the scratch: that directory is removed once every owned process is gone and no other live process sits in it or holds a file in it. */
 export function ownedProcesses(s: SessionScratch): (Cand & { why: string; outside?: string })[] {
   const c = candidates(s.since), pids = c.map((x) => x.pid), nonce = s.nonce ? carriesNonce(pids, s.nonce) : new Set<number>(), marker = holdsFile(pids, join(s.dir, SCRATCH_MARKER)), owned = new Map<number, Cand & { why: string; outside?: string }>();
   for (const x of c) {
@@ -308,7 +325,7 @@ export const procName = (command: string): string => (command.trim().split(/\s+/
  *  directory is in a temp directory made after the scratch). Recorded for a person to check, never signalled; its directory is never removed. It may be another
  *  run's or an unrelated test's. */
 export interface ScratchSuspect { pid: number; name: string; port: number; cwd: string }
-export interface ScratchCleanup { dir: string; stopped: ScratchProc[]; left: ScratchProc[]; removed: boolean; kept?: string; outside_removed?: string[]; suspects?: ScratchSuspect[] }
+export interface ScratchCleanup { dir: string; stopped: ScratchProc[]; left: ScratchProc[]; removed: boolean; kept?: string; outside_removed?: string[]; outside_kept?: { dir: string; pids: number[] }[]; suspects?: ScratchSuspect[] }
 function suspectProcesses(s: SessionScratch, skip: Set<number>): ScratchSuspect[] {
   const out: ScratchSuspect[] = [];
   for (const x of candidates(s.since)) {
@@ -346,10 +363,16 @@ export function cleanupSessionScratch(s: SessionScratch, o: { signal?: (pid: num
   const sus = suspects.length ? { suspects } : {};
   const live = stopped.filter((x) => still.some((y) => y.pid === x.pid));
   if (live.length) return { dir: s.dir, stopped, left, removed: false, ...sus, kept: `kept: ${live.length} owned process(es) did not stop: ${live.map((x) => x.pid).join(", ")}` };
-  const outside_removed: string[] = []; for (const d of outside) { try { rmSync(d, { recursive: true, force: true }); if (!existsSync(d)) outside_removed.push(d); } catch { /* left: the next run's scan or the user */ } } // #713: only after every owned process is gone
+  // #713: only after every owned process is gone, and only when no other live process sits in the directory or holds a file in it (then it is kept and named)
+  const outside_removed: string[] = [], outside_kept: { dir: string; pids: number[] }[] = [], mine = new Set([process.pid, ...stopped.map((x) => x.pid)]);
+  for (const d of outside) {
+    let held: number[] | null = null; try { held = holdersIn(d, mine); } catch { held = null; }
+    if (held === null || held.length) { outside_kept.push({ dir: d, pids: (held ?? []).slice(0, 20) }); continue; }
+    try { rmSync(d, { recursive: true, force: true }); if (!existsSync(d)) outside_removed.push(d); } catch { /* left: the next run's scan or the user */ }
+  }
   let removed = false;
   try { if (readFileSync(join(s.dir, SCRATCH_MARKER), "utf8") === s.dir) { try { chmodSync(join(s.dir, TASK_MEMORY_SUBDIR), 0o700); } catch { /* no task memory here */ } rmSync(s.dir, { recursive: true, force: true }); removed = !existsSync(s.dir); } } catch { removed = !existsSync(s.dir); } // TASK MEMORY: its read-only directory is made writable first, or the removal fails on it
-  return { dir: s.dir, stopped, left, removed, ...(outside_removed.length ? { outside_removed } : {}), ...sus };
+  return { dir: s.dir, stopped, left, removed, ...(outside_removed.length ? { outside_removed } : {}), ...(outside_kept.length ? { outside_kept } : {}), ...sus };
 }
 /** The record a run wrote at scratch creation, when its directory still exists. */
 export function readScratchRecord(runDir: string): (SessionScratch & { worker_pid?: number }) | null {

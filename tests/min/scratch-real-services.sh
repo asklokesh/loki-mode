@@ -168,6 +168,8 @@ console.log(a + " " + b);' 2>&1)"
 # listener that double-forks, setsids and runs under env -i, then exits. After cleanupSessionScratch it is stopped (why: the marker), its directory is gone, and
 # the record names both. L2: a listener started before the scratch existed, in its own fresh temp directory, is not touched. L3: a listener started DURING the
 # run by something outside the run (no nonce, no marker), in its own new temp directory, survives with its directory and is listed as a suspect only.
+# L4: a new temp directory shared by the run's own marker daemon (in a/) and a foreign listener (in b/, with a data file): the run's daemon is stopped, the
+# shared directory and the foreign data stay, and the record names it under outside_kept with the foreign pid, not under outside_removed.
 echo "TEST: leaked listener outside the scratch is stopped only on the run's own marker; a foreign one is a suspect (#713)"
 LOUT="$(ROOT="$ROOT" bun --no-env-file --config=/dev/null -e '
 const w = await import(process.env.ROOT + "/loki-ts/src/runner/worker_proc.ts"), sh = await import(process.env.ROOT + "/loki-ts/src/util/shell.ts"), fs = await import("node:fs");
@@ -193,6 +195,15 @@ try {
   out.foreign_alive = alive(fpid) && fs.existsSync(foreign); out.foreign_not_stopped = !r.stopped.some((x) => x.pid === fpid) && !(r.outside_removed ?? []).includes(foreignReal);
   const sus = (r.suspects ?? []).find((x) => x.pid === fpid); out.suspect = !!sus && sus.port > 0 && sus.cwd === foreignReal && sus.name.length > 0;
   out.own_not_suspect = !(r.suspects ?? []).some((x) => x.pid === pid || x.pid === opid);
+  const s2 = w.createSessionScratch(), env2 = { ...process.env, ...w.scratchSessionEnv(s2) }, shared = fs.mkdtempSync("/tmp/tmp."); made.push(shared);
+  for (const sub of ["a", "b"]) { fs.mkdirSync(shared + "/" + sub); fs.writeFileSync(shared + "/" + sub + "/l.py", PY); }
+  fs.writeFileSync(shared + "/b/data", "keep\n");
+  await Bun.spawn(cmd(shared + "/b"), { stdout: "ignore", stderr: "ignore" }).exited; const bpid = await pidIn(shared + "/b"); pids.push(bpid);
+  const rr2 = await sh.run(w.withScratchMarker(s2, cmd(shared + "/a")), { env: env2, group: true, timeoutMs: 20000 }); const apid = await pidIn(shared + "/a"); pids.push(apid);
+  out.shared_before = rr2.exitCode === 0 && alive(apid) && alive(bpid); const sharedReal = fs.realpathSync(shared);
+  const r2 = w.cleanupSessionScratch(s2, { termWaitMs: 3000 });
+  out.shared_own_stopped = r2.stopped.some((x) => x.pid === apid) && !alive(apid) && !r2.stopped.some((x) => x.pid === bpid);
+  out.shared_kept = alive(bpid) && fs.existsSync(shared + "/b/data") && !(r2.outside_removed ?? []).includes(sharedReal) && (r2.outside_kept ?? []).some((k) => k.dir === sharedReal && k.pids.includes(bpid));
 } finally { for (const p of pids) { if (p > 1) { try { process.kill(p, "SIGKILL"); } catch {} } } for (const d of made) { try { fs.rmSync(d, { recursive: true, force: true }); } catch {} } }
 console.log(JSON.stringify(out));' 2>&1)"
 echo "    $LOUT"
@@ -203,5 +214,7 @@ LC 'o["stopped"] is True and o["alive"] is False' && ok "L1: the double-forked l
 LC 'o["dir_gone"] is True and o["recorded"] is True and o["scratch_removed"] is True' && ok "L1: its temp directory is removed and named in outside_removed; the scratch is removed" || bad "L1: directory left: $LOUT"
 LC 'o["other_untouched"] is True' && ok "L2: a listener that started before the run, in its own temp directory, is left alone" || bad "L2: unrelated listener touched: $LOUT"
 LC 'o["foreign_alive"] is True and o["foreign_not_stopped"] is True' && ok "L3: a listener started during the run outside its process tree, in its own new temp directory, survives with that directory" || bad "L3: foreign listener stopped or its directory removed: $LOUT"
+LC 'o["shared_before"] is True and o["shared_own_stopped"] is True' && ok "L4 setup: the run's daemon in a shared new temp directory is stopped, the foreign one in its sibling subdirectory is not" || bad "L4 setup: $LOUT"
+LC 'o["shared_kept"] is True' && ok "L4: the shared directory and the foreign data stay, named under outside_kept with the foreign pid" || bad "L4: shared directory removed or not recorded: $LOUT"
 LC 'o["suspect"] is True and o["own_not_suspect"] is True' && ok "L3: it is listed as a suspect with its pid, port and working directory; the run's own and the earlier listener are not" || bad "L3: suspect record wrong: $LOUT"
 finish
