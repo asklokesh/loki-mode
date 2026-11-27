@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed
+
+- Fixed: a service a proof script started and detached (it left the process group, lost the run's marker in its environment and sat in a temp directory the script made outside the scratch) outlived the run, with its temp directory. The harness now hands each proof script it runs itself (the proof re-run, the base re-run and the prove pass driver) a read-only descriptor, opened by the child, on the scratch's own marker file, and the scratch cleanup counts a process that still holds that descriptor as the run's: it is stopped, and the temp directory it sits in (created after the scratch, directly in a temp root, no other run's scratch) is removed and named in the cleanup record as outside_removed, but only when no other live process has its working directory or an open file inside it; a directory another process still uses, for example a shared temp directory with a foreign service in a sibling subdirectory, is kept and named under outside_kept with those pids. A temp directory with no birth time on its filesystem is never treated as the run's. A listener that only looks like a leak (it started during the run, its parent is init and it sits in a new temp directory) but shows no such ownership, for example another run's service or an unrelated test's, is never signalled; it is listed under suspects with its name, pid, port and working directory, and its directory is not removed while it runs there. The marker reaches only scripts the harness itself runs; a daemon started from a model session's own shell, or one that closes its inherited descriptors, is not stopped (it is listed as a suspect only when it listens and sits in a new temp directory), so a leak like the reported one can still happen on that path. suspects, outside_removed and outside_kept are in the cleanup record cleanupSessionScratch returns; the run events and the receipt carry them only where they already carry the whole record. Not measured on a real run (#713)
+
 ## v11.186.0 (2026-11-26)
 
 ### Changed
