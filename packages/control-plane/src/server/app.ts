@@ -9,7 +9,7 @@ import { listRuns, recomputeLegacy, runDetail } from "./runs.ts";
 import { hostGuard, isLoopbackHost, peerIsLoopback, tokenGuard } from "./auth.ts";
 import { backfill } from "../shipper/backfill.ts";
 import { removeRun } from "../db/prune.ts";
-import type { spawnStart } from "./spawn.ts";
+import type { runCheck, spawnStart } from "./spawn.ts";
 import { reconcileDeadRuns } from "./reconcile.ts";
 import { syncLocalRepos, type GhRunner } from "./repos.ts";
 import { registerRoutes } from "./routes/index.ts";
@@ -21,7 +21,7 @@ const MAX_BODY = 1_000_000;
 const defaultUiDir = () => [join(import.meta.dir, "../../ui/dist"), join(import.meta.dir, "../ui/dist")].find((d) => existsSync(join(d, "index.html")));
 
 /** dbPath ":memory:" for tests. Migrations run here, so /ready is true as soon as this returns. uiDir overrides the built-UI location. */
-export function createApp(opts: { dbPath: string; uiDir?: string; answerDir?: string; token?: string; loopbackOnly?: boolean; repoDir?: string; startBin?: string; spawnImpl?: typeof spawnStart; ghImpl?: GhRunner; /** this server's own install directory (serve.ts passes it): once it is gone the page says so and onInstallGone runs */ installDir?: string; onInstallGone?: () => void }) {
+export function createApp(opts: { dbPath: string; uiDir?: string; answerDir?: string; token?: string; loopbackOnly?: boolean; repoDir?: string; startBin?: string; spawnImpl?: typeof spawnStart; checkImpl?: typeof runCheck; ghImpl?: GhRunner; /** this server's own install directory (serve.ts passes it): once it is gone the page says so and onInstallGone runs */ installDir?: string; onInstallGone?: () => void }) {
   const uiDir = opts.uiDir ?? defaultUiDir();
   const { db, sqlite } = openDb(opts.dbPath);
   cleanupLeakedFixtures(sqlite);
@@ -116,7 +116,7 @@ export function createApp(opts: { dbPath: string; uiDir?: string; answerDir?: st
   });
   // Local discovery fills local_repos (never /v1/ingest). GET /v1/repos (names only, loopback guard) is mounted by routes/index.ts.
   syncLocalRepos(db, repoDir);
-  registerRoutes({ app, act, db, repoDir, token: opts.token, peerIsLoopback, local, startBin: opts.startBin, spawnImpl: opts.spawnImpl, ghImpl: opts.ghImpl, answerDir });
+  registerRoutes({ app, act, db, repoDir, token: opts.token, peerIsLoopback, local, startBin: opts.startBin, spawnImpl: opts.spawnImpl, checkImpl: opts.checkImpl, ghImpl: opts.ghImpl, answerDir });
   // :id is `source:run` (run ids never contain a colon)
   app.get("/v1/runs/:id", (c) => {
     const id = c.req.param("id");

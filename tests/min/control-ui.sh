@@ -7,6 +7,7 @@
 #   1. ui/src/lib/model.ts bucket(): drop the `blocked.has` line, the "holding a question" leg must fail.
 #   2. ui/src/lib/model.ts money(): return "$0.00" for a null cost, the unpriced leg must fail.
 #   3. ui/src/components/Spend.tsx: add the text "Sample data", the no-sample-data leg must fail.
+#   4. server/spawn.ts planStart(): drop `...roleArgs` from the flags, the roles and check legs must fail.
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 need bun

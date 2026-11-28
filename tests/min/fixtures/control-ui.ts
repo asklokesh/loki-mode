@@ -61,7 +61,10 @@ if (nw) await leg("an issue URL becomes owner/repo#N", () => {
 const calls: { argv: string[]; cwd: string }[] = [];
 const spawnImpl = async (argv: string[], cwd: string, onExit: () => void) => { calls.push({ argv, cwd }); onExit(); return { pid: 4242 }; };
 const peer = { requestIP: () => ({ address: "127.0.0.1" }) }; // the real socket peer, as Bun.serve reports it
-const { app } = createApp({ dbPath: ":memory:", repoDir: ROOT, loopbackOnly: true, spawnImpl: spawnImpl as never, startBin: "loki" });
+const checks: { argv: string[]; cwd: string }[] = [];
+const checkImpl = async (argv: string[], cwd: string) => { checks.push({ argv, cwd }); return { exit: 0, output: "dry-run: stub" }; };
+const { app } = createApp({ dbPath: ":memory:", repoDir: ROOT, loopbackOnly: true, spawnImpl: spawnImpl as never, checkImpl: checkImpl as never, startBin: "loki" });
+const postTo = (path: string, body: unknown, headers: Record<string, string> = {}) => app.request(`http://127.0.0.1${path}`, { method: "POST", headers: { "content-type": "application/json", host: "127.0.0.1", ...headers }, body: JSON.stringify(body) }, peer);
 const post = (body: unknown, headers: Record<string, string> = {}) => app.request("http://127.0.0.1/v1/start", { method: "POST", headers: { "content-type": "application/json", host: "127.0.0.1", ...headers }, body: JSON.stringify(body) }, peer);
 await leg("start: an issue ref spawns a fixed argv in the repo", async () => {
   const r = await post({ target: "acme/api#42", repo: ROOT });
@@ -92,6 +95,66 @@ await leg("start: a token-protected server refuses a post without it", async () 
   const r = await t.app.request("http://127.0.0.1/v1/start", { method: "POST", headers: { "content-type": "application/json", host: "127.0.0.1" }, body: JSON.stringify({ target: "acme/api#1", repo: ROOT }) }, peer);
   eq(r.status, 401, "status");
   eq(calls.length, n, "spawn count");
+});
+await leg("roles: each role becomes one fixed --<role>-model pair, on a brief and on an issue ref", async () => {
+  const r = await post({ target: "fix the typo in the readme", repo: ROOT, roles: { plan: "opus", dev: "sonnet", test: "haiku", review: "sonnet", advisor: "opus", helper: undefined } });
+  eq(r.status, 200, "status");
+  eq(calls.at(-1)?.argv, ["loki", "start", "--brief", "fix the typo in the readme", "--plan-model", "opus", "--dev-model", "sonnet", "--test-model", "haiku", "--review-model", "sonnet", "--advisor-model", "opus"], "brief argv");
+  eq((await post({ target: "acme/api#42", repo: ROOT, provider: "claude", budget: "5", roles: { dev: "haiku", review: "" } })).status, 200, "issue status");
+  eq(calls.at(-1)?.argv, ["loki", "start", "acme/api#42", "--provider", "claude", "--budget", "5", "--dev-model", "haiku"], "issue argv (an empty role is left to Loki)");
+});
+await leg("roles: a bad value, an unknown role or a non-object is a 400 and spawns nothing", async () => {
+  const n = calls.length;
+  eq((await post({ target: "acme/api#1", repo: ROOT, roles: { plan: "opus; rm -rf /" } })).status, 400, "metacharacters");
+  eq((await post({ target: "acme/api#1", repo: ROOT, roles: { plan: "-x" } })).status, 400, "leading dash");
+  eq((await post({ target: "acme/api#1", repo: ROOT, roles: { helper: "haiku" } })).status, 400, "unknown role");
+  eq((await post({ target: "acme/api#1", repo: ROOT, roles: ["opus"] })).status, 400, "array");
+  eq((await post({ target: "acme/api#1", repo: ROOT, roles: "opus" })).status, 400, "string");
+  eq(calls.length, n, "spawn count");
+});
+await leg("roles: a workspace run refuses role models", async () => {
+  const n = calls.length;
+  eq((await post({ target: "acme/api#1", repo: ROOT, workspace: "main", roles: { plan: "opus" } })).status, 400, "workspace + roles");
+  eq(calls.length, n, "spawn count");
+});
+await leg("check: the same plan runs with --dry-run appended and starts nothing", async () => {
+  const n = calls.length, m = checks.length;
+  const r = await postTo("/v1/start/check", { target: "fix the typo in the readme", repo: ROOT, roles: { plan: "opus" } });
+  eq(r.status, 200, "status");
+  eq(await r.json(), { ok: true, exit: 0, output: "dry-run: stub" }, "body");
+  eq(checks.at(-1)?.argv, ["loki", "start", "--brief", "fix the typo in the readme", "--plan-model", "opus", "--dry-run"], "argv");
+  eq(checks.length, m + 1, "one check");
+  eq(calls.length, n, "no run spawned");
+});
+await leg("check: a bad request is a 400, a workspace run is refused, and nothing runs", async () => {
+  const m = checks.length;
+  eq((await postTo("/v1/start/check", { target: "acme/api#1", repo: ROOT, roles: { plan: "bad value" } })).status, 400, "bad role");
+  eq((await postTo("/v1/start/check", { target: "acme/api#1", repo: ROOT, workspace: "main" })).status, 400, "workspace");
+  eq(checks.length, m, "check count");
+});
+await leg("check: a cross-origin post is a 403 and a token-protected server refuses without it", async () => {
+  const m = checks.length;
+  eq((await postTo("/v1/start/check", { target: "acme/api#1", repo: ROOT }, { origin: "https://evil.example" })).status, 403, "origin");
+  const t = createApp({ dbPath: ":memory:", repoDir: ROOT, loopbackOnly: true, token: "secret-test-token", checkImpl: checkImpl as never });
+  const r = await t.app.request("http://127.0.0.1/v1/start/check", { method: "POST", headers: { "content-type": "application/json", host: "127.0.0.1" }, body: JSON.stringify({ target: "acme/api#1", repo: ROOT }) }, peer);
+  eq(r.status, 401, "token");
+  eq(checks.length, m, "check count");
+});
+await leg("check: runCheck runs argv with no shell, caps its output and reports the exit", async () => {
+  const { runCheck } = await import(join(ROOT, "packages/control-plane/src/server/spawn.ts"));
+  const ok = await runCheck(["echo", "a;b $(x)"], ROOT);
+  eq(ok, { exit: 0, output: "a;b $(x)" }, "echo is literal");
+  const big = await runCheck(["head", "-c", "40000", "/dev/zero"], ROOT);
+  if (big.output.length > 16_500) throw new Error(`output not capped: ${big.output.length}`);
+  const bad = await runCheck(["false"], ROOT);
+  eq(bad.exit, 1, "exit code");
+  const gone = await runCheck(["no-such-binary-xyz"], ROOT);
+  eq(gone.exit, null, "missing binary");
+});
+await leg("check: the UI helpers send only the roles that were set", async () => {
+  const { pickRoles, ROLES } = await import(join(ROOT, "packages/control-plane/ui/src/components/NewWork.tsx"));
+  eq(pickRoles({ plan: " opus ", dev: "", test: undefined }), { plan: "opus" }, "trimmed and filtered");
+  eq(ROLES.map((r: { key: string }) => r.key), ["plan", "dev", "test", "review", "advisor"], "role keys match the --<role>-model flags");
 });
 
 console.log(out.join("\n"));

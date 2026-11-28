@@ -188,8 +188,11 @@ export function watchRuns(onChange: () => void, retryMs = 3000): () => void {
   return () => ctl.abort();
 }
 /** Start a run: target is owner/repo#N or a plain task. */
-export interface StartOptions { repo: string; provider?: string; model?: string; budget?: string }
+export type RoleModels = Partial<Record<"plan" | "dev" | "test" | "review" | "advisor", string>>;
+export interface StartOptions { repo: string; provider?: string; model?: string; budget?: string; roles?: RoleModels }
 export const startRun = (target: string, o: StartOptions): Promise<{ ok: true; pid: number; command: string }> => postJson("/v1/start", { target, ...o });
+/** Check first: the same request run as `loki start --dry-run` (no model call, nothing started). ok is false when the check exited non-zero; output is what loki printed. */
+export const checkRun = (target: string, o: StartOptions): Promise<{ ok: boolean; exit: number | null; output: string }> => postJson("/v1/start/check", { target, ...o });
 
 /** Remove one run and its events. Resolves with what the server says was removed; rejects with the server's own error text. */
 export async function deleteRun(source: string, run: string): Promise<{ ok: true; removed: { runs: number; events: number; sources: number }; remaining_runs: number }> {

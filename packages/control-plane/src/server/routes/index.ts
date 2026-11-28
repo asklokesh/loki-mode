@@ -2,7 +2,7 @@
 // `app` serves everywhere; `act` is the loopback-only router (the same Hono as `app` on a loopback bind, a detached one otherwise, so its routes are never registered).
 import type { Context, Hono } from "hono";
 import type { Db } from "../../db/migrate.ts";
-import type { spawnStart } from "../spawn.ts";
+import type { runCheck, spawnStart } from "../spawn.ts";
 import { isLoopbackHost } from "../auth.ts";
 import { mountRepos, type GhRunner } from "../repos.ts";
 import { mount as artifacts } from "./artifacts.ts";
@@ -42,6 +42,8 @@ export interface RouteCtx {
   /** Binary for spawned runs (default `loki`) and a spawn seam for tests. */
   startBin?: string;
   spawnImpl?: typeof spawnStart;
+  /** Seam for POST /v1/start/check (`loki start ... --dry-run`); tests stub it. */
+  checkImpl?: typeof runCheck;
   /** Where BLOCKED answers are written (createApp answerDir). */
   answerDir?: string;
   /** gh seam for GET /v1/repos/issues (tests stub it). */
