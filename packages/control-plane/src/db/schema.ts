@@ -135,3 +135,12 @@ export const askEvents = sqliteTable("ask_events", {
 }, (t) => [
   uniqueIndex("ask_events_message_seq").on(t.messageId, t.seq),
 ]);
+
+// Last GitHub state read for a run's pull request (merged, open, closed unmerged). A cache of a lookup, never a projection of events: runs rows are rebuilt from
+// events, this table is not. A failed lookup writes nothing, so "unknown" is never stored as "not merged".
+export const prState = sqliteTable("pr_state", {
+  prUrl: text("pr_url").primaryKey(),
+  state: text("state").notNull(), // merged | open | closed
+  mergedAt: text("merged_at"),
+  checkedAt: text("checked_at").notNull(),
+});

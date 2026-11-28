@@ -52,14 +52,15 @@ export const runKey = (r: Pick<RunRow, "source_id" | "run_id">): string => `${r.
 
 export type Bucket = "needs" | "running" | "delivered";
 /** blocked: runs known to hold a question for the person; seen: runs the person dismissed from Needs you. */
-export function bucket(r: RunRow, blocked: ReadonlySet<string>, seen: ReadonlySet<string>): Bucket {
+export function bucket(r: RunRow, blocked: ReadonlySet<string>, seen: ReadonlySet<string>, pr: PrView | null = null): Bucket {
   const k = runKey(r);
   if (blocked.has(k)) return "needs";
   if (isRunning(r)) return "running";
   if (seen.has(k)) return "delivered";
   const v = up(r);
   if (NEEDS_VERDICT.test(v)) return "needs";
-  if (v === "VERIFIED" && r.pr_url) return "needs";
+  // A VERIFIED run waits on its PR while the PR is open, unknown or being checked; a PR known merged or closed unmerged has nothing left to review.
+  if (v === "VERIFIED" && r.pr_url) { const k = prKind(r, pr); return k === "merged" || k === "closed" ? "delivered" : "needs"; }
   return "delivered";
 }
 
@@ -103,4 +104,30 @@ export function weekly(rows: RunRow[], now = Date.now()): Week[] {
     if (typeof r.cost_usd === "number") w.usd += r.cost_usd; else w.unpriced++;
   }
   return [...by.values()].sort((a, b) => b.start - a.start);
+}
+
+/** What is known of a run's pull request. "none": the run has no PR link (not counted in any rate). "checking": GitHub is being asked. "unknown": the lookup gave no answer (never read as not merged). */
+export type PrKind = "merged" | "open" | "closed" | "none" | "checking" | "unknown";
+export interface PrView { states: Record<string, { state: "merged" | "open" | "closed" }>; checking: boolean }
+export function prKind(r: Pick<RunRow, "pr_url">, pr: PrView | null): PrKind {
+  if (!r.pr_url) return "none";
+  const s = pr?.states[r.pr_url];
+  if (s) return s.state;
+  return pr === null || pr.checking ? "checking" : "unknown";
+}
+export interface MergeWeek { merged: number; open: number; closed: number; none: number; unknown: number; checking: number; rate: number | null }
+/** Per week (keyed by the week start `weekly` uses) the finished runs by pull request state. Running runs are not delivered yet and are left out.
+ *  rate = merged / (merged + open + closed): runs with no PR, unknown or still checking are not in it, and it is null when no PR state is known. */
+export function mergeWeekly(rows: RunRow[], pr: PrView | null): Map<number, MergeWeek> {
+  const by = new Map<number, MergeWeek>();
+  for (const r of rows) {
+    const t = r.started_at ? Date.parse(r.started_at) : NaN;
+    if (!Number.isFinite(t) || isRunning(r)) continue;
+    const d = new Date(t); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+    const w = by.get(d.getTime()) ?? { merged: 0, open: 0, closed: 0, none: 0, unknown: 0, checking: 0, rate: null };
+    w[prKind(r, pr)]++;
+    by.set(d.getTime(), w);
+  }
+  for (const w of by.values()) { const n = w.merged + w.open + w.closed; w.rate = n > 0 ? w.merged / n : null; }
+  return by;
 }
