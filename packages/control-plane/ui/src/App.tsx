@@ -34,7 +34,7 @@ export function App() {
 
   const inRepo = (r: { origin_repo: string | null; issue_ref: string | null }): boolean => !repo || repoName(r) === repo || repoName(r).endsWith(`/${repo}`);
   const scoped = useMemo(() => d.runs.filter(inRepo), [d.runs, repo]); // eslint-disable-line react-hooks/exhaustive-deps
-  const bucketed = useMemo(() => scoped.map((r) => ({ r, b: bucket(r, d.blocked, seen) })), [scoped, d.blocked, seen]);
+  const bucketed = useMemo(() => scoped.map((r) => ({ r, b: bucket(r, d.blocked, seen, prs) })), [scoped, d.blocked, seen, prs]);
   const counts = useMemo(() => ({
     needs: bucketed.filter((x) => x.b === "needs").length, running: bucketed.filter((x) => x.b === "running").length,
     delivered: bucketed.filter((x) => x.b === "delivered").length, all: bucketed.length,
@@ -59,7 +59,7 @@ export function App() {
       <WorkList title={title} sub={d.loading ? "Loading" : sub} rows={rows.slice(0, shown)} selected={sel} filter={repo} onClearFilter={() => setRepo(null)} prs={listView === "delivered" ? prs : undefined}
         empty={d.loading ? "Loading" : listView === "needs" ? "Nothing waiting on you. New work starts from the button on the left." : "Nothing here yet."} more={Math.max(0, rows.length - shown)} onMore={() => setShown((n) => n + PAGE)} />
       {route.run
-        ? <WorkDetail row={selRow} source={route.run.source} run={route.run.run} tick={d.tick} bucket={selRow ? bucket(selRow, d.blocked, seen) : null} onDismiss={markSeen}
+        ? <WorkDetail row={selRow} source={route.run.source} run={route.run.run} tick={d.tick} bucket={selRow ? bucket(selRow, d.blocked, seen, prs) : null} onDismiss={markSeen}
             onGone={() => { location.hash = href.view(last); d.reload(); }} onBack={() => { location.hash = href.view(last); }} backLabel={TITLES[last]} backHref={href.view(last)} />
         : <section className="detail" aria-live="polite"><div className="empty" style={{ paddingTop: 120 }}>Pick a piece of work to see what it promised and what it proved.</div></section>}
     </div>

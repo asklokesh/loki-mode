@@ -28,6 +28,17 @@ await leg("VERIFIED with an open PR needs a look until dismissed", () => {
   eq(model.bucket(r, none, none), "needs", "open pr");
   eq(model.bucket(r, none, new Set(["s/r"])), "delivered", "dismissed");
 });
+await leg("VERIFIED with a PR: merged or closed unmerged leaves Needs you; open, unknown and checking stay", () => {
+  const r = row({ verdict: "VERIFIED", status: "completed", pr_url: "https://github.com/o/r/pull/1" });
+  const at = (s?: "merged" | "open" | "closed", checking = false) => model.bucket(r, none, none, { states: s ? { [r.pr_url]: { state: s } } : {}, checking });
+  eq(at("merged"), "delivered", "merged");
+  eq(at("closed"), "delivered", "closed unmerged");
+  eq(at("open"), "needs", "open");
+  eq(at(undefined, false), "needs", "unknown (lookup gave nothing)");
+  eq(at(undefined, true), "needs", "checking");
+  eq(model.bucket(r, none, none, null), "needs", "no answer yet");
+  eq(model.bucket(row({ verdict: "PARTIAL", status: "completed", pr_url: r.pr_url }), none, none, { states: { [r.pr_url]: { state: "merged" } }, checking: false }), "needs", "a merged PR does not clear a PARTIAL");
+});
 await leg("an unattested VERIFIED is never plain VERIFIED (FC-08)", () => {
   const r = row({ verdict: "VERIFIED", status: "completed", attested: false });
   eq(model.verdictOf(r), "UNVERIFIED", "label");

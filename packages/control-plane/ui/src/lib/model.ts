@@ -52,14 +52,15 @@ export const runKey = (r: Pick<RunRow, "source_id" | "run_id">): string => `${r.
 
 export type Bucket = "needs" | "running" | "delivered";
 /** blocked: runs known to hold a question for the person; seen: runs the person dismissed from Needs you. */
-export function bucket(r: RunRow, blocked: ReadonlySet<string>, seen: ReadonlySet<string>): Bucket {
+export function bucket(r: RunRow, blocked: ReadonlySet<string>, seen: ReadonlySet<string>, pr: PrView | null = null): Bucket {
   const k = runKey(r);
   if (blocked.has(k)) return "needs";
   if (isRunning(r)) return "running";
   if (seen.has(k)) return "delivered";
   const v = up(r);
   if (NEEDS_VERDICT.test(v)) return "needs";
-  if (v === "VERIFIED" && r.pr_url) return "needs";
+  // A VERIFIED run waits on its PR while the PR is open, unknown or being checked; a PR known merged or closed unmerged has nothing left to review.
+  if (v === "VERIFIED" && r.pr_url) { const k = prKind(r, pr); return k === "merged" || k === "closed" ? "delivered" : "needs"; }
   return "delivered";
 }
 
