@@ -15,9 +15,9 @@ import { ignoreSnapshot } from "../../util/check_result.ts"; import { intakeProj
 import { issueAcceptance } from "../../util/intent_card.ts"; import { safeGit } from "../../util/safe_git.ts"; import { hiddenRunnerConfigs } from "../../features/runner_config.ts"; import { baseOnDemandOn, multiPackageRepo, baselineCmdS, BASELINE_CMD_TIMEOUT_S, ensureProfile, intakeBudgetNote, intakeCapS, readinessNotice, writeBaselineRecord, repoReadiness, SUITE_BASELINE_BUDGET_S } from "../../runner/repo_profile.ts";
 import { snapshotGuides } from "../../project_model/guides.ts"; import { verifyCommandRows } from "../../project_model/package_suite.ts"; import { untestableReason } from "../testmap.ts";
 import { ambiguityGate, rankedRemedy, rankedRemedyEnabled, voteOpenChoices, type ChoiceCtx } from "../../features/spec_ambiguity.ts"; import { triageGate } from "../../features/triage.ts";
-import { confirmPreflightStop, readPreflight, type PreflightReport } from "../../features/issue_preflight.ts"; import { execSpecPrefetchOn, prefetchExecSpec } from "../../features/exec_spec.ts"; import { wallEnabled } from "../sizing.ts"; import { wallConcurrent } from "../../util/wall_knobs.ts";
+import { confirmPreflightStop, preflightOverturnLine, readPreflight, type PreflightReport } from "../../features/issue_preflight.ts"; import { execSpecPrefetchOn, prefetchExecSpec } from "../../features/exec_spec.ts"; import { wallEnabled } from "../sizing.ts"; import { wallConcurrent } from "../../util/wall_knobs.ts";
 export interface IntakeOptions { taskText?: string; issueJsonPath?: string; }
-interface IssueFields { state: string | null; closed_by_merged_pr?: boolean }
+interface IssueFields { state: string | null }
 /** owner/repo#number, when the issue JSON carries both (GitHub); null for anything else, never guessed. */
 function issueRefOf(raw: { repo?: unknown; number?: unknown }): string | null { return typeof raw.repo === "string" && raw.repo && typeof raw.number === "number" ? `${raw.repo}#${raw.number}` : null; }
 function git(repoDir: string, args: string[]): string { return safeGit(repoDir, args).trim(); }
@@ -42,12 +42,12 @@ function excludeLokiDir(repoDir: string): void {
 }
 function loadIssue(path: string): IssueFields {
   const raw = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
-  return { state: typeof raw.state === "string" ? raw.state.toLowerCase() : null, closed_by_merged_pr: raw.closed_by_merged_pr === true };
+  return { state: typeof raw.state === "string" ? raw.state.toLowerCase() : null };
 }
 /** The separate already-done confirmation session runs for issue tasks (an issue can be stale) and when LOKI_E10_ALREADY_DONE_CHECK=1. A direct task skips it: the implement session already answers LOKI_ALREADY_DONE with file:line evidence, so the outcome stays reachable without a second session (h2h 2026-11-01: 20 of 48 runs paid for it, none was already done). */
 export const alreadyDoneCheckOn = (source: "text" | "issue", env: NodeJS.ProcessEnv = process.env): boolean => source === "issue" || env.LOKI_E10_ALREADY_DONE_CHECK === "1";
 /** True only on a deterministic, positive signal: a false negative (state unknown) must never claim already-done. */
-function isAlreadyDone(issue: IssueFields): boolean { return issue.state === "closed" || issue.closed_by_merged_pr === true; }
+function isAlreadyDone(issue: IssueFields): boolean { return issue.state === "closed"; } // gh 2.105.0 reports no merged flag on closedByPullRequestsReferences, so the issue state is the only signal here (loki-mode#723); the preflight stop checks the merged pull request itself
 /** SPEED-EXEC-SPEC-PREFETCH: start the exec-spec generator call the Wall stage will make on the lean path (wall.ts wallRoute decides, for both), so the model writes while intake runs the
  *  baseline. Off the lean path, with the Wall authored alongside implement, or with LOKI_E10_EXEC_SPEC_PREFETCH=0, nothing starts. Never throws. */
 async function prefetchLeanExecSpec(ctx: RunContext, task: string, repoMap: ReturnType<typeof buildRepoMap>, testmap: TestMap, signal: AbortSignal): Promise<PhaseTiming> {
@@ -94,7 +94,7 @@ async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeO
     taskSha256 = sha256(raw);
     const i = JSON.parse(raw) as { title?: unknown; body?: unknown; repo?: unknown; number?: unknown; comments?: unknown };
     task = [i.title, i.body].filter((x) => typeof x === "string" && x !== "").join("\n\n");
-    preflight = confirmPreflightStop(readPreflight(ctx.runDir), ctx.repoDir, baseSha); if (preflight) ctx.emit("issue.preflight", "intake", { issue: preflight.issue, calls: preflight.calls, seconds: preflight.seconds, prior_art: preflight.prior_art.length, covering_open: preflight.prior_art.filter((r) => r.kind === "pr" && r.state === "OPEN" && r.closes === "yes").map((r) => r.number), unknown: preflight.unknown.length, stop: preflight.stop?.kind ?? null });
+    const recorded = readPreflight(ctx.runDir); preflight = confirmPreflightStop(recorded, ctx.repoDir, baseSha); const overturned = preflightOverturnLine(recorded, preflight); if (overturned) process.stderr.write(`${overturned}\n`); if (preflight) ctx.emit("issue.preflight", "intake", { issue: preflight.issue, calls: preflight.calls, seconds: preflight.seconds, prior_art: preflight.prior_art.length, covering_open: preflight.prior_art.filter((r) => r.kind === "pr" && r.state === "OPEN" && r.closes === "yes").map((r) => r.number), unknown: preflight.unknown.length, stop: preflight.stop?.kind ?? null });
     alreadySatisfied = isAlreadyDone(loadIssue(issueJsonPath)) || preflight?.stop !== undefined; // a merged pull request that closes the issue and is on this base stops the run with its evidence
     issueRef = issueRefOf(i);
     if (Array.isArray(i.comments)) issueComments = i.comments.filter((c): c is NonNullable<ChoiceCtx["comments"]>[number] => typeof c?.author === "string" && typeof c?.association === "string" && typeof c?.body === "string"); // fetch_issue kept only OWNER, MEMBER and COLLABORATOR comments

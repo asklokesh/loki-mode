@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed
+
+- Issue intake (#723): `fetch_issue` no longer sets `closed_by_merged_pr`, which read a `merged` key that gh 2.105.0 does not return and so was always false; the early exit rests on the issue state, and the preflight stop checks the merged pull request itself. No extra network call.
+- Issue preflight (#724): when intake overturns a recorded stop because the run's real base differs from HEAD, it now prints a `loki: correction:` line, so the terminal no longer ends on a false "already covered" claim.
+
 ## v11.190.0 (2026-11-27)
 
 ### Changed
