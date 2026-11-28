@@ -7,21 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-## v11.191.0 (2026-11-27)
-
-### Changed
-
-- Control Plane New work (#726; loki dashboard): the dialog now picks a model per role (Plan, Build, Tests, Review, Advisor: haiku, sonnet or opus, or a free text model id on opencode) and has a Check first button. 11.190.0 dropped both and said loki start had no command for them; that was wrong, loki start already takes --plan-model, --dev-model, --test-model, --review-model and --advisor-model and --dry-run. Each chosen role is sent as roles and becomes one fixed --<role>-model argv pair after the same model check the single model field used (an unknown role or a bad value is a 400, and a workspace run refuses roles). Check first posts the same request to the new POST /v1/start/check, which runs loki start with --dry-run (no shell, 60 second limit, output capped at 16 KB, same loopback, origin and token guards as Start) and shows what loki printed under the form; Start stays a separate click. No model call is made by a check. For an owner/repo#N target the dry run prints the route only, so the dialog says the models are validated when the run starts; the engine refuses a bad role value before any call.
-
-### Fixed
-
-- Issue intake (#723): `fetch_issue` no longer sets `closed_by_merged_pr`, which read a `merged` key that gh 2.105.0 does not return and so was always false; the early exit rests on the issue state, and the preflight stop checks the merged pull request itself. No extra network call.
-- Issue preflight (#724): when intake overturns a recorded stop because the run's real base differs from HEAD, it now prints a `loki: correction:` line, so the terminal no longer ends on a false "already covered" claim.
-
-### Release checks
-
-- No label file changed, so no new calibration file was needed (release.sh --check-calibration exit 0). Full gate on the merged 11.191.0 tree (log ~/loki-ci-logs/r191-integ-gate.log): 30 suites PASS, 2 FAIL; the two red suites match the base reds (scope-and-fix: 1036 passed, 4 failed; h2h-harness: 166 passed, 2 failed).
-
 ## v11.190.0 (2026-11-27)
 
 ### Changed
