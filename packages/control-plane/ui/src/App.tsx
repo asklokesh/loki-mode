@@ -6,7 +6,7 @@ import { WorkDetail } from "./components/WorkDetail";
 import { NewWork } from "./components/NewWork";
 import { Spend } from "./components/Spend";
 import { Defaults } from "./components/Defaults";
-import { repoList, startableRepos, useData, useSeen, useTheme } from "./lib/data";
+import { repoList, startableRepos, useData, usePrState, useSeen, useTheme } from "./lib/data";
 import { bucket, repoName, runKey, TITLES, VIEWS, type View } from "./lib/model";
 import { href, useRoute } from "./lib/router";
 
@@ -16,6 +16,7 @@ const isListView = (v: View): v is ListView => v in VIEWS;
 
 export function App() {
   const d = useData();
+  const prs = usePrState(d.tick);
   const route = useRoute();
   const [seen, markSeen] = useSeen();
   const [theme, toggleTheme] = useTheme();
@@ -51,11 +52,11 @@ export function App() {
 
   let main;
   if (d.error && d.runs.length === 0) main = <div className="body"><div className="err" style={{ gridColumn: "1/-1" }}>{d.error}</div></div>;
-  else if (view === "spend") main = <div className="body"><Spend runs={d.runs} tick={d.tick} /></div>;
+  else if (view === "spend") main = <div className="body"><Spend runs={d.runs} tick={d.tick} prs={prs} /></div>;
   else if (view === "setup") main = <div className="body"><Defaults repos={repos} /></div>;
   else main = (
     <div className="body" id="body">
-      <WorkList title={title} sub={d.loading ? "Loading" : sub} rows={rows.slice(0, shown)} selected={sel} filter={repo} onClearFilter={() => setRepo(null)}
+      <WorkList title={title} sub={d.loading ? "Loading" : sub} rows={rows.slice(0, shown)} selected={sel} filter={repo} onClearFilter={() => setRepo(null)} prs={listView === "delivered" ? prs : undefined}
         empty={d.loading ? "Loading" : listView === "needs" ? "Nothing waiting on you. New work starts from the button on the left." : "Nothing here yet."} more={Math.max(0, rows.length - shown)} onMore={() => setShown((n) => n + PAGE)} />
       {route.run
         ? <WorkDetail row={selRow} source={route.run.source} run={route.run.run} tick={d.tick} bucket={selRow ? bucket(selRow, d.blocked, seen) : null} onDismiss={markSeen}

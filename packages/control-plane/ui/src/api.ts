@@ -233,5 +233,10 @@ export const getProviders = (): Promise<{ providers: ProviderRow[]; catalog_upda
 export interface CostPerVerified { value: number | null; n: number; label: string; spend_usd: number | null; priced_runs: number; unpriced_runs: number; verified_runs: number }
 export const getOutcomes = (): Promise<{ cost_per_verified_usd?: CostPerVerified; runs_finished?: number }> => get("/v1/stats/outcomes");
 
+/** GET /v1/pr-state: the last GitHub state read for each run's pull request. A url absent from states is unknown (or being checked while `checking` is true). */
+export interface PrStateEntry { state: "merged" | "open" | "closed"; merged_at: string | null; checked_at: string }
+export interface PrStates { states: Record<string, PrStateEntry>; checking: boolean }
+export const getPrState = (): Promise<PrStates> => get<PrStates>("/v1/pr-state");
+
 /** Stop a run: signals only the pid the run recorded (loopback POST route). */
 export const stopRun = (source: string, run: string): Promise<{ ok?: boolean }> => postJson(`/v1/runs/${encodeURIComponent(source)}/${encodeURIComponent(run)}/stop`, {});

@@ -1,7 +1,7 @@
 // One place that loads the runs and the repositories and refreshes them when the server's event stream says a run changed. No timers.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getRunDetail, getWorkspace, listAllRuns, watchRuns, type RunRow } from "../api";
-import { isRunning, runKey, repoName } from "./model";
+import { getPrState, getRunDetail, getWorkspace, listAllRuns, watchRuns, type RunRow } from "../api";
+import { isRunning, runKey, repoName, type PrView } from "./model";
 
 export interface Data { runs: RunRow[]; repos: string[]; blocked: ReadonlySet<string>; error: string | null; loading: boolean; tick: number; reload: () => void }
 
@@ -29,6 +29,22 @@ export function useData(): Data {
   }, []);
   useEffect(() => { reload(); return watchRuns(reload); }, [reload]);
   return { runs, repos, blocked, error, loading, tick, reload };
+}
+
+/** Pull request states for the runs, from GET /v1/pr-state. The first answer is the server's cache; while it is asking GitHub it is asked again every 3 s, at most 10 times.
+ *  A failed call reads as unknown (empty states, not checking), never as "not merged". Null until the first answer. */
+export function usePrState(tick: number): PrView | null {
+  const [pr, setPr] = useState<PrView | null>(null);
+  useEffect(() => {
+    let alive = true, timer: ReturnType<typeof setTimeout> | undefined;
+    const go = (n: number): void => {
+      getPrState().then((r) => { if (!alive) return; setPr({ states: r.states, checking: r.checking && n < 10 }); if (r.checking && n < 10) timer = setTimeout(() => go(n + 1), 3000); })
+        .catch(() => { if (alive) setPr({ states: {}, checking: false }); });
+    };
+    go(0);
+    return () => { alive = false; if (timer) clearTimeout(timer); };
+  }, [tick]);
+  return pr;
 }
 
 /** Repositories the runs name, for the sidebar filter; when no run names one, the checkouts the workspace knows. */

@@ -104,3 +104,29 @@ export function weekly(rows: RunRow[], now = Date.now()): Week[] {
   }
   return [...by.values()].sort((a, b) => b.start - a.start);
 }
+
+/** What is known of a run's pull request. "none": the run has no PR link (not counted in any rate). "checking": GitHub is being asked. "unknown": the lookup gave no answer (never read as not merged). */
+export type PrKind = "merged" | "open" | "closed" | "none" | "checking" | "unknown";
+export interface PrView { states: Record<string, { state: "merged" | "open" | "closed" }>; checking: boolean }
+export function prKind(r: Pick<RunRow, "pr_url">, pr: PrView | null): PrKind {
+  if (!r.pr_url) return "none";
+  const s = pr?.states[r.pr_url];
+  if (s) return s.state;
+  return pr === null || pr.checking ? "checking" : "unknown";
+}
+export interface MergeWeek { merged: number; open: number; closed: number; none: number; unknown: number; checking: number; rate: number | null }
+/** Per week (keyed by the week start `weekly` uses) the finished runs by pull request state. Running runs are not delivered yet and are left out.
+ *  rate = merged / (merged + open + closed): runs with no PR, unknown or still checking are not in it, and it is null when no PR state is known. */
+export function mergeWeekly(rows: RunRow[], pr: PrView | null): Map<number, MergeWeek> {
+  const by = new Map<number, MergeWeek>();
+  for (const r of rows) {
+    const t = r.started_at ? Date.parse(r.started_at) : NaN;
+    if (!Number.isFinite(t) || isRunning(r)) continue;
+    const d = new Date(t); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+    const w = by.get(d.getTime()) ?? { merged: 0, open: 0, closed: 0, none: 0, unknown: 0, checking: 0, rate: null };
+    w[prKind(r, pr)]++;
+    by.set(d.getTime(), w);
+  }
+  for (const w of by.values()) { const n = w.merged + w.open + w.closed; w.rate = n > 0 ? w.merged / n : null; }
+  return by;
+}

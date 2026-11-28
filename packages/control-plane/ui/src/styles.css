@@ -134,6 +134,7 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
 th{color:var(--fg3);font-weight:500;font-size:12px}
 td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+.prmark.merged{color:var(--ok);font-weight:600}.prmark.closed{color:var(--warn)}
 .tw{overflow-x:auto;border:1px solid var(--line);border-radius:10px}
 .note{color:var(--fg3);font-size:12.5px;margin-top:10px;max-width:70ch}
 

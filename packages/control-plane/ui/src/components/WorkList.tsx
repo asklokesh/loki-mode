@@ -1,7 +1,7 @@
 // The list pane: a heading and one row per run. Rows are links to #run/<source>/<run>.
 import type { RunRow } from "../api";
 import { href } from "../lib/router";
-import { ago, chipText, money, repoName, runKey, runTitle, tone, type Tone } from "../lib/model";
+import { ago, chipText, money, prKind, repoName, runKey, runTitle, tone, type PrView, type Tone } from "../lib/model";
 import { Icon, type IconId } from "./Icon";
 
 const GLYPH: Record<Tone, IconId | null> = { ok: "done", bad: "x", warn: "pause", idle: "done", run: null };
@@ -9,9 +9,12 @@ export const Dot = ({ t }: { t: Tone }) => <span className={`st ${t}`}>{GLYPH[t]
 export const Chip = ({ r }: { r: RunRow }) => <span className={`chip ${tone(r)}`}>{chipText(r)}</span>;
 
 const sourceOf = (r: RunRow): string => r.issue_ref ?? (r.task_source ?? "brief");
+const PR_WORDS = { merged: "PR merged", open: "PR open", closed: "PR closed", checking: "PR checking", unknown: "PR state unknown", none: "" } as const;
 
-export function WorkList({ title, sub, rows, selected, filter, onClearFilter, empty, more, onMore }: {
+export function WorkList({ title, sub, rows, selected, filter, onClearFilter, empty, more, onMore, prs }: {
   title: string; sub: string; rows: RunRow[]; selected: string | null; filter: string | null; onClearFilter: () => void; empty: string; more: number; onMore: () => void;
+  /** Delivered view only: the pull request state read from GitHub, shown on each row that has a PR link. */
+  prs?: PrView | null;
 }) {
   return (
     <section className="list" aria-label="Work">
@@ -25,7 +28,7 @@ export function WorkList({ title, sub, rows, selected, filter, onClearFilter, em
           <span className="ic"><Dot t={tone(r)} /></span>
           <span className="t">{runTitle(r)}</span>
           <span className="r"><Chip r={r} /><small>{money(r)}</small></span>
-          <span className="s">{repoName(r)} · {sourceOf(r)} · {ago(r.started_at ?? r.last_event_at)}</span>
+          <span className="s">{repoName(r)} · {sourceOf(r)} · {ago(r.started_at ?? r.last_event_at)}{prs !== undefined && r.pr_url ? <> · <span className={`prmark ${prKind(r, prs)}`}>{PR_WORDS[prKind(r, prs)]}</span></> : null}</span>
         </a>
       ))}
       {more > 0 ? <button className="more" onClick={onMore}>Show {more} more</button> : null}

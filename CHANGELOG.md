@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+
+- Control Plane merge rate (#727; loki dashboard): Spend now has Merged, Open, Closed unmerged, No PR and Merge rate columns per week, and Delivered rows show PR merged, PR open, PR closed or PR state unknown. The state is what GitHub reports for each run's pull request, read by the new GET /v1/pr-state (loopback only): one `gh pr list` per repo with a fixed argv and no shell, cached in the new pr_state table (open PRs recheck after 10 minutes, closed after 24 hours, merged never), refreshed in the background so the page answers from the cache and shows checking until GitHub answers. The rate is merged over merged, open and closed unmerged; a run with no pull request link is under No PR and is not in it, and a PR whose lookup failed is unknown and left out, never counted as not merged.
+
 ## v11.191.0 (2026-11-27)
 
 ### Changed
