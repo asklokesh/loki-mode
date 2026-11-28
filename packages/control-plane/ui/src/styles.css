@@ -189,4 +189,5 @@ a.repo{text-decoration:none}
 a.repo[aria-current="true"]{background:var(--panel);color:var(--fg);box-shadow:var(--sh)}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 .pre-wrap{white-space:pre-wrap;overflow-wrap:anywhere}
+.checkout{margin:8px 0 0;max-height:220px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--bg);font-size:12px}
 

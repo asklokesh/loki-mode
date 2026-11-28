@@ -1,5 +1,5 @@
 // Start-a-run planning and spawning for the UI (CPE-07). A run is started by spawning the same `loki start` path an operator would type (argv array, no shell).
-import { spawn } from "node:child_process";
+import { spawn, execFile } from "node:child_process";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -24,6 +24,8 @@ const MODEL = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const OPENCODE_MODEL = /^[A-Za-z0-9][A-Za-z0-9._/:~-]{0,127}$/;
 const BUDGET = /^(?:[1-9][0-9]{0,5}|0)(?:\.[0-9]{1,2})?$/;
 const WORKSPACE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+// The roles `loki start` takes a model for (--<role>-model; ROLE_FLAG_ENV in loki-ts/src/util/claude_model.ts). helper and escalate are left to Loki.
+const ROLE_KEYS = ["plan", "dev", "test", "review", "advisor"] as const;
 
 /** A run may only start in a git repo, never in HOME or "/" (a "whats going on" composer message once started a coding run in the home directory). Null = allowed. */
 export function repoRefusal(cwd: string, env: NodeJS.ProcessEnv = process.env): string | null {
@@ -48,7 +50,7 @@ export function registryRepos(env: NodeJS.ProcessEnv = process.env): string[] {
 
 /** Validate a start request. The repo must be one the server already knows (registry or cwd), never an arbitrary path. */
 export function planStart(body: unknown, known: string[], bin = "loki", env: NodeJS.ProcessEnv = process.env): StartPlan {
-  const b = (body && typeof body === "object" ? body : {}) as { target?: unknown; repo?: unknown; model?: unknown; provider?: unknown; budget?: unknown; workspace?: unknown };
+  const b = (body && typeof body === "object" ? body : {}) as { target?: unknown; repo?: unknown; model?: unknown; provider?: unknown; budget?: unknown; workspace?: unknown; roles?: unknown };
   if (typeof b.target !== "string") return { ok: false, error: "target must be a string" };
   const target = b.target.trim();
   const issue = ISSUE.test(target);
@@ -75,10 +77,23 @@ export function planStart(body: unknown, known: string[], bin = "loki", env: Nod
   if (budget !== undefined && (!BUDGET.test(budget) || Number(budget) <= 0)) return { ok: false, error: "budget must be a positive USD amount such as 5 or 5.00" };
   if (workspace !== undefined && !WORKSPACE.test(workspace)) return { ok: false, error: "workspace must be a workspace name from loki.yaml (letters, digits, _ -)" };
   if (workspace !== undefined && (provider !== undefined || budget !== undefined)) return { ok: false, error: "workspace runs do not take provider or budget; set them per repo in loki.yaml" };
+  // Per-role models: one fixed `--<role>-model V` pair each, validated like `model`. An unknown role key is refused, never passed on.
+  const roleArgs: string[] = [];
+  if (b.roles !== undefined && b.roles !== null) {
+    if (typeof b.roles !== "object" || Array.isArray(b.roles)) return { ok: false, error: "roles must be an object such as {\"plan\":\"opus\"}" };
+    for (const [k, raw] of Object.entries(b.roles as Record<string, unknown>)) {
+      if (!(ROLE_KEYS as readonly string[]).includes(k)) return { ok: false, error: `unknown role '${k}' (${ROLE_KEYS.join(", ")})` };
+      const v = opt(raw);
+      if (v === undefined) continue;
+      if (!(opencode ? OPENCODE_MODEL : MODEL).test(v)) return { ok: false, error: `${k} model must be ${opencode ? "an opencode provider/model id" : "haiku, sonnet, opus or a model id"}` };
+      roleArgs.push(`--${k}-model`, v);
+    }
+    if (workspace !== undefined && roleArgs.length > 0) return { ok: false, error: "workspace runs do not take role models; set them per repo in loki.yaml" };
+  }
   const runEnv: Record<string, string> = model === undefined ? {} : opencode ? { LOKI_OPENCODE_MODEL: model } : { LOKI_SESSION_MODEL: model }; // opencode reads -m only from LOKI_OPENCODE_MODEL
   // A workspace run is `loki workspace run <name> <ref>` (the existing multi-repo path). Otherwise free text goes as an explicit brief, never auto-detected as a PRD path.
   if (workspace !== undefined) return { ok: true, argv: [bin, "workspace", "run", workspace, target], cwd, env: runEnv };
-  const flags = [...(provider !== undefined ? ["--provider", provider] : []), ...(budget !== undefined ? ["--budget", budget] : [])];
+  const flags = [...(provider !== undefined ? ["--provider", provider] : []), ...(budget !== undefined ? ["--budget", budget] : []), ...roleArgs];
   return { ok: true, argv: issue ? [bin, "start", target, ...flags] : [bin, "start", "--brief", target, ...flags], cwd, env: runEnv };
 }
 
@@ -92,5 +107,22 @@ export function spawnStart(argv: string[], cwd: string, onExit: () => void = () 
       child.once("error", (e) => { onExit(); done({ error: `could not start loki: ${e.message}` }); });
       child.once("spawn", () => { child.unref(); done({ pid: child.pid ?? 0 }); });
     } catch (e) { done({ error: `could not start loki: ${(e as Error).message}` }); }
+  });
+}
+
+/** Run `loki start ... --dry-run` (no shell) and collect its output: flags validated, preflight run, nothing spent. Output is capped; never rejects. */
+export function runCheck(argv: string[], cwd: string, extraEnv: Record<string, string> = {}, timeoutMs = 60_000): Promise<{ exit: number | null; output: string }> {
+  return new Promise((done) => {
+    const [cmd, ...args] = argv;
+    const cap = (s: string): string => (s.length > 16_384 ? s.slice(0, 16_384) + "\n[output cut at 16 KB]" : s);
+    try {
+      execFile(cmd!, args, { cwd, shell: false, timeout: timeoutMs, maxBuffer: 1 << 20, env: { ...childEnv(), LOKI_CONTROL: "0", ...extraEnv } }, (e, stdout, stderr) => {
+        const output = cap(`${stdout}${stderr}`.trim());
+        if (!e) return done({ exit: 0, output });
+        const ex = e as NodeJS.ErrnoException & { killed?: boolean; code?: number | string };
+        if (ex.killed) return done({ exit: null, output: cap(`${output}\nchecking took longer than ${timeoutMs / 1000} seconds and was stopped`.trim()) });
+        done({ exit: typeof ex.code === "number" ? ex.code : null, output: output || `could not run loki: ${ex.message}` });
+      });
+    } catch (e) { done({ exit: null, output: `could not run loki: ${(e as Error).message}` }); }
   });
 }
