@@ -103,7 +103,7 @@ async function fetchJira(ref: Extract<TrackerRef, { source: "jira" }>, f: FetchF
     labels: Array.isArray(fl.labels) ? fl.labels : [],
     author: fl.reporter?.displayName ?? fl.creator?.displayName ?? "",
     url: `${base}/browse/${j.key ?? ref.key}`, created_at: fl.created ?? "",
-    repo: j.key ?? ref.key, state: null, closed_by_merged_pr: false,
+    repo: j.key ?? ref.key, state: null,
   }, trusted, excluded);
 }
 interface JiraComment { author?: { accountId?: string; displayName?: string }; body?: unknown; created?: string }
@@ -127,7 +127,7 @@ async function fetchLinear(ref: Extract<TrackerRef, { source: "linear" }>, f: Fe
   return withIssueContext<TrackerIssue>({
     source: "linear", provider: "linear", number: 0,
     title: is.title ?? ref.key, body: is.description ?? "", labels, author: "",
-    url: is.url ?? "", created_at: "", repo: is.identifier ?? ref.key, state: null, closed_by_merged_pr: false,
+    url: is.url ?? "", created_at: "", repo: is.identifier ?? ref.key, state: null,
   }, trusted, excluded);
 }
 /** Fetches and normalizes a Jira or Linear issue. Throws on missing env vars (naming the variable) or HTTP errors. */

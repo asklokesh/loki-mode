@@ -246,6 +246,12 @@ export function readPreflight(runDir: string, env: NodeJS.ProcessEnv = process.e
   if (!issuePreflightOn(env)) return null;
   try { const p = join(runDir, PREFLIGHT_FILE); if (!existsSync(p)) return null; const r = JSON.parse(readFileSync(p, "utf8")) as PreflightReport; return r?.v === 1 && Array.isArray(r.prior_art) && Array.isArray(r.unknown) ? r : null; } catch { return null; }
 }
+/** The correction line when intake drops a stop the supervisor already announced (the run's real base differs from HEAD): the earlier "already covered" line is then false, so say so. null when there is nothing to correct. */
+export function preflightOverturnLine(before: PreflightReport | null, after: PreflightReport | null): string | null {
+  if (!before?.stop || !after || after.stop) return null;
+  const why = after.coverage.at(-1)?.text.split(": ").slice(1).join(": ") ?? "";
+  return `loki: correction: ${after.issue} is not covered on this run's base after all${why ? ` (${why})` : ""}; the run goes on`;
+}
 /** One line for the terminal before any stage runs: the stop, or the open pull requests that say they close the issue. null when there is neither. */
 export function preflightStartLine(r: PreflightReport | null): string | null {
   if (!r) return null;

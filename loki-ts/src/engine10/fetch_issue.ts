@@ -14,7 +14,6 @@ export interface NormalizedIssue {
   created_at: string;
   repo: string;
   state: string | null; // lowercased; null when not determinable (non-GitHub, or the lookup failed)
-  closed_by_merged_pr: boolean;
   comments?: IssueComment[]; // L039: trusted comments only, oldest first, capped; also rendered into body
   comments_omitted?: number; // trusted comments dropped by the cap (oldest first)
   comments_excluded?: number; // comments left out by the trust rule: counted, never quoted
@@ -72,22 +71,19 @@ export function defaultExec(cmd: string, args: string[]): string {
   const ms = Number(process.env.LOKI_FETCH_ISSUE_TIMEOUT_MS) || 60_000;
   return execFileSync(cmd, args, { encoding: "utf8", env: process.env, timeout: ms, killSignal: "SIGKILL" });
 }
-interface GithubExtra { state?: string; closedByPullRequestsReferences?: { merged?: boolean }[]; comments?: GhComment[] }
+interface GithubExtra { state?: string; comments?: GhComment[] }
 /** Fetches and normalizes one issue. Never runs an LLM; a failed GitHub  extra-fields lookup leaves state null (NOT PROVEN), never a false  already-done. */
 export function fetchIssue(ref: string, execer: Execer = defaultExec): NormalizedIssue {
   const raw = execer("bash", ["-c", `source "${ISSUE_PROVIDERS_SH}" && fetch_issue "$1"`, "--", ref]);
-  const base = JSON.parse(raw) as Omit<NormalizedIssue, "state" | "closed_by_merged_pr">;
+  const base = JSON.parse(raw) as Omit<NormalizedIssue, "state">;
   let state: string | null = null;
-  let closedByMergedPr = false;
   let trusted: IssueComment[] = [], excluded = 0;
   if (base.provider === "github" && base.repo && base.number) {
     try {
       const extra = JSON.parse(
-        execer("gh", ["issue", "view", String(base.number), "--repo", base.repo, "--json", "state,closedByPullRequestsReferences,comments"]),
+        execer("gh", ["issue", "view", String(base.number), "--repo", base.repo, "--json", "state,comments"]),
       ) as GithubExtra;
       state = typeof extra.state === "string" ? extra.state.toLowerCase() : null;
-      closedByMergedPr = Array.isArray(extra.closedByPullRequestsReferences)
-        && extra.closedByPullRequestsReferences.some((pr) => pr?.merged === true);
       const all = Array.isArray(extra.comments) ? extra.comments : [];
       trusted = all.filter(isTrustedGithubComment).map((c) => ({ author: c.author!.login!, association: c.authorAssociation!, created_at: typeof c.createdAt === "string" ? c.createdAt : "", body: c.body! }));
       excluded = all.length - trusted.length;
@@ -95,7 +91,7 @@ export function fetchIssue(ref: string, execer: Execer = defaultExec): Normalize
       // gh unavailable or the lookup failed: leave state null, not a claim of "open".
     }
   }
-  return withIssueContext({ ...base, state, closed_by_merged_pr: closedByMergedPr }, trusted, excluded);
+  return withIssueContext({ ...base, state }, trusted, excluded);
 }
 /** CLI/child-process entry point for the future P1 wiring (E-03/E-11): writes  the normalized issue to `outFile` (Intake then reads it from `<runDir>/issue.json`). */
 export function fetchIssueToFile(ref: string, outFile: string, exec: Execer = defaultExec): NormalizedIssue {
