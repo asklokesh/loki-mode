@@ -7,16 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-## v11.192.0 (2026-11-27)
-
-### Added
-
-- Control Plane merge rate (#727; loki dashboard): Spend now has Merged, Open, Closed unmerged, No PR and Merge rate columns per week, and Delivered rows show PR merged, PR open, PR closed or PR state unknown. The state is what GitHub reports for each run's pull request, read by the new GET /v1/pr-state (loopback only): one `gh pr list` per repo with a fixed argv and no shell, cached in the new pr_state table (open PRs recheck after 10 minutes, closed after 24 hours, merged never), refreshed in the background so the page answers from the cache and shows checking until GitHub answers. The rate is merged over merged, open and closed unmerged; a run with no pull request link is under No PR and is not in it, and a PR whose lookup failed is unknown and left out, never counted as not merged. A VERIFIED run whose PR is known merged or closed unmerged now leaves Needs you for Delivered without a dismiss; open, unknown and checking stay in Needs you.
-
-### Release checks
-
-- No label file changed, so no new calibration file was needed (release.sh --check-calibration exit 0). Full gate on the #727 branch tree (log ~/loki-ci-logs/cp-727-gate.log): 30 suites PASS, 2 FAIL, matching the base reds (scope-and-fix: 1036 passed, 4 failed; h2h-harness: 166 passed, 2 failed). The follow-up bucketing commit ran control-ui (30 passed) and hygiene (11 passed); the full gate was not rerun on the merged release tree.
-
 ## v11.191.0 (2026-11-27)
 
 ### Changed
